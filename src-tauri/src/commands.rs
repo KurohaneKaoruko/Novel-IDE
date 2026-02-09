@@ -714,16 +714,23 @@ pub fn chat_generate_stream(
       response = normalize_plaintext(&response);
     }
 
-    let mut offset = 0usize;
-    let step = 24usize;
-    let bytes = response.as_bytes();
-    while offset < bytes.len() {
-      let end = std::cmp::min(offset + step, bytes.len());
-      let token = String::from_utf8_lossy(&bytes[offset..end]).to_string();
-      let payload = serde_json::json!({ "streamId": stream_id, "token": token });
+    let step_chars = 48usize;
+    let mut buf = String::new();
+    let mut count = 0usize;
+    for ch in response.chars() {
+      buf.push(ch);
+      count += 1;
+      if count >= step_chars {
+        let payload = serde_json::json!({ "streamId": stream_id, "token": buf });
+        let _ = window.emit("ai_stream_token", payload);
+        buf = String::new();
+        count = 0;
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+      }
+    }
+    if !buf.is_empty() {
+      let payload = serde_json::json!({ "streamId": stream_id, "token": buf });
       let _ = window.emit("ai_stream_token", payload);
-      offset = end;
-      tokio::time::sleep(std::time::Duration::from_millis(15)).await;
     }
 
     let payload_done = serde_json::json!({ "streamId": stream_id });
@@ -756,6 +763,8 @@ async fn call_openai_compatible(
   }
   let base = cfg.base_url.trim_end_matches('/');
   let url = format!("{base}/chat/completions");
+  let model = cfg.model_name.clone();
+  let api_key = api_key.trim().to_string();
 
   let mut out_messages: Vec<serde_json::Value> = Vec::new();
   if !system_prompt.trim().is_empty() {
@@ -763,31 +772,56 @@ async fn call_openai_compatible(
   }
   out_messages.extend(messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})));
 
-  let body = serde_json::json!({
-    "model": cfg.model_name,
-    "messages": out_messages,
-    "temperature": temperature_override.unwrap_or(0.7), // Default temp if not provided
-    "max_tokens": max_tokens_override.unwrap_or(2048), // Default max tokens
-    "stream": false
-  });
+  let max_tokens = max_tokens_override.unwrap_or(2048);
+  let temperature = temperature_override.unwrap_or(0.7);
 
-  let resp = client
-    .post(url)
-    .bearer_auth(api_key.trim())
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("request failed: {e}"))?;
+  let send_once = |msgs: Vec<serde_json::Value>| {
+    let url = url.clone();
+    let model = model.clone();
+    let api_key = api_key.clone();
+    async move {
+    let body = serde_json::json!({
+      "model": model,
+      "messages": msgs,
+      "temperature": temperature,
+      "max_tokens": max_tokens,
+      "stream": false
+    });
+    let resp = client
+      .post(url)
+      .bearer_auth(api_key.as_str())
+      .json(&body)
+      .send()
+      .await
+      .map_err(|e| format!("request failed: {e}"))?;
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
+    if !status.is_success() {
+      return Err(format!("http {status}: {value}"));
+    }
+    let text = value["choices"][0]["message"]["content"]
+      .as_str()
+      .map(|s| s.to_string())
+      .ok_or_else(|| "missing choices[0].message.content".to_string())?;
+    let finish = value["choices"][0]["finish_reason"].as_str().map(|s| s.to_string());
+    Ok::<(String, Option<String>), String>((text, finish))
+    }
+  };
 
-  let status = resp.status();
-  let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
-  if !status.is_success() {
-    return Err(format!("http {status}: {value}"));
+  let (mut text, finish) = send_once(out_messages.clone()).await?;
+  if finish.as_deref() == Some("length") {
+    let mut cont = out_messages;
+    cont.push(serde_json::json!({"role": "assistant", "content": text.clone()}));
+    cont.push(serde_json::json!({"role": "user", "content": "继续（从上文末尾继续，不要重复已输出内容）"}));
+    let (more, finish2) = send_once(cont).await?;
+    if !more.trim().is_empty() {
+      text.push_str(more.as_str());
+    }
+    if finish2.as_deref() == Some("length") {
+      text.push_str("\n\n[输出可能因长度限制被截断，可回复“继续”]");
+    }
   }
-  value["choices"][0]["message"]["content"]
-    .as_str()
-    .map(|s| s.to_string())
-    .ok_or_else(|| "missing choices[0].message.content".to_string())
+  Ok(text)
 }
 
 async fn call_anthropic(

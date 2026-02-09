@@ -49,6 +49,7 @@ type ChatItem = {
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
+  streamId?: string
 }
 
 type ChatContextMenuState = {
@@ -106,8 +107,6 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatItem[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState | null>(null)
-  const streamIdRef = useRef<string | null>(null)
-  const assistantIdRef = useRef<string | null>(null)
   const chatSessionIdRef = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   )
@@ -682,11 +681,9 @@ function App() {
     const content = (overrideContent ?? chatInput).trim()
     if (!content) return
     const user: ChatItem = { id: newId(), role: 'user', content }
-    const assistantId = newId()
-    const assistant: ChatItem = { id: assistantId, role: 'assistant', content: '', streaming: true }
     const streamId = newId()
-    streamIdRef.current = streamId
-    assistantIdRef.current = assistantId
+    const assistantId = newId()
+    const assistant: ChatItem = { id: assistantId, role: 'assistant', content: '', streaming: true, streamId }
 
     setChatMessages((prev) => [...prev, user, assistant])
     if (!overrideContent || overrideContent === chatInput) {
@@ -846,12 +843,11 @@ function App() {
       const p = parsePayload(event.payload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
-      if (!streamId || streamIdRef.current !== streamId) return
+      if (!streamId) return
       const token = typeof p.token === 'string' ? p.token : ''
-      const assistantId = assistantIdRef.current
-      if (!assistantId || !token) return
+      if (!token) return
       setChatMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? { ...m, content: `${m.content}${token}` } : m)),
+        prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, content: `${m.content}${token}` } : m)),
       )
     }).then((u) => unlistenFns.push(u))
 
@@ -859,26 +855,22 @@ function App() {
       const p = parsePayload(event.payload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
-      if (!streamId || streamIdRef.current !== streamId) return
-      const assistantId = assistantIdRef.current
-      if (!assistantId) return
-      setChatMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)))
+      if (!streamId) return
+      setChatMessages((prev) => prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, streaming: false } : m)))
     }).then((u) => unlistenFns.push(u))
 
     void listen('ai_error', (event) => {
       const p = parsePayload(event.payload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
-      if (!streamId || streamIdRef.current !== streamId) return
-      const assistantId = assistantIdRef.current
-      if (!assistantId) return
+      if (!streamId) return
       const message = typeof p.message === 'string' ? p.message : 'AI 调用失败'
       const stage = typeof p.stage === 'string' ? p.stage : ''
       const provider = typeof p.provider === 'string' ? p.provider : ''
       const extra = [provider ? `provider=${provider}` : '', stage ? `stage=${stage}` : ''].filter(Boolean).join(' ')
       setChatMessages((prev) =>
         prev.map((m) =>
-          m.id === assistantId
+          m.role === 'assistant' && m.streamId === streamId
             ? { ...m, content: extra ? `${message}\n(${extra})` : message, streaming: false }
             : m,
         ),
@@ -1303,9 +1295,24 @@ function App() {
                   ) : (
                     chatMessages.map((m) => (
                       <div key={m.id} className={m.role === 'user' ? 'message user' : 'message assistant'}>
-                        <div className="message-meta">{m.role === 'user' ? '你' : m.streaming ? 'AI...' : 'AI'}</div>
-                        <div style={{ whiteSpace: 'pre-wrap' }} onContextMenu={(e) => openChatContextMenu(e, m.content)}>
-                          {m.content}
+                        <div className="message-meta">
+                          {m.role === 'user' ? (
+                            '你'
+                          ) : (
+                            <span className="ai-meta">
+                              AI
+                              {m.streaming ? (
+                                <span className="ai-dot-pulse" aria-hidden="true">
+                                  <span />
+                                  <span />
+                                  <span />
+                                </span>
+                              ) : null}
+                            </span>
+                          )}
+                        </div>
+                        <div className="message-content" style={{ whiteSpace: 'pre-wrap' }} onContextMenu={(e) => openChatContextMenu(e, m.content)}>
+                          {m.content || (m.role === 'assistant' && m.streaming ? '正在思考…' : '')}
                         </div>
                         {m.role === 'assistant' && m.content ? (
                           <div className="ai-actions">

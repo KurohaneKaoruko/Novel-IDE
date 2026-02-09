@@ -196,12 +196,93 @@ impl AgentRuntime {
       fs::create_dir_all(&target).map_err(|e| format!("create dir failed: {e}"))?;
       Ok(serde_json::json!({ "ok": true }))
     });
+    tools.register("fs_create_file", |ctx, args| {
+      let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing args.path".to_string())?;
+      if path.trim().is_empty() {
+        return Err("empty path".to_string());
+      }
+      let rel_norm = path.replace('\\', "/");
+      if (rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") || rel_norm.starts_with("stories/"))
+        && !rel_norm.to_lowercase().ends_with(".md")
+      {
+        return Err("concept/outline/stories 目录仅允许 .md 文件".to_string());
+      }
+      let rel = commands::validate_relative_path(path)?;
+      let target = ctx.workspace_root.join(rel);
+      if let Some(parent) = target.parent() {
+        if !parent.exists() {
+          return Err("parent directory does not exist; create it first".to_string());
+        }
+      }
+      if !target.exists() {
+        fs::write(&target, "").map_err(|e| format!("create file failed: {e}"))?;
+      }
+      Ok(serde_json::json!({ "ok": true }))
+    });
+    tools.register("fs_delete_entry", |ctx, args| {
+      let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing args.path".to_string())?;
+      if path.trim().is_empty() {
+        return Err("empty path".to_string());
+      }
+      let rel = commands::validate_relative_path(path)?;
+      let target = ctx.workspace_root.join(rel);
+      if !target.exists() {
+        return Ok(serde_json::json!({ "ok": true }));
+      }
+      let md = fs::metadata(&target).map_err(|e| format!("stat failed: {e}"))?;
+      if md.is_dir() {
+        fs::remove_dir_all(&target).map_err(|e| format!("remove dir failed: {e}"))?;
+      } else {
+        fs::remove_file(&target).map_err(|e| format!("remove file failed: {e}"))?;
+      }
+      Ok(serde_json::json!({ "ok": true }))
+    });
+    tools.register("fs_rename_entry", |ctx, args| {
+      let from = args
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing args.from".to_string())?;
+      let to = args
+        .get("to")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing args.to".to_string())?;
+      if from.trim().is_empty() || to.trim().is_empty() {
+        return Err("empty path".to_string());
+      }
+      let to_norm = to.replace('\\', "/");
+      if (to_norm.starts_with("concept/") || to_norm.starts_with("outline/") || to_norm.starts_with("stories/"))
+        && !to_norm.to_lowercase().ends_with(".md")
+      {
+        return Err("concept/outline/stories 目录仅允许 .md 文件".to_string());
+      }
+      let from_rel = commands::validate_relative_path(from)?;
+      let to_rel = commands::validate_relative_path(to)?;
+      let from_abs = ctx.workspace_root.join(from_rel);
+      let to_abs = ctx.workspace_root.join(to_rel);
+      if let Some(parent) = to_abs.parent() {
+        if !parent.exists() {
+          return Err("parent directory does not exist; create it first".to_string());
+        }
+      }
+      fs::rename(from_abs, to_abs).map_err(|e| format!("rename failed: {e}"))?;
+      Ok(serde_json::json!({ "ok": true }))
+    });
     tools.register("fs_write_text", |ctx, args| {
       let path = args
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing args.path".to_string())?;
-      let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+      let text = args
+        .get("text")
+        .or_else(|| args.get("content"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
       if path.trim().is_empty() {
         return Err("empty path".to_string());
       }
@@ -272,10 +353,21 @@ impl AgentRuntime {
     });
     messages.extend(base_messages);
     let mut step = 0u32;
-    let max_steps = 6u32;
+    let max_steps = 10u32;
     loop {
       if step >= max_steps {
-        let last = messages.iter().rev().find(|m| m.role == "assistant").map(|m| m.content.clone()).unwrap_or_default();
+        let last = messages
+          .iter()
+          .rev()
+          .find(|m| m.role == "assistant")
+          .map(|m| m.content.clone())
+          .unwrap_or_default();
+        if parse_tool_call(&last).is_some() {
+          return Ok((
+            "已多次执行工具调用，但模型未输出最终回答。你可以让 AI 用一句话总结刚才的改动，或直接查看文件树确认结果。".to_string(),
+            perf,
+          ));
+        }
         return Ok((last, perf));
       }
       step += 1;
@@ -344,23 +436,84 @@ pub struct ParsedToolCall {
   pub args: Value,
 }
 
+fn extract_json_value(input: &str) -> Option<String> {
+  let s = input.trim();
+  let start = s.find('{').or_else(|| s.find('['))?;
+  let bytes = s.as_bytes();
+  let mut i = start;
+  let mut depth_brace = 0i32;
+  let mut depth_bracket = 0i32;
+  let mut in_string = false;
+  let mut escape = false;
+  while i < bytes.len() {
+    let ch = bytes[i] as char;
+    if in_string {
+      if escape {
+        escape = false;
+      } else if ch == '\\' {
+        escape = true;
+      } else if ch == '"' {
+        in_string = false;
+      }
+      i += 1;
+      continue;
+    }
+    match ch {
+      '"' => in_string = true,
+      '{' => depth_brace += 1,
+      '}' => {
+        depth_brace -= 1;
+        if depth_brace == 0 && depth_bracket == 0 {
+          return Some(s[start..=i].to_string());
+        }
+      }
+      '[' => depth_bracket += 1,
+      ']' => {
+        depth_bracket -= 1;
+        if depth_brace == 0 && depth_bracket == 0 {
+          return Some(s[start..=i].to_string());
+        }
+      }
+      _ => {}
+    }
+    i += 1;
+  }
+  None
+}
+
 pub fn parse_tool_call(text: &str) -> Option<ParsedToolCall> {
   let mut tool: Option<String> = None;
-  let mut input: Option<String> = None;
+  let mut input_joined: Option<String> = None;
+  let mut collecting_input = false;
   for line in text.lines() {
-    let t = line.trim();
-    if t.to_ascii_uppercase().starts_with("ACTION:") {
+    let t = line.trim_end();
+    if t.trim_start().to_ascii_uppercase().starts_with("ACTION:") {
       tool = Some(t.splitn(2, ':').nth(1)?.trim().to_string());
       continue;
     }
-    if t.to_ascii_uppercase().starts_with("INPUT:") {
-      input = Some(t.splitn(2, ':').nth(1)?.trim().to_string());
+    if t.trim_start().to_ascii_uppercase().starts_with("INPUT:") {
+      collecting_input = true;
+      let rest = t.splitn(2, ':').nth(1)?.trim().to_string();
+      input_joined = Some(rest);
       continue;
+    }
+    if collecting_input {
+      input_joined = Some(match input_joined {
+        Some(mut v) => {
+          v.push('\n');
+          v.push_str(t);
+          v
+        }
+        None => t.to_string(),
+      });
     }
   }
   let tool = tool?;
-  let input = input?;
-  let args: Value = serde_json::from_str(&input).ok().or_else(|| Some(serde_json::json!({ "raw": input })))?;
+  let input = input_joined?;
+  let json_text = extract_json_value(&input).unwrap_or_else(|| input.trim().to_string());
+  let args: Value = serde_json::from_str(&json_text)
+    .ok()
+    .or_else(|| Some(serde_json::json!({ "raw": input.trim() })))?;
   Some(ParsedToolCall { tool, args })
 }
 
