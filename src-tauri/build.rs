@@ -12,6 +12,9 @@ fn ensure_windows_icon() {
   let icon_path = icon_dir.join("icon.ico");
 
   let _ = std::fs::create_dir_all(icon_dir);
+  if icon_path.exists() {
+    return;
+  }
 
   let size = 64u32;
   let rgba = vec![0u8; (size * size * 4) as usize];

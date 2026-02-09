@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 
 export type WorkspaceInfo = {
   root: string
@@ -46,6 +47,16 @@ export function isTauriApp(): boolean {
 
 export async function setWorkspace(path: string): Promise<WorkspaceInfo> {
   return invoke<WorkspaceInfo>('set_workspace', { path })
+}
+
+export async function openFolderDialog(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+  })
+  if (!selected) return null
+  if (Array.isArray(selected)) return selected[0] ?? null
+  return selected
 }
 
 export async function initNovel(): Promise<void> {

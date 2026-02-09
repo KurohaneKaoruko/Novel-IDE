@@ -748,6 +748,7 @@ fn validate_outline(existing_json: &str, new_json: &str) -> Result<(), String> {
     #[serde(default)]
     characters: Vec<String>,
     #[serde(default)]
+    #[allow(dead_code)]
     description: String,
   }
 
