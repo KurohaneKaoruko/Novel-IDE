@@ -359,6 +359,11 @@ function App() {
     }
   }, [activeFile, refreshTree])
 
+  const showConfirm = useCallback(async (text: string): Promise<boolean> => {
+    if (!isTauriApp()) return window.confirm(text)
+    return confirm(text, { title: '确认', kind: 'warning' })
+  }, [])
+
   const onNewChapter = useCallback(async () => {
     if (!workspaceRoot) return
     setError(null)
@@ -388,7 +393,7 @@ function App() {
     } finally {
       setBusy(false)
     }
-  }, [workspaceRoot, refreshTree])
+  }, [workspaceRoot, refreshTree, showConfirm])
 
   const onGitInit = useCallback(async () => {
     if (!workspaceRoot) return
@@ -545,11 +550,6 @@ function App() {
       document.execCommand('copy')
       document.body.removeChild(el)
     }
-  }, [])
-
-  const showConfirm = useCallback(async (text: string): Promise<boolean> => {
-    if (!isTauriApp()) return window.confirm(text)
-    return confirm(text, { title: '确认', kind: 'warning' })
   }, [])
 
   const showErrorDialog = useCallback(async (text: string) => {

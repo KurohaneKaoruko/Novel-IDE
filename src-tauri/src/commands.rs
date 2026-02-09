@@ -761,6 +761,7 @@ async fn call_openai_compatible(
     let url = url.clone();
     let model = model.clone();
     let api_key = api_key.clone();
+    let client = client.clone();
     async move {
     let body = serde_json::json!({
       "model": model,
