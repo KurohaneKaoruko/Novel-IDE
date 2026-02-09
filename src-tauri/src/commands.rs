@@ -292,7 +292,7 @@ pub fn set_app_settings(app: AppHandle, settings: app_settings::AppSettings) -> 
   // Save API keys to secrets if present
   for p in &mut s.providers {
     if !p.api_key.trim().is_empty() {
-      secrets::set_api_key(&p.id, p.api_key.trim())?;
+      secrets::set_api_key(&app, &p.id, p.api_key.trim())?;
       p.api_key.clear();
     }
   }
@@ -302,11 +302,11 @@ pub fn set_app_settings(app: AppHandle, settings: app_settings::AppSettings) -> 
 
 #[allow(non_snake_case)]
 #[tauri::command]
-pub fn get_api_key_status(providerId: Option<String>, provider_id: Option<String>) -> Result<bool, String> {
+pub fn get_api_key_status(app: AppHandle, providerId: Option<String>, provider_id: Option<String>) -> Result<bool, String> {
   let pid = providerId
     .or(provider_id)
     .unwrap_or_default();
-  match secrets::get_api_key(pid.trim()) {
+  match secrets::get_api_key(&app, pid.trim()) {
     Ok(Some(v)) => Ok(!v.trim().is_empty()),
     Ok(None) => Ok(false),
     Err(e) => Err(e),
@@ -316,6 +316,7 @@ pub fn get_api_key_status(providerId: Option<String>, provider_id: Option<String
 #[allow(non_snake_case)]
 #[tauri::command]
 pub fn set_api_key(
+  app: AppHandle,
   providerId: Option<String>,
   provider_id: Option<String>,
   apiKey: Option<String>,
@@ -331,7 +332,7 @@ pub fn set_api_key(
   if key.is_empty() {
     return Err("API Key 不能为空".to_string());
   }
-  secrets::set_api_key(pid, key)
+  secrets::set_api_key(&app, pid, key)
 }
 
 #[tauri::command]
@@ -633,6 +634,7 @@ pub fn chat_generate_stream(
       .run_react(messages, agent_system.clone(), |msgs| {
         let provider_cfg = current_provider.clone();
         let client = client.clone();
+        let app = app.clone();
         let agent_temp = agent_temp;
         let agent_max = agent_max;
         async move {
@@ -648,6 +650,7 @@ pub fn chat_generate_stream(
           match provider_cfg.kind {
             app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
               call_openai_compatible(
+                &app,
                 &client,
                 &provider_cfg, // pass full provider config
                 &filtered,
@@ -658,6 +661,7 @@ pub fn chat_generate_stream(
             },
             app_settings::ProviderKind::Anthropic => {
               call_anthropic(
+                &app,
                 &client,
                 &provider_cfg,
                 &filtered,
@@ -730,6 +734,7 @@ pub fn chat_generate_stream(
 }
 
 async fn call_openai_compatible(
+  app: &AppHandle,
   client: &reqwest::Client,
   cfg: &app_settings::ModelProvider,
   messages: &[ChatMessage],
@@ -737,7 +742,7 @@ async fn call_openai_compatible(
   temperature_override: Option<f32>,
   max_tokens_override: Option<u32>,
 ) -> Result<String, String> {
-  let api_key = match secrets::get_api_key(&cfg.id) {
+  let api_key = match secrets::get_api_key(app, &cfg.id) {
     Ok(Some(v)) => v,
     Ok(None) => cfg.api_key.trim().to_string(),
     Err(e) => return Err(format!("keyring read failed: {e}")),
@@ -786,13 +791,14 @@ async fn call_openai_compatible(
 }
 
 async fn call_anthropic(
+  app: &AppHandle,
   client: &reqwest::Client,
   cfg: &app_settings::ModelProvider,
   messages: &[ChatMessage],
   system_prompt: &str,
   max_tokens_override: Option<u32>,
 ) -> Result<String, String> {
-  let api_key = match secrets::get_api_key(&cfg.id) {
+  let api_key = match secrets::get_api_key(app, &cfg.id) {
     Ok(Some(v)) => v,
     Ok(None) => cfg.api_key.trim().to_string(),
     Err(e) => return Err(format!("keyring read failed: {e}")),

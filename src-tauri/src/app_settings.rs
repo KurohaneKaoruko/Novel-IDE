@@ -225,7 +225,7 @@ pub fn load(app: &tauri::AppHandle) -> Result<AppSettings, String> {
 
         for p in &mut migrated.providers {
           if !p.api_key.trim().is_empty() {
-            secrets::set_api_key(&p.id, p.api_key.trim())?;
+            secrets::set_api_key(app, &p.id, p.api_key.trim())?;
             p.api_key.clear();
           }
         }
