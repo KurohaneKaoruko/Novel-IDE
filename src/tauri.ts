@@ -9,29 +9,18 @@ export type AppSettings = {
   output: {
     use_markdown: boolean
   }
-  providers: {
-    active: 'openai' | 'claude' | 'wenxin' | string
-    openai: {
-      api_key: string
-      base_url: string
-      model: string
-      temperature: number
-      max_tokens: number
-    }
-    claude: {
-      api_key: string
-      model: string
-      max_tokens: number
-    }
-    wenxin: {
-      api_key: string
-      base_url: string
-      model: string
-      temperature: number
-      max_tokens: number
-    }
-  }
+  providers: ModelProvider[]
+  active_provider_id: string
   active_agent_id: string
+}
+
+export type ModelProvider = {
+  id: string
+  name: string
+  kind: 'OpenAI' | 'Anthropic' | 'OpenAICompatible'
+  api_key: string
+  base_url: string
+  model_name: string
 }
 
 export type FsEntry = {

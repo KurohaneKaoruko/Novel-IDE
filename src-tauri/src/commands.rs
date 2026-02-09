@@ -256,27 +256,32 @@ pub fn rename_entry(state: State<'_, AppState>, from_relative_path: String, to_r
 #[tauri::command]
 pub fn get_app_settings(app: AppHandle) -> Result<app_settings::AppSettings, String> {
   let mut s = app_settings::load(&app)?;
-  s.providers.openai.api_key.clear();
-  s.providers.claude.api_key.clear();
-  s.providers.wenxin.api_key.clear();
+  // Clear keys for display security
+  for p in &mut s.providers {
+    p.api_key.clear();
+  }
   Ok(s)
 }
 
 #[tauri::command]
 pub fn set_app_settings(app: AppHandle, settings: app_settings::AppSettings) -> Result<(), String> {
   let mut s = settings.clone();
-  if !s.providers.openai.api_key.trim().is_empty() {
-    secrets::set_api_key("openai", s.providers.openai.api_key.trim())?;
-    s.providers.openai.api_key.clear();
+
+  if s.providers.is_empty() {
+    s.providers = app_settings::AppSettings::default().providers;
   }
-  if !s.providers.claude.api_key.trim().is_empty() {
-    secrets::set_api_key("claude", s.providers.claude.api_key.trim())?;
-    s.providers.claude.api_key.clear();
+  if s.active_provider_id.trim().is_empty() || !s.providers.iter().any(|p| p.id == s.active_provider_id) {
+    s.active_provider_id = s.providers[0].id.clone();
   }
-  if !s.providers.wenxin.api_key.trim().is_empty() {
-    secrets::set_api_key("wenxin", s.providers.wenxin.api_key.trim())?;
-    s.providers.wenxin.api_key.clear();
+
+  // Save API keys to secrets if present
+  for p in &mut s.providers {
+    if !p.api_key.trim().is_empty() {
+      secrets::set_api_key(&p.id, p.api_key.trim())?;
+      p.api_key.clear();
+    }
   }
+  
   app_settings::save(&app, &s)
 }
 
@@ -538,16 +543,30 @@ pub fn chat_generate_stream(
     let agent_max = agent.map(|a| a.max_tokens);
     let client = reqwest::Client::new();
 
-    let provider = settings.providers.active.clone();
+    let active_provider_id = settings.active_provider_id.clone();
+    let providers = settings.providers.clone();
+    let current_provider = providers
+      .iter()
+      .find(|p| p.id == active_provider_id)
+      .ok_or_else(|| "provider not found".to_string());
+    
+    // Fail early if provider config is missing
+    let current_provider = match current_provider {
+      Ok(p) => p.clone(),
+      Err(e) => {
+        eprintln!("ai_error: {}", e);
+        let _ = window.emit("ai_error", serde_json::json!({ "streamId": stream_id, "message": e }));
+        let _ = window.emit("ai_stream_done", serde_json::json!({ "streamId": stream_id }));
+        return;
+      }
+    };
+
     let mut runtime = agent_system::AgentRuntime::new(workspace_root);
     let start = Instant::now();
     let (mut response, perf) = match runtime
       .run_react(messages, agent_system.clone(), |msgs| {
-        let provider = provider.clone();
+        let provider_cfg = current_provider.clone();
         let client = client.clone();
-        let openai = settings.providers.openai.clone();
-        let wenxin = settings.providers.wenxin.clone();
-        let claude = settings.providers.claude.clone();
         let agent_temp = agent_temp;
         let agent_max = agent_max;
         async move {
@@ -559,11 +578,27 @@ pub fn chat_generate_stream(
             system.push_str(m.content.as_str());
           }
           let filtered = msgs.into_iter().filter(|m| m.role != "system").collect::<Vec<_>>();
-          match provider.as_str() {
-            "openai" => call_openai_compatible(&client, "openai", &openai, &filtered, system.as_str(), agent_temp, agent_max).await,
-            "wenxin" => call_openai_compatible(&client, "wenxin", &wenxin, &filtered, system.as_str(), agent_temp, agent_max).await,
-            "claude" => call_anthropic(&client, "claude", &claude, &filtered, system.as_str(), agent_max).await,
-            _ => Err("unknown provider".to_string()),
+          
+          match provider_cfg.kind {
+            app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
+              call_openai_compatible(
+                &client,
+                &provider_cfg, // pass full provider config
+                &filtered,
+                system.as_str(),
+                agent_temp,
+                agent_max
+              ).await
+            },
+            app_settings::ProviderKind::Anthropic => {
+              call_anthropic(
+                &client,
+                &provider_cfg,
+                &filtered,
+                system.as_str(),
+                agent_max
+              ).await
+            },
           }
         }
       })
@@ -571,10 +606,10 @@ pub fn chat_generate_stream(
     {
       Ok(v) => v,
       Err(e) => {
-        eprintln!("ai_error provider={} err={}", provider, e);
+        eprintln!("ai_error provider={} err={}", current_provider.id, e);
         let payload = serde_json::json!({
           "streamId": stream_id,
-          "provider": provider,
+          "provider": current_provider.id,
           "stage": "agent",
           "message": e
         });
@@ -620,17 +655,18 @@ pub fn chat_generate_stream(
 
 async fn call_openai_compatible(
   client: &reqwest::Client,
-  secret_name: &str,
-  cfg: &app_settings::OpenAiSettings,
+  cfg: &app_settings::ModelProvider,
   messages: &[ChatMessage],
   system_prompt: &str,
   temperature_override: Option<f32>,
   max_tokens_override: Option<u32>,
 ) -> Result<String, String> {
-  let api_key = secrets::get_api_key(secret_name)
+  // Try to load secret by ID first (e.g. "openai" or "deepseek"), fallback to cfg.api_key
+  let api_key = secrets::get_api_key(&cfg.id)
     .ok()
     .flatten()
     .unwrap_or_else(|| cfg.api_key.trim().to_string());
+    
   if api_key.trim().is_empty() {
     return Err("api key is empty".to_string());
   }
@@ -644,10 +680,10 @@ async fn call_openai_compatible(
   out_messages.extend(messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})));
 
   let body = serde_json::json!({
-    "model": cfg.model,
+    "model": cfg.model_name,
     "messages": out_messages,
-    "temperature": temperature_override.unwrap_or(cfg.temperature),
-    "max_tokens": max_tokens_override.unwrap_or(cfg.max_tokens),
+    "temperature": temperature_override.unwrap_or(0.7), // Default temp if not provided
+    "max_tokens": max_tokens_override.unwrap_or(2048), // Default max tokens
     "stream": false
   });
 
@@ -672,13 +708,12 @@ async fn call_openai_compatible(
 
 async fn call_anthropic(
   client: &reqwest::Client,
-  secret_name: &str,
-  cfg: &app_settings::AnthropicSettings,
+  cfg: &app_settings::ModelProvider,
   messages: &[ChatMessage],
   system_prompt: &str,
   max_tokens_override: Option<u32>,
 ) -> Result<String, String> {
-  let api_key = secrets::get_api_key(secret_name)
+  let api_key = secrets::get_api_key(&cfg.id)
     .ok()
     .flatten()
     .unwrap_or_else(|| cfg.api_key.trim().to_string());
@@ -687,14 +722,10 @@ async fn call_anthropic(
   }
   let url = "https://api.anthropic.com/v1/messages";
   let body = serde_json::json!({
-    "model": cfg.model,
-    "max_tokens": max_tokens_override.unwrap_or(cfg.max_tokens),
+    "model": cfg.model_name,
+    "max_tokens": max_tokens_override.unwrap_or(2048),
     "system": system_prompt,
-    "messages": messages
-      .iter()
-      .filter(|m| m.role == "user" || m.role == "assistant")
-      .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
-      .collect::<Vec<_>>()
+    "messages": messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>()
   });
 
   let resp = client

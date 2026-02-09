@@ -31,6 +31,7 @@ import {
   type FsEntry,
   type GitCommitInfo,
   type GitStatusItem,
+  type ModelProvider,
 } from './tauri'
 
 type OpenFile = {
@@ -78,6 +79,13 @@ function App() {
   const [activePath, setActivePath] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  // New state for model modal
+  const [showModelModal, setShowModelModal] = useState(false)
+  const [editingProvider, setEditingProvider] = useState<Partial<ModelProvider>>({})
+  const [isNewProvider, setIsNewProvider] = useState(true)
+
+  // ... (rest of App component)
   const [explorerContextMenu, setExplorerContextMenu] = useState<ExplorerContextMenuState | null>(null)
   const [explorerModal, setExplorerModal] = useState<ExplorerModalState | null>(null)
   const [explorerModalValue, setExplorerModalValue] = useState<string>('')
@@ -102,6 +110,7 @@ function App() {
   // Settings & Agents
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   const [agentsList, setAgentsList] = useState<Agent[]>([])
   const [agentEditorId, setAgentEditorId] = useState<string>('')
 
@@ -125,6 +134,13 @@ function App() {
     return activeFile.content.replace(/\s/g, '').length
   }, [activeFile])
 
+  const effectiveProviderId = useMemo(() => {
+    if (!appSettings) return ''
+    const active = appSettings.active_provider_id
+    if (active && appSettings.providers.some((p) => p.id === active)) return active
+    return appSettings.providers[0]?.id ?? ''
+  }, [appSettings])
+
   // --- Actions ---
 
   const refreshTree = useCallback(async () => {
@@ -147,6 +163,18 @@ function App() {
       setGitError(e instanceof Error ? e.message : String(e))
     }
   }, [workspaceRoot])
+
+  const reloadAppSettings = useCallback(async () => {
+    if (!isTauriApp()) return
+    try {
+      const s = await getAppSettings()
+      setAppSettingsState(s)
+      setSettingsError(null)
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : String(e))
+      setAppSettingsState(null)
+    }
+  }, [])
 
   const loadProjectSettings = useCallback(async () => {
     if (!workspaceRoot) return
@@ -616,16 +644,14 @@ function App() {
 
   useEffect(() => {
     if (!isTauriApp()) return
-    void getAppSettings()
-      .then((s) => setAppSettingsState(s))
-      .catch(() => setAppSettingsState(null))
+    void reloadAppSettings()
     void getAgents()
       .then((list) => {
         setAgentsList(list)
         setAgentEditorId((prev) => prev || list[0]?.id || '')
       })
       .catch(() => setAgentsList([]))
-  }, [])
+  }, [reloadAppSettings])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -832,7 +858,14 @@ function App() {
             <span className="activity-bar-icon">📦</span>
           </div>
           <div className="spacer" />
-          <div className="activity-bar-item" onClick={() => setShowSettings(true)} title="设置">
+          <div
+            className="activity-bar-item"
+            onClick={() => {
+              setShowSettings(true)
+              if (!appSettings) void reloadAppSettings()
+            }}
+            title="设置"
+          >
             <span className="activity-bar-icon">⚙️</span>
           </div>
         </div>
@@ -1065,20 +1098,22 @@ function App() {
                   <div className="ai-config-row">
                     <select
                       className="ai-select"
-                      value={appSettings?.providers.active ?? 'openai'}
+                      value={effectiveProviderId}
                       onChange={(e) => {
                         const active = e.target.value
                         setAppSettingsState((prev) => {
                           if (!prev) return prev
-                          const next = { ...prev, providers: { ...prev.providers, active } }
+                          const next = { ...prev, active_provider_id: active }
                           void setAppSettings(next)
                           return next
                         })
                       }}
                     >
-                      <option value="openai">OpenAI</option>
-                      <option value="claude">Claude</option>
-                      <option value="wenxin">文心一言</option>
+                      {appSettings?.providers.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -1179,7 +1214,7 @@ function App() {
     </div>
 
       {/* Settings Modal */}
-      {showSettings && appSettings ? (
+      {showSettings ? (
         <div className="modal-overlay" onClick={() => setShowSettings(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -1189,7 +1224,21 @@ function App() {
               </button>
             </div>
             <div className="modal-body">
-              <div className="settings-form">
+              {!appSettings ? (
+                <div style={{ padding: 12, color: '#ccc' }}>
+                  <div style={{ fontSize: 13, marginBottom: 8 }}>设置加载失败或尚未加载完成。</div>
+                  {settingsError ? <div className="error-text">{settingsError}</div> : null}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                    <button className="btn btn-secondary" onClick={() => void reloadAppSettings()}>
+                      重新加载
+                    </button>
+                    <button className="primary-button" onClick={() => setShowSettings(false)}>
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="settings-form">
                 <div style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff' }}>通用</h3>
                   <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1214,234 +1263,344 @@ function App() {
                 </div>
 
                 <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff' }}>模型配置</h3>
-                  <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-                    {['openai', 'claude', 'wenxin'].map((p) => (
-                      <button
-                        key={p}
-                        className={appSettings.providers.active === p ? 'primary-button' : 'btn btn-secondary'}
-                        onClick={() =>
-                          setAppSettingsState((prev) => (prev ? { ...prev, providers: { ...prev.providers, active: p } } : prev))
-                        }
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <h3 style={{ fontSize: 14, color: '#fff', margin: 0 }}>模型配置</h3>
+                    <button
+                      className="primary-button"
+                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      onClick={() => {
+                        setEditingProvider({
+                          id: newId(),
+                          kind: 'OpenAICompatible',
+                          base_url: 'https://api.openai.com/v1',
+                          model_name: 'gpt-4o-mini',
+                        })
+                        setIsNewProvider(true)
+                        setShowModelModal(true)
+                      }}
+                    >
+                      + 添加模型
+                    </button>
+                  </div>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {appSettings.providers.map((p) => (
+                      <div
+                        key={p.id}
+                        className="provider-item"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          background: '#333',
+                          padding: '8px 12px',
+                          borderRadius: 4,
+                          border: appSettings.active_provider_id === p.id ? '1px solid #007acc' : '1px solid transparent',
+                        }}
                       >
-                        {p.toUpperCase()}
-                      </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+                          <div style={{ color: '#fff', fontSize: 13, fontWeight: 500 }}>{p.name}</div>
+                          <div style={{ color: '#888', fontSize: 11 }}>
+                            {p.kind} • {p.model_name}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {appSettings.active_provider_id !== p.id && (
+                            <button
+                              className="icon-button"
+                              title="设为默认"
+                              onClick={() => {
+                                setAppSettingsState((prev) => {
+                                  if (!prev) return prev
+                                  const next = { ...prev, active_provider_id: p.id }
+                                  void setAppSettings(next)
+                                  return next
+                                })
+                              }}
+                            >
+                              ★
+                            </button>
+                          )}
+                          <button
+                            className="icon-button"
+                            title="编辑"
+                            onClick={() => {
+                              setEditingProvider(p)
+                              setIsNewProvider(false)
+                              setShowModelModal(true)
+                            }}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className="icon-button"
+                            title="删除"
+                            disabled={appSettings.providers.length <= 1}
+                            onClick={() => {
+                              if (!confirm('确定删除该模型配置？')) return
+                              setAppSettingsState((prev) => {
+                                if (!prev) return prev
+                                const nextProviders = prev.providers.filter((x) => x.id !== p.id)
+                                // If we deleted the active one, fallback to the first available
+                                let nextActive = prev.active_provider_id
+                                if (p.id === nextActive) {
+                                  nextActive = nextProviders[0]?.id ?? ''
+                                }
+                                const next = { ...prev, providers: nextProviders, active_provider_id: nextActive }
+                                void setAppSettings(next)
+                                return next
+                              })
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
                     ))}
                   </div>
-                  {appSettings.providers.active === 'openai' && (
-                    <>
-                      <div className="form-group">
-                        <label>Base URL</label>
-                        <input
-                          value={appSettings.providers.openai.base_url}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    providers: { ...prev.providers, openai: { ...prev.providers.openai, base_url: e.target.value } },
-                                  }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>Model</label>
-                        <input
-                          value={appSettings.providers.openai.model}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? { ...prev, providers: { ...prev.providers, openai: { ...prev.providers.openai, model: e.target.value } } }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>API Key</label>
-                        <input
-                          type="password"
-                          value={appSettings.providers.openai.api_key}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? { ...prev, providers: { ...prev.providers, openai: { ...prev.providers.openai, api_key: e.target.value } } }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                    </>
-                  )}
-                  {appSettings.providers.active === 'claude' && (
-                    <>
-                      <div className="form-group">
-                        <label>Model</label>
-                        <input
-                          value={appSettings.providers.claude.model}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? { ...prev, providers: { ...prev.providers, claude: { ...prev.providers.claude, model: e.target.value } } }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>API Key</label>
-                        <input
-                          type="password"
-                          value={appSettings.providers.claude.api_key}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? { ...prev, providers: { ...prev.providers, claude: { ...prev.providers.claude, api_key: e.target.value } } }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                    </>
-                  )}
-                  {appSettings.providers.active === 'wenxin' && (
-                    <>
-                      <div className="form-group">
-                        <label>Base URL</label>
-                        <input
-                          value={appSettings.providers.wenxin.base_url}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    providers: { ...prev.providers, wenxin: { ...prev.providers.wenxin, base_url: e.target.value } },
-                                  }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>Model</label>
-                        <input
-                          value={appSettings.providers.wenxin.model}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? { ...prev, providers: { ...prev.providers, wenxin: { ...prev.providers.wenxin, model: e.target.value } } }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>API Key</label>
-                        <input
-                          type="password"
-                          value={appSettings.providers.wenxin.api_key}
-                          onChange={(e) =>
-                            setAppSettingsState((prev) =>
-                              prev
-                                ? { ...prev, providers: { ...prev.providers, wenxin: { ...prev.providers.wenxin, api_key: e.target.value } } }
-                                : prev,
-                            )
-                          }
-                        />
-                      </div>
-                    </>
-                  )}
                 </div>
 
                 <div style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff' }}>智能体管理</h3>
-                  <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-                    <select
-                      className="ai-select"
-                      style={{ flex: 1 }}
-                      value={agentEditorId}
-                      onChange={(e) => setAgentEditorId(e.target.value)}
-                    >
-                      <option value="">-- 选择编辑 --</option>
-                      {agentsList.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.category} / {a.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="icon-button"
-                      style={{ border: '1px solid #333' }}
-                      onClick={() => {
-                        const id = newId()
-                        const next: Agent = {
-                          id,
-                          name: '新智能体',
-                          category: '自定义',
-                          system_prompt: '',
-                          temperature: 0.7,
-                          max_tokens: 1024,
-                        }
-                        setAgentsList((prev) => [...prev, next])
-                        setAgentEditorId(id)
-                      }}
-                    >
-                      +
-                    </button>
-                    {agentEditorId && (
+                  
+                  {/* Built-in Agents */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>内置智能体</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      {agentsList
+                        .filter((a) => a.category !== '自定义')
+                        .map((a) => (
+                          <div
+                            key={a.id}
+                            className="agent-card"
+                            style={{
+                              background: '#333',
+                              padding: 10,
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              border: agentEditorId === a.id ? '1px solid #007acc' : '1px solid transparent',
+                            }}
+                            onClick={() => setAgentEditorId(a.id)}
+                          >
+                            <div style={{ fontWeight: 500, color: '#fff', fontSize: 13 }}>{a.name}</div>
+                            <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{a.category}</div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Custom Agents */}
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, color: '#888' }}>自定义智能体</div>
                       <button
                         className="icon-button"
-                        style={{ border: '1px solid #333' }}
+                        style={{ fontSize: 12, padding: '2px 6px', border: '1px solid #444', borderRadius: 3 }}
                         onClick={() => {
-                          setAgentsList((prev) => prev.filter((a) => a.id !== agentEditorId))
-                          setAgentEditorId('')
+                          const id = newId()
+                          const next: Agent = {
+                            id,
+                            name: '新智能体',
+                            category: '自定义',
+                            system_prompt: '',
+                            temperature: 0.7,
+                            max_tokens: 1024,
+                          }
+                          setAgentsList((prev) => [...prev, next])
+                          setAgentEditorId(id)
                         }}
                       >
-                        🗑️
+                        + 创建
                       </button>
+                    </div>
+                    {agentsList.filter((a) => a.category === '自定义').length === 0 ? (
+                      <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic', padding: 10, textAlign: 'center', background: '#2d2d2d', borderRadius: 4 }}>
+                        暂无自定义智能体
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {agentsList
+                          .filter((a) => a.category === '自定义')
+                          .map((a) => (
+                            <div
+                              key={a.id}
+                              className="agent-card"
+                              style={{
+                                background: '#333',
+                                padding: 10,
+                                borderRadius: 4,
+                                cursor: 'pointer',
+                                border: agentEditorId === a.id ? '1px solid #007acc' : '1px solid transparent',
+                                position: 'relative',
+                              }}
+                              onClick={() => setAgentEditorId(a.id)}
+                            >
+                              <div style={{ fontWeight: 500, color: '#fff', fontSize: 13 }}>{a.name}</div>
+                              <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>自定义</div>
+                              {agentEditorId === a.id && (
+                                <button
+                                  className="icon-button"
+                                  style={{ position: 'absolute', top: 6, right: 6, padding: 2, fontSize: 12 }}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (!confirm('确定删除此智能体？')) return
+                                    setAgentsList((prev) => prev.filter((x) => x.id !== a.id))
+                                    setAgentEditorId('')
+                                  }}
+                                >
+                                  🗑️
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                      </div>
                     )}
                   </div>
+
                   {agentEditorId && agentsList.find((a) => a.id === agentEditorId) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <input
-                        className="ai-select"
-                        placeholder="名称"
-                        value={agentsList.find((a) => a.id === agentEditorId)?.name ?? ''}
-                        onChange={(e) =>
-                          setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, name: e.target.value } : a)))
-                        }
-                      />
-                      <textarea
-                        className="ai-textarea"
-                        placeholder="系统提示词 (System Prompt)"
-                        style={{ height: 120 }}
-                        value={agentsList.find((a) => a.id === agentEditorId)?.system_prompt ?? ''}
-                        onChange={(e) =>
-                          setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, system_prompt: e.target.value } : a)))
-                        }
-                      />
+                    <div style={{ marginTop: 16, borderTop: '1px solid #444', paddingTop: 16 }}>
+                      <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fff', marginBottom: 10 }}>
+                        编辑: {agentsList.find((a) => a.id === agentEditorId)?.name}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div className="form-group">
+                          <label>名称</label>
+                          <input
+                            className="ai-select"
+                            value={agentsList.find((a) => a.id === agentEditorId)?.name ?? ''}
+                            onChange={(e) =>
+                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, name: e.target.value } : a)))
+                            }
+                            disabled={agentsList.find((a) => a.id === agentEditorId)?.category !== '自定义'}
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>系统提示词 (System Prompt)</label>
+                          <textarea
+                            className="ai-textarea"
+                            placeholder="你是一个..."
+                            style={{ height: 120 }}
+                            value={agentsList.find((a) => a.id === agentEditorId)?.system_prompt ?? ''}
+                            onChange={(e) =>
+                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, system_prompt: e.target.value } : a)))
+                            }
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
+                </div>
+              </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              {appSettings ? (
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    void setAppSettings(appSettings)
+                    void setAgents(agentsList)
+                    setShowSettings(false)
+                  }}
+                >
+                  保存并关闭
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Model Modal */}
+      {showModelModal && (
+        <div className="modal-overlay" onClick={() => setShowModelModal(false)}>
+          <div className="modal-content" style={{ width: 450 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{isNewProvider ? '添加模型' : '编辑模型'}</h2>
+              <button className="close-btn" onClick={() => setShowModelModal(false)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="settings-form">
+                <div className="form-group">
+                  <label>名称 (显示用)</label>
+                  <input
+                    value={editingProvider.name ?? ''}
+                    onChange={(e) => setEditingProvider((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="例如：DeepSeek V3"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>类型</label>
+                  <select
+                    value={editingProvider.kind ?? 'OpenAICompatible'}
+                    onChange={(e) => {
+                      const k = e.target.value as ModelProvider['kind']
+                      let base = editingProvider.base_url
+                      if (k === 'OpenAI') base = 'https://api.openai.com/v1'
+                      else if (k === 'Anthropic') base = 'https://api.anthropic.com'
+                      setEditingProvider((p) => ({ ...p, kind: k, base_url: base }))
+                    }}
+                  >
+                    <option value="OpenAICompatible">OpenAI 兼容 (通用)</option>
+                    <option value="OpenAI">OpenAI 官方</option>
+                    <option value="Anthropic">Anthropic (Claude)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Base URL</label>
+                  <input
+                    value={editingProvider.base_url ?? ''}
+                    onChange={(e) => setEditingProvider((p) => ({ ...p, base_url: e.target.value }))}
+                    placeholder="https://api.example.com/v1"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Model ID</label>
+                  <input
+                    value={editingProvider.model_name ?? ''}
+                    onChange={(e) => setEditingProvider((p) => ({ ...p, model_name: e.target.value }))}
+                    placeholder="例如：gpt-4o, deepseek-chat"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>API Key</label>
+                  <input
+                    type="password"
+                    value={editingProvider.api_key ?? ''}
+                    onChange={(e) => setEditingProvider((p) => ({ ...p, api_key: e.target.value }))}
+                    placeholder="sk-..."
+                  />
                 </div>
               </div>
             </div>
             <div className="modal-footer">
               <button
                 className="primary-button"
+                disabled={!editingProvider.name || !editingProvider.model_name}
                 onClick={() => {
-                  void setAppSettings(appSettings)
-                  void setAgents(agentsList)
-                  setShowSettings(false)
+                  setAppSettingsState((prev) => {
+                    if (!prev) return prev
+                    let nextProviders = [...prev.providers]
+                    if (isNewProvider) {
+                      nextProviders.push(editingProvider as ModelProvider)
+                    } else {
+                      nextProviders = nextProviders.map((p) => (p.id === editingProvider.id ? (editingProvider as ModelProvider) : p))
+                    }
+                    const next = { ...prev, providers: nextProviders }
+                    void setAppSettings(next)
+                    return next
+                  })
+                  setShowModelModal(false)
                 }}
               >
-                保存并关闭
+                保存
               </button>
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
       <div className="status-bar">
         <div className="status-item">字数：{activeCharCount} / {chapterWordTarget}</div>
