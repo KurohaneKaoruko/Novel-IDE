@@ -141,7 +141,7 @@ function App() {
   const [graphEdges, setGraphEdges] = useState<Array<{ from: string; to: string; type?: string }>>([])
 
   const activeFile = useMemo(() => openFiles.find((f) => f.path === activePath) ?? null, [openFiles, activePath])
-  const canPreview = useMemo(() => !!activeFile && activeFile.path.toLowerCase().endsWith('.md'), [activeFile])
+  const isMarkdownFile = useMemo(() => !!activeFile && activeFile.path.toLowerCase().endsWith('.md'), [activeFile])
   const activeCharCount = useMemo(() => {
     if (!activeFile) return 0
     return activeFile.content.replace(/\s/g, '').length
@@ -368,7 +368,7 @@ function App() {
       const yyyy = String(now.getFullYear())
       const mm = String(now.getMonth() + 1).padStart(2, '0')
       const dd = String(now.getDate()).padStart(2, '0')
-      const fileName = `stories/chapter-${yyyy}${mm}${dd}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}.md`
+      const fileName = `stories/chapter-${yyyy}${mm}${dd}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}.txt`
       try {
         await createFile(fileName)
       } catch (e) {
@@ -761,21 +761,33 @@ function App() {
   // --- Effects ---
 
   useEffect(() => {
-    if (!showPreview || !activeFile || !canPreview) {
+    if (!showPreview || !activeFile) {
       setPreviewHtml('')
       return
     }
     const content = activeFile.content
     const t = window.setTimeout(() => {
       try {
-        const html = marked.parse(content, { breaks: true }) as string
-        setPreviewHtml(DOMPurify.sanitize(html))
+        const escapeHtml = (s: string) =>
+          s.replace(/[&<>"']/g, (c) => {
+            if (c === '&') return '&amp;'
+            if (c === '<') return '&lt;'
+            if (c === '>') return '&gt;'
+            if (c === '"') return '&quot;'
+            return '&#39;'
+          })
+        if (isMarkdownFile) {
+          const html = marked.parse(content, { breaks: true }) as string
+          setPreviewHtml(DOMPurify.sanitize(html))
+        } else {
+          setPreviewHtml(DOMPurify.sanitize(`<pre>${escapeHtml(content)}</pre>`))
+        }
       } catch {
         setPreviewHtml('')
       }
     }, 120)
     return () => window.clearTimeout(t)
-  }, [activeFile, canPreview, showPreview])
+  }, [activeFile, isMarkdownFile, showPreview])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -1257,7 +1269,7 @@ function App() {
           </button>
           <button
             className="icon-button"
-            disabled={!activeFile || !canPreview}
+            disabled={!activeFile}
             onClick={() => setShowPreview((v) => !v)}
             title="预览"
           >
@@ -1267,7 +1279,7 @@ function App() {
         <div className="editor-content">
           {activeFile ? (
             <>
-              <div className="editor-pane" style={showPreview && canPreview ? { width: '50%', maxWidth: '50%' } : undefined}>
+              <div className="editor-pane" style={showPreview ? { width: '50%', maxWidth: '50%' } : undefined}>
                 <Editor
                   theme="vs-dark"
                   language="plaintext"
@@ -1293,7 +1305,7 @@ function App() {
                   className="markdown-editor"
                 />
               </div>
-              {showPreview && canPreview ? (
+              {showPreview ? (
                 <div className="preview-pane">
                   {previewHtml ? (
                     <div dangerouslySetInnerHTML={{ __html: previewHtml }} />

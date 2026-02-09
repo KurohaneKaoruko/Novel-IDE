@@ -171,12 +171,6 @@ pub fn write_text(
   let target = root.join(rel);
   let rel_norm = relative_path.replace('\\', "/");
 
-  if (rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") || rel_norm.starts_with("stories/"))
-    && !rel_norm.to_lowercase().ends_with(".md")
-  {
-    return Err("concept/outline/stories 目录仅允许写入 .md 文件".to_string());
-  }
-
   if rel_norm == ".novel/.cache/outline.json" {
     let existing = if target.exists() {
       fs::read_to_string(&target).unwrap_or_default()
@@ -204,12 +198,6 @@ pub fn write_text(
 pub fn create_file(state: State<'_, AppState>, relative_path: String) -> Result<(), String> {
   let root = get_workspace_root(&state)?;
   let rel = validate_relative_path(&relative_path)?;
-  let rel_norm = relative_path.replace('\\', "/");
-  if (rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") || rel_norm.starts_with("stories/"))
-    && !rel_norm.to_lowercase().ends_with(".md")
-  {
-    return Err("concept/outline/stories 目录仅允许创建 .md 文件".to_string());
-  }
   let target = root.join(rel);
   if let Some(parent) = target.parent() {
     if !parent.exists() {
@@ -254,12 +242,6 @@ pub fn rename_entry(state: State<'_, AppState>, from_relative_path: String, to_r
   let root = get_workspace_root(&state)?;
   let from_rel = validate_relative_path(&from_relative_path)?;
   let to_rel = validate_relative_path(&to_relative_path)?;
-  let to_norm = to_relative_path.replace('\\', "/");
-  if (to_norm.starts_with("concept/") || to_norm.starts_with("outline/") || to_norm.starts_with("stories/"))
-    && !to_norm.to_lowercase().ends_with(".md")
-  {
-    return Err("concept/outline/stories 目录仅允许 .md 文件".to_string());
-  }
   let from = root.join(from_rel);
   let to = root.join(to_rel);
   if let Some(parent) = to.parent() {

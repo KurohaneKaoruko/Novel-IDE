@@ -8,6 +8,22 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+fn ensure_default_ext(path: &str) -> String {
+  let rel_norm = path.trim().replace('\\', "/");
+  let last = rel_norm.rsplit('/').next().unwrap_or("");
+  let has_ext = last.contains('.');
+  if has_ext {
+    return rel_norm;
+  }
+  if rel_norm.starts_with("stories/") {
+    format!("{rel_norm}.txt")
+  } else if rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") {
+    format!("{rel_norm}.md")
+  } else {
+    format!("{rel_norm}.txt")
+  }
+}
+
 #[derive(Clone)]
 pub struct ToolContext {
   pub workspace_root: PathBuf,
@@ -204,13 +220,8 @@ impl AgentRuntime {
       if path.trim().is_empty() {
         return Err("empty path".to_string());
       }
-      let rel_norm = path.replace('\\', "/");
-      if (rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") || rel_norm.starts_with("stories/"))
-        && !rel_norm.to_lowercase().ends_with(".md")
-      {
-        return Err("concept/outline/stories 目录仅允许 .md 文件".to_string());
-      }
-      let rel = commands::validate_relative_path(path)?;
+      let fixed = ensure_default_ext(path);
+      let rel = commands::validate_relative_path(fixed.as_str())?;
       let target = ctx.workspace_root.join(rel);
       if let Some(parent) = target.parent() {
         if !parent.exists() {
@@ -255,14 +266,9 @@ impl AgentRuntime {
       if from.trim().is_empty() || to.trim().is_empty() {
         return Err("empty path".to_string());
       }
-      let to_norm = to.replace('\\', "/");
-      if (to_norm.starts_with("concept/") || to_norm.starts_with("outline/") || to_norm.starts_with("stories/"))
-        && !to_norm.to_lowercase().ends_with(".md")
-      {
-        return Err("concept/outline/stories 目录仅允许 .md 文件".to_string());
-      }
+      let to_fixed = ensure_default_ext(to);
       let from_rel = commands::validate_relative_path(from)?;
-      let to_rel = commands::validate_relative_path(to)?;
+      let to_rel = commands::validate_relative_path(to_fixed.as_str())?;
       let from_abs = ctx.workspace_root.join(from_rel);
       let to_abs = ctx.workspace_root.join(to_rel);
       if let Some(parent) = to_abs.parent() {
@@ -286,13 +292,9 @@ impl AgentRuntime {
       if path.trim().is_empty() {
         return Err("empty path".to_string());
       }
-      let rel_norm = path.replace('\\', "/");
-      if (rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") || rel_norm.starts_with("stories/"))
-        && !rel_norm.to_lowercase().ends_with(".md")
-      {
-        return Err("concept/outline/stories 目录仅允许写入 .md 文件".to_string());
-      }
-      let rel = commands::validate_relative_path(path)?;
+      let fixed = ensure_default_ext(path);
+      let rel_norm = fixed.as_str().replace('\\', "/");
+      let rel = commands::validate_relative_path(fixed.as_str())?;
       let target = ctx.workspace_root.join(rel);
       if rel_norm == ".novel/.cache/outline.json" {
         let existing = if target.exists() {
@@ -339,7 +341,7 @@ impl AgentRuntime {
     let memory_text = self.memory.render(50);
     let mut messages: Vec<ChatMessage> = Vec::new();
     let react_prompt = format!(
-      "{sys}\n\n可用工具：{tools}\n\n当你需要调用工具时，严格使用三行格式：\\nACTION: tool_name\\nINPUT: {{...json...}}\\n然后等待 OBSERVATION。若无需工具，直接给出最终回答。\n\n文件系统规则：\n1) 所有 path 必须是相对路径，禁止绝对路径与 ..。\n2) 写文件不会自动创建父目录；若目录不存在，先用 fs_exists 检查，再用 fs_create_dir 创建。\n3) concept/、outline/、stories/ 下仅允许 .md 文件。",
+      "{sys}\n\n可用工具：{tools}\n\n当你需要调用工具时，严格使用三行格式：\\nACTION: tool_name\\nINPUT: {{...json...}}\\n然后等待 OBSERVATION。若无需工具，直接给出最终回答。\n\n文件系统规则：\n1) 所有 path 必须是相对路径，禁止绝对路径与 ..。\n2) 写文件不会自动创建父目录；若目录不存在，先用 fs_exists 检查，再用 fs_create_dir 创建。\n3) 默认扩展名：stories/ 下默认 .txt；concept/ 与 outline/ 下默认 .md；如果你需要其它格式，请显式写出扩展名。",
       sys = agent_system_prompt.trim(),
       tools = tool_list.join(", ")
     );
