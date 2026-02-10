@@ -43,7 +43,8 @@ fn main() {
       commands::git_diff,
       commands::git_commit,
       commands::git_log,
-      commands::chat_generate_stream
+      commands::chat_generate_stream,
+      commands::ai_assistance_generate
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -7,6 +7,7 @@ pub struct ChatMessage {
 }
 
 #[derive(Deserialize, Serialize, Clone)]
+#[allow(dead_code)]
 pub struct SelectionInfo {
   pub file_path: String,
   pub start_line: u32,

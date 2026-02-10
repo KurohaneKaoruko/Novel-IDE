@@ -25,3 +25,8 @@ dist-ssr
 
 .*/
 target/
+
+# Tests
+__tests__/
+*.test.ts
+*.test.tsx

@@ -40,8 +40,11 @@ import {
   type ModelProvider,
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
-import { modificationService } from './services'
+import { modificationService, aiAssistanceService, characterService } from './services'
 import DiffView from './components/DiffView'
+import EditorContextMenu from './components/EditorContextMenu'
+import { ChapterManager } from './components/ChapterManager'
+import { CharacterManager } from './components/CharacterManager'
 
 type OpenFile = {
   path: string
@@ -67,6 +70,12 @@ type ChatContextMenuState = {
   selection: string
 }
 
+type EditorContextMenuState = {
+  x: number
+  y: number
+  selectedText: string
+}
+
 type ExplorerContextMenuState = {
   x: number
   y: number
@@ -87,7 +96,7 @@ function App() {
   const [activeDiffTab, setActiveDiffTab] = useState<string | null>(null)
   
   // Activity Bar State
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git'>('files')
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters'>('files')
   const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | null>('chat')
 
   // Workspace & Files
@@ -124,6 +133,7 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatItem[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState | null>(null)
+  const [editorContextMenu, setEditorContextMenu] = useState<EditorContextMenuState | null>(null)
   const chatSessionIdRef = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   )
@@ -688,6 +698,20 @@ function App() {
     }
   }, [explorerContextMenu])
 
+  useEffect(() => {
+    if (!editorContextMenu) return
+    const onClick = () => setEditorContextMenu(null)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEditorContextMenu(null)
+    }
+    window.addEventListener('click', onClick)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('click', onClick)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [editorContextMenu])
+
   const onQuoteSelection = useCallback(() => {
     const text = getSelectionText().trim()
     if (!text) return
@@ -845,6 +869,154 @@ function App() {
     setActiveDiffTab(changeSetId)
     diffContext.setActiveChangeSet(changeSetId)
   }, [diffContext])
+
+  // --- Editor Context Menu Handlers ---
+
+  const openEditorContextMenu = useCallback((e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    const selectedText = getSelectionText()
+    if (!selectedText || selectedText.trim().length === 0) {
+      return
+    }
+    
+    setEditorContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      selectedText,
+    })
+  }, [getSelectionText])
+
+  const closeEditorContextMenu = useCallback(() => {
+    setEditorContextMenu(null)
+  }, [])
+
+  const handleAIPolish = useCallback(async () => {
+    if (!editorContextMenu || !activeFile) return
+    
+    const selectedText = editorContextMenu.selectedText
+    const editor = editorRef.current
+    const selection = editor?.getSelection()
+    
+    if (!selection) return
+    
+    setBusy(true)
+    setError(null)
+    
+    try {
+      // Call AI assistance service
+      const response = await aiAssistanceService.polishText(
+        selectedText,
+        activeFile.path
+      )
+      
+      // Get selection line numbers
+      const startLine = selection.startLineNumber
+      const endLine = selection.endLineNumber
+      
+      // Convert to ChangeSet
+      const changeSet = aiAssistanceService.convertToChangeSet(
+        response,
+        activeFile.path,
+        activeFile.content,
+        startLine,
+        endLine
+      )
+      
+      // Add to diff context and open diff view
+      diffContext.addChangeSet(changeSet)
+      onOpenDiffView(changeSet.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
+
+  const handleAIExpand = useCallback(async () => {
+    if (!editorContextMenu || !activeFile) return
+    
+    const selectedText = editorContextMenu.selectedText
+    const editor = editorRef.current
+    const selection = editor?.getSelection()
+    
+    if (!selection) return
+    
+    setBusy(true)
+    setError(null)
+    
+    try {
+      // Call AI assistance service
+      const response = await aiAssistanceService.expandText(
+        selectedText,
+        activeFile.path
+      )
+      
+      // Get selection line numbers
+      const startLine = selection.startLineNumber
+      const endLine = selection.endLineNumber
+      
+      // Convert to ChangeSet
+      const changeSet = aiAssistanceService.convertToChangeSet(
+        response,
+        activeFile.path,
+        activeFile.content,
+        startLine,
+        endLine
+      )
+      
+      // Add to diff context and open diff view
+      diffContext.addChangeSet(changeSet)
+      onOpenDiffView(changeSet.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
+
+  const handleAICondense = useCallback(async () => {
+    if (!editorContextMenu || !activeFile) return
+    
+    const selectedText = editorContextMenu.selectedText
+    const editor = editorRef.current
+    const selection = editor?.getSelection()
+    
+    if (!selection) return
+    
+    setBusy(true)
+    setError(null)
+    
+    try {
+      // Call AI assistance service
+      const response = await aiAssistanceService.condenseText(
+        selectedText,
+        activeFile.path
+      )
+      
+      // Get selection line numbers
+      const startLine = selection.startLineNumber
+      const endLine = selection.endLineNumber
+      
+      // Convert to ChangeSet
+      const changeSet = aiAssistanceService.convertToChangeSet(
+        response,
+        activeFile.path,
+        activeFile.content,
+        startLine,
+        endLine
+      )
+      
+      // Add to diff context and open diff view
+      diffContext.addChangeSet(changeSet)
+      onOpenDiffView(changeSet.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
 
   // --- Effects ---
 
@@ -1187,6 +1359,20 @@ function App() {
           >
             <span className="activity-bar-icon">📦</span>
           </div>
+          <div
+            className={`activity-bar-item ${activeSidebarTab === 'chapters' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('chapters')}
+            title="章节管理"
+          >
+            <span className="activity-bar-icon">📚</span>
+          </div>
+          <div
+            className={`activity-bar-item ${activeSidebarTab === 'characters' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('characters')}
+            title="人物管理"
+          >
+            <span className="activity-bar-icon">👤</span>
+          </div>
           <div className="spacer" />
           <div
             className="activity-bar-item"
@@ -1332,6 +1518,30 @@ function App() {
             </div>
           </>
         ) : null}
+
+        {activeSidebarTab === 'chapters' ? (
+          <ChapterManager
+            onChapterClick={(chapter) => {
+              // Open the chapter file in the editor
+              void onOpenByPath(chapter.filePath)
+            }}
+            onChapterUpdate={() => {
+              // Optionally refresh the file tree or perform other updates
+              if (workspaceRoot) {
+                void refreshTree()
+              }
+            }}
+          />
+        ) : null}
+
+        {activeSidebarTab === 'characters' ? (
+          <CharacterManager
+            onCharacterClick={(character) => {
+              // Optionally handle character click (e.g., show details)
+              console.log('Character clicked:', character)
+            }}
+          />
+        ) : null}
       </div>
 
       {/* Main Content */}
@@ -1399,6 +1609,83 @@ function App() {
                   onMount={(editor, monaco) => {
                     editorRef.current = editor
                     monacoRef.current = monaco
+                    
+                    // Add context menu handler
+                    editor.onContextMenu((e) => {
+                      const selectedText = getSelectionText()
+                      if (selectedText && selectedText.trim().length > 0) {
+                        openEditorContextMenu(e.event.browserEvent as unknown as MouseEvent)
+                      }
+                    })
+                    
+                    // Register character hover provider
+                    const hoverProvider = monaco.languages.registerHoverProvider('plaintext', {
+                      provideHover: async (model, position) => {
+                        // Get the word at the current position
+                        const word = model.getWordAtPosition(position)
+                        if (!word) return null
+                        
+                        const characterName = word.word
+                        
+                        try {
+                          // Search for the character by name
+                          const characters = await characterService.searchCharacters(characterName)
+                          
+                          // Find exact match (case-insensitive)
+                          const character = characters.find(
+                            c => c.name.toLowerCase() === characterName.toLowerCase()
+                          )
+                          
+                          if (!character) return null
+                          
+                          // Build hover content with character information
+                          const lines: string[] = [
+                            `**${character.name}**`,
+                            '',
+                          ]
+                          
+                          if (character.data.appearance) {
+                            lines.push(`**外貌**: ${character.data.appearance}`)
+                          }
+                          
+                          if (character.data.personality) {
+                            lines.push(`**性格**: ${character.data.personality}`)
+                          }
+                          
+                          if (character.data.background) {
+                            lines.push(`**背景**: ${character.data.background}`)
+                          }
+                          
+                          if (character.data.relationships) {
+                            lines.push(`**关系**: ${character.data.relationships}`)
+                          }
+                          
+                          if (character.data.notes) {
+                            lines.push(`**备注**: ${character.data.notes}`)
+                          }
+                          
+                          return {
+                            range: new monaco.Range(
+                              position.lineNumber,
+                              word.startColumn,
+                              position.lineNumber,
+                              word.endColumn
+                            ),
+                            contents: [
+                              { value: lines.join('\n\n') }
+                            ]
+                          }
+                        } catch (error) {
+                          console.error('Failed to fetch character data:', error)
+                          return null
+                        }
+                      }
+                    })
+                    
+                    // Clean up hover provider when editor is disposed
+                    editor.onDidDispose(() => {
+                      hoverProvider.dispose()
+                    })
                   }}
                   onChange={(v) => {
                     const value = v ?? ''
@@ -2334,6 +2621,19 @@ function App() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {/* Editor Context Menu */}
+      {editorContextMenu ? (
+        <EditorContextMenu
+          x={editorContextMenu.x}
+          y={editorContextMenu.y}
+          selectedText={editorContextMenu.selectedText}
+          onPolish={handleAIPolish}
+          onExpand={handleAIExpand}
+          onCondense={handleAICondense}
+          onClose={closeEditorContextMenu}
+        />
       ) : null}
     </div>
   )

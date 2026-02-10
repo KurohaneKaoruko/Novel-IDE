@@ -873,6 +873,54 @@ async fn call_anthropic(
     .ok_or_else(|| "missing content[0].text".to_string())
 }
 
+#[tauri::command]
+pub async fn ai_assistance_generate(
+  app: AppHandle,
+  _state: State<'_, AppState>,
+  prompt: String,
+) -> Result<String, String> {
+  let settings = app_settings::load(&app)?;
+  let client = reqwest::Client::new();
+  
+  let active_provider_id = settings.active_provider_id.clone();
+  let providers = settings.providers.clone();
+  let current_provider = providers
+    .iter()
+    .find(|p| p.id == active_provider_id)
+    .ok_or_else(|| "provider not found".to_string())?;
+  
+  // Create a simple message for AI assistance
+  let messages = vec![ChatMessage {
+    role: "user".to_string(),
+    content: prompt,
+  }];
+  
+  // Call the appropriate AI provider
+  match current_provider.kind {
+    app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
+      call_openai_compatible(
+        &app,
+        &client,
+        current_provider,
+        &messages,
+        "",
+        None,
+        None
+      ).await
+    },
+    app_settings::ProviderKind::Anthropic => {
+      call_anthropic(
+        &app,
+        &client,
+        current_provider,
+        &messages,
+        "",
+        None
+      ).await
+    }
+  }
+}
+
 fn get_workspace_root(state: &State<'_, AppState>) -> Result<PathBuf, String> {
   state
     .workspace_root
