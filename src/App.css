@@ -911,3 +911,301 @@ body {
   width: 800px;
   height: 600px;
 }
+
+/* DiffView Panel Overlay */
+.diff-panel-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.diff-panel-container {
+  width: 90%;
+  max-width: 1400px;
+  height: 85%;
+  background: #1e1e1e;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* DiffView Panel Tabs */
+.diff-panel-tabs {
+  display: flex;
+  align-items: center;
+  background: #252526;
+  border-bottom: 1px solid #3a3a3a;
+  padding: 0;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.diff-panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #2a2a2a;
+  border-right: 1px solid #3a3a3a;
+  cursor: pointer;
+  transition: background 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.diff-panel-tab:hover {
+  background: #333333;
+}
+
+.diff-panel-tab.active {
+  background: #1e1e1e;
+  border-bottom: 2px solid #007acc;
+}
+
+.diff-panel-tab-title {
+  font-size: 13px;
+  color: #d4d4d4;
+}
+
+.diff-panel-tab-status {
+  font-size: 11px;
+  color: #888;
+  padding: 2px 6px;
+  background: #3a3a3a;
+  border-radius: 3px;
+  text-transform: capitalize;
+}
+
+.diff-panel-tab-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.2s;
+}
+
+.diff-panel-tab-close:hover {
+  color: #ffffff;
+}
+
+.diff-panel-tabs-spacer {
+  flex: 1;
+}
+
+.diff-panel-close-all {
+  padding: 8px 16px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  color: #d4d4d4;
+  font-size: 12px;
+  cursor: pointer;
+  margin: 4px 8px;
+  border-radius: 3px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.diff-panel-close-all:hover {
+  background: #3a3a3a;
+}
+
+/* DiffView Panel Content */
+.diff-panel-content {
+  flex: 1;
+  overflow: auto;
+  background: #1e1e1e;
+}
+
+.diff-panel-files {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+.diff-panel-file {
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.diff-panel-empty {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  color: #888;
+  font-size: 14px;
+}
+
+/* DiffView Panel Footer */
+.diff-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 16px;
+  background: #252526;
+  border-top: 1px solid #3a3a3a;
+  flex-shrink: 0;
+}
+
+.diff-panel-view-mode-toggle {
+  padding: 6px 12px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  color: #d4d4d4;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+
+.diff-panel-view-mode-toggle:hover {
+  background: #3a3a3a;
+}
+
+/* Scrollbar for diff panel tabs */
+.diff-panel-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+
+.diff-panel-tabs::-webkit-scrollbar-track {
+  background: #252526;
+}
+
+.diff-panel-tabs::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 3px;
+}
+
+.diff-panel-tabs::-webkit-scrollbar-thumb:hover {
+  background: #4e4e4e;
+}
+
+/* File Modifications Display */
+.file-modifications {
+  margin-top: 12px;
+  padding: 10px;
+  background-color: #2d2d30;
+  border-radius: 6px;
+  border: 1px solid #3e3e42;
+}
+
+.file-modifications-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cccccc;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #3e3e42;
+}
+
+.file-modifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.file-modification-item {
+  padding: 8px;
+  background-color: #252526;
+  border-radius: 4px;
+  border: 1px solid #3e3e42;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.file-modification-item:hover {
+  background-color: #2a2d2e;
+  border-color: #007fd4;
+}
+
+.file-modification-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffffff;
+  margin-bottom: 4px;
+}
+
+.file-modification-name .file-name {
+  color: #4ec9b0;
+}
+
+.file-modification-path {
+  font-size: 11px;
+  color: #858585;
+  margin-bottom: 6px;
+  padding-left: 22px;
+}
+
+.file-modification-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  padding-left: 22px;
+}
+
+.stat-add {
+  color: #4ec9b0;
+  font-weight: 600;
+}
+
+.stat-delete {
+  color: #f48771;
+  font-weight: 600;
+}
+
+.stat-modify {
+  color: #dcdcaa;
+  font-weight: 600;
+}
+
+/* Progress Indicator for AI Processing */
+.ai-processing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: #2d2d30;
+  border-radius: 6px;
+  border: 1px solid #3e3e42;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #cccccc;
+}
+
+.ai-processing-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #3e3e42;
+  border-top-color: #007fd4;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

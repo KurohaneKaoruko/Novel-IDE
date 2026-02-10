@@ -39,6 +39,9 @@ import {
   type GitStatusItem,
   type ModelProvider,
 } from './tauri'
+import { useDiff } from './contexts/DiffContext'
+import { modificationService } from './services'
+import DiffView from './components/DiffView'
 
 type OpenFile = {
   path: string
@@ -53,6 +56,8 @@ type ChatItem = {
   content: string
   streaming?: boolean
   streamId?: string
+  changeSet?: import('./services/ModificationService').ChangeSet
+  timestamp?: number
 }
 
 type ChatContextMenuState = {
@@ -74,6 +79,13 @@ type ExplorerModalState =
   | { mode: 'rename'; entry: FsEntry; parentDir: string }
 
 function App() {
+  // Diff Context
+  const diffContext = useDiff()
+  
+  // DiffView State
+  const [showDiffPanel, setShowDiffPanel] = useState(false)
+  const [activeDiffTab, setActiveDiffTab] = useState<string | null>(null)
+  
   // Activity Bar State
   const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git'>('files')
   const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | null>('chat')
@@ -721,7 +733,12 @@ function App() {
       return
     }
 
-    const messagesToSend = [...chatMessages, user].map((m) => ({ role: m.role, content: m.content }))
+    const messagesToSend = [...chatMessages, user].map((m) => ({ 
+      id: m.id,
+      role: m.role, 
+      content: m.content,
+      timestamp: m.timestamp || Date.now()
+    }))
     try {
       const { chatGenerateStream } = await import('./tauriChat')
       await chatGenerateStream({
@@ -757,6 +774,77 @@ function App() {
       `上下文：\n${snippet}`
     void onSendChat(prompt)
   }, [activeFile, chapterWordTarget, activeCharCount, onSendChat])
+
+  // --- DiffView Handlers ---
+
+  const onAcceptModification = useCallback(async (changeSetId: string, modificationId: string) => {
+    try {
+      await modificationService.acceptModification(changeSetId, modificationId)
+      const updatedChangeSet = modificationService.getChangeSet(changeSetId)
+      if (updatedChangeSet) {
+        diffContext.updateChangeSet(updatedChangeSet)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [diffContext])
+
+  const onRejectModification = useCallback((changeSetId: string, modificationId: string) => {
+    try {
+      modificationService.rejectModification(changeSetId, modificationId)
+      const updatedChangeSet = modificationService.getChangeSet(changeSetId)
+      if (updatedChangeSet) {
+        diffContext.updateChangeSet(updatedChangeSet)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [diffContext])
+
+  const onAcceptAllModifications = useCallback(async (changeSetId: string) => {
+    try {
+      await modificationService.acceptAll(changeSetId)
+      const updatedChangeSet = modificationService.getChangeSet(changeSetId)
+      if (updatedChangeSet) {
+        diffContext.updateChangeSet(updatedChangeSet)
+      }
+      // Refresh tree after accepting all modifications
+      await refreshTree()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [diffContext, refreshTree])
+
+  const onRejectAllModifications = useCallback((changeSetId: string) => {
+    try {
+      modificationService.rejectAll(changeSetId)
+      const updatedChangeSet = modificationService.getChangeSet(changeSetId)
+      if (updatedChangeSet) {
+        diffContext.updateChangeSet(updatedChangeSet)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [diffContext])
+
+  const onCloseDiffView = useCallback((changeSetId: string) => {
+    diffContext.removeChangeSet(changeSetId)
+    if (activeDiffTab === changeSetId) {
+      // Switch to another tab if available
+      const remainingChangeSets = Array.from(diffContext.changeSets.keys()).filter(id => id !== changeSetId)
+      setActiveDiffTab(remainingChangeSets[0] || null)
+    }
+    // Close panel if no more change sets
+    if (diffContext.changeSets.size <= 1) {
+      setShowDiffPanel(false)
+    }
+  }, [diffContext, activeDiffTab])
+
+  const onOpenDiffView = useCallback((changeSetId: string) => {
+    setShowDiffPanel(true)
+    setActiveDiffTab(changeSetId)
+    diffContext.setActiveChangeSet(changeSetId)
+  }, [diffContext])
 
   // --- Effects ---
 
@@ -892,6 +980,30 @@ function App() {
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
       setChatMessages((prev) => prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, streaming: false } : m)))
+    }).then((u) => unlistenFns.push(u))
+
+    void listen('ai_change_set', (event) => {
+      const p = parsePayload(event.payload)
+      if (!p) return
+      const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
+      if (!streamId) return
+      const changeSet = p.changeSet as import('./services/ModificationService').ChangeSet | undefined
+      if (!changeSet) return
+      
+      // Add the ChangeSet to the DiffContext
+      diffContext.addChangeSet(changeSet)
+      
+      // Update the chat message with the ChangeSet
+      setChatMessages((prev) => 
+        prev.map((m) => 
+          m.role === 'assistant' && m.streamId === streamId 
+            ? { ...m, changeSet } 
+            : m
+        )
+      )
+      
+      // Open the DiffView panel
+      onOpenDiffView(changeSet.id)
     }).then((u) => unlistenFns.push(u))
 
     void listen('ai_error', (event) => {
@@ -1407,6 +1519,48 @@ function App() {
                         <div className="message-content" style={{ whiteSpace: 'pre-wrap' }} onContextMenu={(e) => openChatContextMenu(e, m.content)}>
                           {m.content || (m.role === 'assistant' && m.streaming ? '正在思考…' : '')}
                         </div>
+                        {m.role === 'assistant' && m.streaming ? (
+                          <div className="ai-processing-indicator">
+                            <div className="ai-processing-spinner" />
+                            <span>AI 正在处理文件...</span>
+                          </div>
+                        ) : null}
+                        {m.role === 'assistant' && m.changeSet && m.changeSet.files.length > 0 ? (
+                          <div className="file-modifications">
+                            <div className="file-modifications-header">
+                              <span className="file-icon">📝</span>
+                              <span>修改了 {m.changeSet.files.length} 个文件</span>
+                            </div>
+                            <div className="file-modifications-list">
+                              {m.changeSet.files.map((fileModification) => {
+                                const stats = {
+                                  additions: fileModification.modifications.filter(mod => mod.type === 'add').length,
+                                  deletions: fileModification.modifications.filter(mod => mod.type === 'delete').length,
+                                  modifications: fileModification.modifications.filter(mod => mod.type === 'modify').length,
+                                }
+                                return (
+                                  <div 
+                                    key={fileModification.filePath} 
+                                    className="file-modification-item"
+                                    onClick={() => onOpenDiffView(m.changeSet!.id)}
+                                    title="点击查看差异"
+                                  >
+                                    <div className="file-modification-name">
+                                      <span className="file-icon">📄</span>
+                                      <span className="file-name">{fileModification.filePath.split('/').pop()}</span>
+                                    </div>
+                                    <div className="file-modification-path">{fileModification.filePath}</div>
+                                    <div className="file-modification-stats">
+                                      {stats.additions > 0 && <span className="stat-add">+{stats.additions}</span>}
+                                      {stats.deletions > 0 && <span className="stat-delete">-{stats.deletions}</span>}
+                                      {stats.modifications > 0 && <span className="stat-modify">~{stats.modifications}</span>}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                         {m.role === 'assistant' && m.content ? (
                           <div className="ai-actions">
                             <button className="icon-button" disabled={!activeFile} onClick={() => insertAtCursor(m.content)} title="插入">
@@ -1488,6 +1642,85 @@ function App() {
         </div>
       </div>
     </div>
+
+      {/* DiffView Panel */}
+      {showDiffPanel && diffContext.changeSets.size > 0 ? (
+        <div className="diff-panel-overlay">
+          <div className="diff-panel-container">
+            <div className="diff-panel-tabs">
+              {Array.from(diffContext.changeSets.values()).map((changeSet) => (
+                <div
+                  key={changeSet.id}
+                  className={`diff-panel-tab ${activeDiffTab === changeSet.id ? 'active' : ''}`}
+                  onClick={() => {
+                    setActiveDiffTab(changeSet.id)
+                    diffContext.setActiveChangeSet(changeSet.id)
+                  }}
+                >
+                  <span className="diff-panel-tab-title">
+                    {changeSet.files.length} file{changeSet.files.length !== 1 ? 's' : ''}
+                  </span>
+                  <span className="diff-panel-tab-status">{changeSet.status}</span>
+                  <button
+                    className="diff-panel-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onCloseDiffView(changeSet.id)
+                    }}
+                    title="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <div className="diff-panel-tabs-spacer" />
+              <button
+                className="diff-panel-close-all"
+                onClick={() => {
+                  setShowDiffPanel(false)
+                  setActiveDiffTab(null)
+                }}
+                title="Close diff panel"
+              >
+                Close Panel
+              </button>
+            </div>
+
+            <div className="diff-panel-content">
+              {activeDiffTab && diffContext.changeSets.has(activeDiffTab) ? (
+                <div className="diff-panel-files">
+                  {diffContext.changeSets.get(activeDiffTab)!.files.map((fileModification) => (
+                    <div key={fileModification.filePath} className="diff-panel-file">
+                      <DiffView
+                        fileModification={fileModification}
+                        viewMode={diffContext.viewMode}
+                        onAccept={(modId) => onAcceptModification(activeDiffTab, modId)}
+                        onReject={(modId) => onRejectModification(activeDiffTab, modId)}
+                        onAcceptAll={() => onAcceptAllModifications(activeDiffTab)}
+                        onRejectAll={() => onRejectAllModifications(activeDiffTab)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="diff-panel-empty">
+                  <p>No diff view selected</p>
+                </div>
+              )}
+            </div>
+
+            <div className="diff-panel-footer">
+              <button
+                className="diff-panel-view-mode-toggle"
+                onClick={() => diffContext.toggleViewMode()}
+                title={`Switch to ${diffContext.viewMode === 'split' ? 'unified' : 'split'} view`}
+              >
+                {diffContext.viewMode === 'split' ? '⊟ Unified' : '⊞ Split'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Settings Modal */}
       {showSettings ? (

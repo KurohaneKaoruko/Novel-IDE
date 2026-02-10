@@ -341,7 +341,7 @@ impl AgentRuntime {
     let memory_text = self.memory.render(50);
     let mut messages: Vec<ChatMessage> = Vec::new();
     let react_prompt = format!(
-      "{sys}\n\n可用工具：{tools}\n\n当你需要调用工具时，严格使用三行格式：\\nACTION: tool_name\\nINPUT: {{...json...}}\\n然后等待 OBSERVATION。若无需工具，直接给出最终回答。\n\n文件系统规则：\n1) 所有 path 必须是相对路径，禁止绝对路径与 ..。\n2) 写文件不会自动创建父目录；若目录不存在，先用 fs_exists 检查，再用 fs_create_dir 创建。\n3) 默认扩展名：stories/ 下默认 .txt；concept/ 与 outline/ 下默认 .md；如果你需要其它格式，请显式写出扩展名。",
+      "{sys}\n\n可用工具：{tools}\n\n当你需要调用工具时，严格使用三行格式：\\nACTION: tool_name\\nINPUT: {{...json...}}\\n然后等待 OBSERVATION。若无需工具，直接给出最终回答。\n\n文件系统规则：\n1) 所有 path 必须是相对路径，禁止绝对路径与 ..。\n2) 写文件不会自动创建父目录；若目录不存在，先用 fs_exists 检查，再用 fs_create_dir 创建。\n3) 默认扩展名：stories/ 下默认 .txt；concept/ 与 outline/ 下默认 .md；如果你需要其它格式，请显式写出扩展名。\n\n文件编辑格式（用于多行编辑）：\n当你需要修改文件的特定行时，使用以下 XML 格式：\n<file_edit path=\"相对路径\">\n  <replace lines=\"起始行-结束行\">新内容</replace>\n  <insert at=\"行号\">插入内容</insert>\n  <delete lines=\"起始行-结束行\" />\n</file_edit>\n\n示例：\n<file_edit path=\"stories/chapter-001.txt\">\n  <replace lines=\"10-15\">\n  这是替换后的新内容\n  可以是多行\n  </replace>\n</file_edit>\n\n使用此格式时，用户将在 Diff 视图中看到修改对比，并可以选择接受或拒绝每个修改。",
       sys = agent_system_prompt.trim(),
       tools = tool_list.join(", ")
     );

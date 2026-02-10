@@ -8,6 +8,8 @@ mod agents;
 mod chat_history;
 mod secrets;
 mod state;
+mod modification_types;
+mod ai_response_parser;
 
 fn main() {
   tauri::Builder::default()

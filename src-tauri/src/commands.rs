@@ -610,6 +610,7 @@ pub fn chat_generate_stream(
       }
     };
 
+    let workspace_root_clone = workspace_root.clone();
     let mut runtime = agent_system::AgentRuntime::new(workspace_root);
     let start = Instant::now();
     let (mut response, perf) = match runtime
@@ -695,6 +696,24 @@ pub fn chat_generate_stream(
     if !effective_use_markdown {
       response = normalize_plaintext(&response);
     }
+
+    // Parse AI response for file modification instructions
+    let _change_set = match crate::ai_response_parser::parse_ai_response(&response, &workspace_root_clone) {
+      Ok(Some(cs)) => {
+        // Emit the ChangeSet to the frontend
+        let payload = serde_json::json!({
+          "streamId": stream_id,
+          "changeSet": cs
+        });
+        let _ = window.emit("ai_change_set", payload);
+        Some(cs)
+      }
+      Ok(None) => None,
+      Err(e) => {
+        eprintln!("Failed to parse AI response for modifications: {}", e);
+        None
+      }
+    };
 
     let step_chars = 48usize;
     let mut buf = String::new();
