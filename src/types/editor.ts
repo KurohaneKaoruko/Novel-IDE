@@ -70,6 +70,18 @@ export interface EditorConfig {
 }
 
 /**
+ * Context menu item configuration
+ */
+export interface ContextMenuItem {
+  id: string
+  label: string
+  icon?: string
+  shortcut?: string
+  action: (editor: LexicalEditor, selection: string) => void
+  condition?: (hasSelection: boolean) => boolean
+}
+
+/**
  * Props for the LexicalEditor component
  */
 export interface LexicalEditorProps {
@@ -105,6 +117,15 @@ export interface LexicalEditorProps {
   
   // File type to determine which plugin to use (.md for RichText, .txt for PlainText)
   fileType?: string
+  
+  // Whether to show the Markdown toolbar (only for .md files)
+  showMarkdownToolbar?: boolean
+  
+  // Custom context menu items
+  contextMenuItems?: ContextMenuItem[]
+  
+  // Callback when context menu item is clicked
+  onContextMenuItemClick?: (item: ContextMenuItem, selection: string) => void
 }
 
 /**

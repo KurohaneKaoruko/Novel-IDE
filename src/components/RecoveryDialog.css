@@ -1,0 +1,131 @@
+.recovery-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.recovery-dialog {
+  background-color: #252526;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.recovery-dialog-header {
+  padding: 20px;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.recovery-dialog-header h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #d4d4d4;
+}
+
+.recovery-dialog-header p {
+  margin: 0;
+  font-size: 14px;
+  color: #888;
+}
+
+.recovery-dialog-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.recovery-item {
+  background-color: #1e1e1e;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.recovery-item:hover {
+  background-color: #2a2a2a;
+  border-color: #4a4a4a;
+}
+
+.recovery-item.selected {
+  background-color: #2a2a2a;
+  border-color: #0e639c;
+}
+
+.recovery-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.recovery-item-path {
+  font-size: 13px;
+  color: #d4d4d4;
+  font-family: 'Consolas', 'Monaco', monospace;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recovery-item-time {
+  font-size: 12px;
+  color: #888;
+  margin-left: 12px;
+}
+
+.recovery-item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.recovery-button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 3px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.recovery-button.primary {
+  background-color: #0e639c;
+  color: #fff;
+}
+
+.recovery-button.primary:hover {
+  background-color: #1177bb;
+}
+
+.recovery-button.secondary {
+  background-color: #3a3a3a;
+  color: #d4d4d4;
+}
+
+.recovery-button.secondary:hover {
+  background-color: #4a4a4a;
+}
+
+.recovery-dialog-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #3a3a3a;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

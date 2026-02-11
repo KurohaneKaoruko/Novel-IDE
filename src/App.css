@@ -1,6 +1,7 @@
 /* Global & Reset */
 * {
   box-sizing: border-box;
+  writing-mode: horizontal-tb;
 }
 
 body {
@@ -32,7 +33,7 @@ body {
 
 /* Activity Bar (Leftmost vertical strip) */
 .activity-bar {
-  width: 48px;
+  width: 36px;
   background-color: #333333;
   display: flex;
   flex-direction: column;
@@ -43,8 +44,8 @@ body {
 }
 
 .activity-bar-item {
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -438,7 +439,7 @@ body {
 }
 
 .right-activity-bar {
-  width: 48px;
+  width: 36px;
   background-color: #333333;
   display: flex;
   flex-direction: column;
@@ -449,8 +450,8 @@ body {
 }
 
 .right-activity-item {
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
   display: flex;
   justify-content: center;
   align-items: center;

@@ -2,102 +2,73 @@
 
 This directory contains custom React hooks for the AI Novel Editor.
 
-## useSensitiveWordDetection
+## useAutoSave
 
-Hook for integrating sensitive word detection with Monaco Editor.
+Hook for automatically saving editor content to localStorage at regular intervals.
 
 ### Features
 
-- **Real-time detection**: Detects sensitive words as the user types
-- **Background processing**: Uses Web Worker to avoid blocking the UI thread
-- **Visual feedback**: Marks sensitive words with wavy underlines
-- **Severity levels**: Supports low, medium, and high severity with different colors
-- **Debounced updates**: Optimizes performance by debouncing detection requests
-- **Customizable dictionary**: Supports loading custom word lists
+- **Automatic saving**: Saves content at configurable intervals (default: 30 seconds)
+- **Crash recovery**: Enables recovery of unsaved content after application crashes
+- **Conditional saving**: Only saves when enabled and content is dirty
+- **Cleanup**: Provides functions to clear saved content after successful file save
 
 ### Usage
 
 ```typescript
-import { useSensitiveWordDetection } from './hooks/useSensitiveWordDetection';
+import { useAutoSave, getAutoSavedContent, clearAutoSavedContent } from './hooks/useAutoSave';
 
 function MyEditor() {
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const [enabled, setEnabled] = useState(true);
+  const [content, setContent] = useState('');
+  const [isDirty, setIsDirty] = useState(false);
   
-  const { sensitiveWordCount, isDetecting, loadDictionary } = useSensitiveWordDetection({
-    editor: editorRef.current,
-    enabled: enabled,
-    dictionary: ['敏感词1', '敏感词2', '敏感词3'],
-    debounceMs: 500, // Optional, defaults to 500ms
+  // Auto-save every 30 seconds
+  useAutoSave({
+    filePath: 'path/to/file.txt',
+    content: content,
+    enabled: isDirty,
+    intervalMs: 30000,
   });
 
+  // Check for auto-saved content on mount
+  useEffect(() => {
+    const saved = getAutoSavedContent('path/to/file.txt');
+    if (saved && saved.content !== content) {
+      // Prompt user to recover
+      setContent(saved.content);
+      setIsDirty(true);
+    }
+  }, []);
+
+  // Clear auto-save after successful save
+  const handleSave = async () => {
+    await saveFile(content);
+    clearAutoSavedContent('path/to/file.txt');
+    setIsDirty(false);
+  };
+
   return (
-    <div>
-      <div>检测到 {sensitiveWordCount} 个敏感词</div>
-      <Editor
-        onMount={(editor) => {
-          editorRef.current = editor;
-        }}
-      />
-    </div>
+    <Editor value={content} onChange={setContent} />
   );
 }
 ```
 
 ### Options
 
-- `editor`: Monaco editor instance (required)
-- `enabled`: Whether detection is enabled (required)
-- `dictionary`: Array of sensitive words to detect (optional, defaults to empty array)
-- `debounceMs`: Debounce delay in milliseconds (optional, defaults to 500)
-
-### Return Values
-
-- `sensitiveWordCount`: Number of sensitive words detected in the current document
-- `isDetecting`: Whether detection is currently in progress
-- `loadDictionary`: Function to load a new dictionary
-
-### Styling
-
-The hook applies CSS classes to detected words. You need to include the sensitive word styles:
-
-```typescript
-import './styles/sensitiveWord.css';
-```
-
-The following CSS classes are used:
-
-- `.sensitive-word-decoration-low`: Green wavy underline (low severity)
-- `.sensitive-word-decoration-medium`: Yellow wavy underline (medium severity)
-- `.sensitive-word-decoration-high`: Red wavy underline (high severity)
-- `.sensitive-word-decoration`: Orange wavy underline (default)
+- `filePath`: Path to the file being edited (required)
+- `content`: Current content to save (required)
+- `enabled`: Whether auto-save is enabled (required)
+- `intervalMs`: Save interval in milliseconds (optional, defaults to 30000)
 
 ### Requirements
 
 This hook implements the following requirements:
 
-- **Requirement 11.1**: Real-time sensitive word detection in the editor
-- **Requirement 11.2**: Visual marking with wavy underlines
-- **Requirement 15.4**: Background thread execution using Web Worker
-
-### Performance
-
-The hook is optimized for performance:
-
-- Detection runs in a Web Worker to avoid blocking the UI
-- Updates are debounced to reduce unnecessary processing
-- Only the latest detection request is processed (older requests are ignored)
-- Decorations are efficiently updated using Monaco's delta decorations API
-
-### Browser Support
-
-Requires browsers that support:
-
-- Web Workers
-- ES6 Modules in Workers
-- Monaco Editor
+- **Requirement 14.3**: Auto-save to local cache every 30 seconds
+- **Requirement 14.4**: Crash recovery functionality
 
 ### See Also
 
-- [SensitiveWordService](../services/SensitiveWordService.ts) - The underlying detection service
-- [Sensitive Word Worker](../workers/sensitiveWord.worker.ts) - The Web Worker implementation
+- [RecoveryDialog](../components/RecoveryDialog.tsx) - UI for recovering auto-saved content
+- [fileSaveErrorHandler](../utils/fileSaveErrorHandler.ts) - Error handling for file save operations
+

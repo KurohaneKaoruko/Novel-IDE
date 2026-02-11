@@ -24,3 +24,6 @@ export type { SensitiveWordMatch } from './SensitiveWordService';
 
 export { editorManager } from './EditorManager';
 export type { EditorInstance } from '../types/editor';
+
+export { editorConfigManager } from './EditorConfigManager';
+export type { EditorUserConfig } from './EditorConfigManager';

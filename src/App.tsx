@@ -42,14 +42,18 @@ import {
   type ModelProvider,
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
-import { modificationService, aiAssistanceService, editorManager } from './services'
+import { modificationService, aiAssistanceService, editorManager, editorConfigManager } from './services'
+import type { EditorUserConfig } from './services'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
 import { CharacterManager } from './components/CharacterManager'
 import { PlotLineManager } from './components/PlotLineManager'
 import { WritingGoalPanel } from './components/WritingGoalPanel'
-import './styles/sensitiveWord.css'
+import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
+import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks/useAutoSave'
+import { logError } from './utils/errorLogger'
+import { RecoveryDialog } from './components/RecoveryDialog'
 
 type OpenFile = {
   path: string
@@ -152,6 +156,9 @@ function App() {
   const [agentsSnapshot, setAgentsSnapshot] = useState<Agent[] | null>(null)
   const [apiKeyStatus, setApiKeyStatus] = useState<Record<string, boolean>>({})
 
+  // Recovery State
+  const [showRecoveryDialog, setShowRecoveryDialog] = useState(false)
+
   // Git State
   const [gitItems, setGitItems] = useState<GitStatusItem[]>([])
   const [gitCommits, setGitCommits] = useState<GitCommitInfo[]>([])
@@ -166,6 +173,9 @@ function App() {
     '暴力', '血腥', '色情', '政治', '敏感',
   ])
   const [newSensitiveWord, setNewSensitiveWord] = useState('')
+
+  // Editor Configuration State
+  const [editorUserConfig, setEditorUserConfig] = useState<EditorUserConfig>(editorConfigManager.getConfig())
 
   // Sensitive Word Detection Hook
   // TODO: Re-implement for Lexical in task 9
@@ -212,10 +222,22 @@ function App() {
     },
     onError: (error: Error) => {
       console.error('Lexical Editor Error:', error)
+      logError('Editor error in App', error, {
+        activePath,
+        activeFile: activeFile?.name,
+      })
       setError(error.message)
     },
     nodes: [],
-  }), [])
+  }), [activePath, activeFile])
+
+  // Auto-save active file content to localStorage every 30 seconds
+  useAutoSave({
+    filePath: activeFile?.path || '',
+    content: activeFile?.content || '',
+    enabled: !!activeFile && activeFile.dirty,
+    intervalMs: 30000, // 30 seconds
+  })
 
   // --- Actions ---
 
@@ -408,10 +430,23 @@ function App() {
           setActivePath(existing.path)
           return
         }
-        const content = await readText(entry.path)
-        const next: OpenFile = { path: entry.path, name: entry.name, content, dirty: false }
-        setOpenFiles((prev) => [...prev, next])
-        setActivePath(entry.path)
+        
+        // Check for auto-saved content
+        const autoSaved = getAutoSavedContent(entry.path)
+        let content = await readText(entry.path)
+        
+        // If auto-saved content exists and is different, use it
+        if (autoSaved && autoSaved.content !== content) {
+          content = autoSaved.content
+          // Mark as dirty since it has unsaved changes
+          const next: OpenFile = { path: entry.path, name: entry.name, content, dirty: true }
+          setOpenFiles((prev) => [...prev, next])
+          setActivePath(entry.path)
+        } else {
+          const next: OpenFile = { path: entry.path, name: entry.name, content, dirty: false }
+          setOpenFiles((prev) => [...prev, next])
+          setActivePath(entry.path)
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -454,9 +489,39 @@ function App() {
     try {
       await writeText(activeFile.path, activeFile.content)
       setOpenFiles((prev) => prev.map((f) => (f.path === activeFile.path ? { ...f, dirty: false } : f)))
+      
+      // Clear backup and auto-save after successful save
+      clearBackupContent(activeFile.path)
+      clearAutoSavedContent(activeFile.path)
+      
       await refreshTree()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const error = e instanceof Error ? e : new Error(String(e))
+      
+      // Use error handler to show user-friendly error and recovery options
+      const result = await handleFileSaveError({
+        filePath: activeFile.path,
+        content: activeFile.content,
+        error,
+        onRetry: async () => {
+          // Retry save
+          await writeText(activeFile.path, activeFile.content)
+          setOpenFiles((prev) => prev.map((f) => (f.path === activeFile.path ? { ...f, dirty: false } : f)))
+          clearBackupContent(activeFile.path)
+          clearAutoSavedContent(activeFile.path)
+          await refreshTree()
+        },
+        onSaveAs: async () => {
+          // TODO: Implement save as dialog (requires file picker)
+          // For now, just keep the dirty flag
+          console.log('Save as not implemented yet')
+        },
+      })
+      
+      // Keep dirty flag if save failed
+      if (result === 'cancel') {
+        setError(error.message)
+      }
     } finally {
       setBusy(false)
     }
@@ -1111,6 +1176,31 @@ function App() {
     }
   }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
 
+  const handleEditorChange = useCallback((content: string) => {
+    if (!activePath) return
+
+    // Skip state updates when content is unchanged to reduce re-renders.
+    setOpenFiles((prev) => {
+      let changed = false
+      const next = prev.map((f) => {
+        if (f.path !== activePath) return f
+        if (f.content === content) return f
+        changed = true
+        return { ...f, content, dirty: true }
+      })
+      return changed ? next : prev
+    })
+  }, [activePath])
+
+  const handleEditorReady = useCallback((editor: LexicalEditorType) => {
+    if (!activePath) return
+
+    // Register editor with EditorManager
+    editorManager.createEditor(activePath, editor)
+    // TODO: Add context menu handler for Lexical (task 13)
+    // TODO: Add character hover provider for Lexical (task 7)
+  }, [activePath])
+
   // --- Effects ---
 
   // Handle tab switching with state save/restore
@@ -1199,6 +1289,11 @@ function App() {
         if (!workspaceRoot && last) {
           await openWorkspacePath(last)
         }
+        
+        // Check for recovery candidates after workspace is loaded
+        setTimeout(() => {
+          setShowRecoveryDialog(true)
+        }, 1000) // Delay to let workspace load first
       } catch {
         setLastWorkspace(null)
       }
@@ -1230,6 +1325,33 @@ function App() {
     }, 500)
     return () => clearTimeout(timer)
   }, [sensitiveWordEnabled, sensitiveWordDictionary, saveSensitiveWordSettings, workspaceRoot])
+
+  // Subscribe to editor config changes and apply CSS variables
+  useEffect(() => {
+    const unsubscribe = editorConfigManager.subscribe((config) => {
+      setEditorUserConfig(config)
+      
+      // Apply CSS variables to the editor container
+      const editorContainer = document.querySelector('.lexical-editor-wrapper')
+      if (editorContainer instanceof HTMLElement) {
+        const cssVars = editorConfigManager.getCSSVariables()
+        Object.entries(cssVars).forEach(([key, value]) => {
+          editorContainer.style.setProperty(key, value)
+        })
+      }
+    })
+    
+    // Apply initial CSS variables
+    const editorContainer = document.querySelector('.lexical-editor-wrapper')
+    if (editorContainer instanceof HTMLElement) {
+      const cssVars = editorConfigManager.getCSSVariables()
+      Object.entries(cssVars).forEach(([key, value]) => {
+        editorContainer.style.setProperty(key, value)
+      })
+    }
+    
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -1516,7 +1638,7 @@ function App() {
         {activeSidebarTab === 'files' ? (
           <>
             <div className="sidebar-header">
-              <span>资源管理器</span>
+              <span>{workspaceRoot ? workspaceRoot.split(/[/\\]/).pop() || '项目' : '资源管理器'}</span>
               <div style={{ flex: 1 }} />
               {workspaceRoot ? (
                 <button className="icon-button" onClick={() => void refreshTree()} title="刷新">
@@ -1527,9 +1649,6 @@ function App() {
             <div className="sidebar-content">
               {workspaceRoot ? (
                 <>
-                  <div style={{ padding: '10px 20px', fontSize: '12px', fontWeight: 'bold', borderBottom: '1px solid #333' }}>
-                    {workspaceRoot.split(/[/\\]/).pop()}
-                  </div>
                   {error ? <div className="error-text">{error}</div> : null}
                   <div style={{ padding: '8px 10px', borderBottom: '1px solid #333' }}>
                     <input
@@ -1746,26 +1865,99 @@ function App() {
             <>
               <div className="editor-pane" style={showPreview ? { width: '50%', maxWidth: '50%' } : undefined}>
                 <LexicalEditor
+                  key={activeFile.path}
                   initialContent={activeFile.content}
-                  onChange={(content) => {
-                    // Update file content and mark as dirty
-                    setOpenFiles((prev) =>
-                      prev.map((f) => (f.path === activeFile.path ? { ...f, content, dirty: true } : f)),
-                    )
-                  }}
+                  onChange={handleEditorChange}
                   config={editorConfig}
                   readOnly={false}
                   placeholder="开始写作..."
                   editorRef={editorRef}
                   fileType={activeFile.path.split('.').pop() || 'txt'}
                   className="novel-editor"
-                  onReady={(editor) => {
-                    // Register editor with EditorManager
-                    editorManager.createEditor(activeFile.path, editor)
-                    
-                    // TODO: Add context menu handler for Lexical (task 13)
-                    // TODO: Add character hover provider for Lexical (task 7)
-                  }}
+                  onReady={handleEditorReady}
+                  contextMenuItems={[
+                    {
+                      id: 'ai-polish',
+                      label: 'AI 润色',
+                      icon: '✨',
+                      action: async (_editor, selection) => {
+                        if (!selection || !activeFile) return
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          const response = await aiAssistanceService.polishText(selection, activeFile.path)
+                          const changeSet = aiAssistanceService.convertToChangeSet(
+                            response,
+                            activeFile.path,
+                            activeFile.content,
+                            1,
+                            1
+                          )
+                          diffContext.addChangeSet(changeSet)
+                          onOpenDiffView(changeSet.id)
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      },
+                      condition: (hasSelection) => hasSelection,
+                    },
+                    {
+                      id: 'ai-expand',
+                      label: 'AI 扩写',
+                      icon: '📝',
+                      action: async (_editor, selection) => {
+                        if (!selection || !activeFile) return
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          const response = await aiAssistanceService.expandText(selection, activeFile.path)
+                          const changeSet = aiAssistanceService.convertToChangeSet(
+                            response,
+                            activeFile.path,
+                            activeFile.content,
+                            1,
+                            1
+                          )
+                          diffContext.addChangeSet(changeSet)
+                          onOpenDiffView(changeSet.id)
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      },
+                      condition: (hasSelection) => hasSelection,
+                    },
+                    {
+                      id: 'ai-condense',
+                      label: 'AI 缩写',
+                      icon: '✂️',
+                      action: async (_editor, selection) => {
+                        if (!selection || !activeFile) return
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          const response = await aiAssistanceService.condenseText(selection, activeFile.path)
+                          const changeSet = aiAssistanceService.convertToChangeSet(
+                            response,
+                            activeFile.path,
+                            activeFile.content,
+                            1,
+                            1
+                          )
+                          diffContext.addChangeSet(changeSet)
+                          onOpenDiffView(changeSet.id)
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      },
+                      condition: (hasSelection) => hasSelection,
+                    },
+                  ]}
                 />
               </div>
               {showPreview ? (
@@ -2116,9 +2308,9 @@ function App() {
               ) : (
                 <div className="settings-form">
                 <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff' }}>通用</h3>
+                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>通用</h3>
                   <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <label style={{ flex: 1 }}>Markdown 输出</label>
+                    <label style={{ flex: 1, writingMode: 'horizontal-tb' }}>Markdown 输出</label>
                     <input
                       type="checkbox"
                       checked={appSettings.output.use_markdown}
@@ -2141,13 +2333,158 @@ function App() {
                   </div>
                 </div>
 
+                {/* Editor Configuration Section */}
+                <div style={{ marginBottom: 20 }}>
+                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>编辑器配置</h3>
+                  
+                  {/* Font Family */}
+                  <div className="form-group">
+                    <label>字体</label>
+                    <select
+                      value={editorUserConfig.fontFamily}
+                      onChange={(e) => {
+                        editorConfigManager.updateConfig({ fontFamily: e.target.value })
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="system-ui, -apple-system, sans-serif">系统默认</option>
+                      <option value="'Songti SC', 'SimSun', serif">宋体</option>
+                      <option value="'Heiti SC', 'SimHei', sans-serif">黑体</option>
+                      <option value="'Kaiti SC', 'KaiTi', serif">楷体</option>
+                      <option value="'Microsoft YaHei', sans-serif">微软雅黑</option>
+                      <option value="'PingFang SC', sans-serif">苹方</option>
+                      <option value="monospace">等宽字体</option>
+                    </select>
+                  </div>
+
+                  {/* Font Size */}
+                  <div className="form-group">
+                    <label>字号 ({editorUserConfig.fontSize}px)</label>
+                    <input
+                      type="range"
+                      min="10"
+                      max="32"
+                      step="1"
+                      value={editorUserConfig.fontSize}
+                      onChange={(e) => {
+                        editorConfigManager.updateConfig({ fontSize: Number(e.target.value) })
+                      }}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  {/* Line Height */}
+                  <div className="form-group">
+                    <label>行高 ({editorUserConfig.lineHeight})</label>
+                    <input
+                      type="range"
+                      min="1.0"
+                      max="3.0"
+                      step="0.1"
+                      value={editorUserConfig.lineHeight}
+                      onChange={(e) => {
+                        editorConfigManager.updateConfig({ lineHeight: Number(e.target.value) })
+                      }}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+
+                  {/* Theme */}
+                  <div className="form-group">
+                    <label>主题</label>
+                    <select
+                      value={editorUserConfig.theme}
+                      onChange={(e) => {
+                        editorConfigManager.updateConfig({ theme: e.target.value as 'light' | 'dark' })
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="dark">暗色</option>
+                      <option value="light">亮色</option>
+                    </select>
+                  </div>
+
+                  {/* Editor Width */}
+                  <div className="form-group">
+                    <label>编辑器宽度</label>
+                    <select
+                      value={editorUserConfig.editorWidth}
+                      onChange={(e) => {
+                        editorConfigManager.updateConfig({ editorWidth: e.target.value as 'centered' | 'full' })
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="centered">居中（800px）</option>
+                      <option value="full">全宽</option>
+                    </select>
+                  </div>
+
+                  {/* Auto-save Interval */}
+                  <div className="form-group">
+                    <label>自动保存间隔 ({editorUserConfig.autoSaveInterval === 0 ? '禁用' : `${editorUserConfig.autoSaveInterval}秒`})</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="300"
+                      step="10"
+                      value={editorUserConfig.autoSaveInterval}
+                      onChange={(e) => {
+                        editorConfigManager.updateConfig({ autoSaveInterval: Number(e.target.value) })
+                      }}
+                      style={{ width: '100%' }}
+                    />
+                    <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                      {editorUserConfig.autoSaveInterval === 0 ? '自动保存已禁用' : `每 ${editorUserConfig.autoSaveInterval} 秒自动保存到本地缓存`}
+                    </div>
+                  </div>
+
+                  {/* Reset Button */}
+                  <div style={{ marginTop: 12 }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: 12, padding: '6px 12px' }}
+                      onClick={() => {
+                        void (async () => {
+                          const ok = await showConfirm('确定要重置编辑器配置为默认值吗？')
+                          if (ok) {
+                            editorConfigManager.resetConfig()
+                          }
+                        })()
+                      }}
+                    >
+                      重置为默认值
+                    </button>
+                  </div>
+                </div>
+
                 {/* Sensitive Word Configuration Section */}
                 <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff' }}>敏感词检测</h3>
+                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>敏感词检测</h3>
                   
                   {/* Enable/Disable Toggle */}
                   <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                    <label style={{ flex: 1 }}>启用敏感词检测</label>
+                    <label style={{ flex: 1, writingMode: 'horizontal-tb' }}>启用敏感词检测</label>
                     <input
                       type="checkbox"
                       checked={sensitiveWordEnabled}
@@ -2255,7 +2592,7 @@ function App() {
 
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <h3 style={{ fontSize: 14, color: '#fff', margin: 0 }}>模型配置</h3>
+                    <h3 style={{ fontSize: 14, color: '#fff', margin: 0, writingMode: 'horizontal-tb' }}>模型配置</h3>
                     <button
                       className="primary-button"
                       style={{ fontSize: 12, padding: '4px 8px' }}
@@ -2353,7 +2690,7 @@ function App() {
                 </div>
 
                 <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff' }}>智能体管理</h3>
+                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>智能体管理</h3>
                   
                   {/* Built-in Agents */}
                   <div style={{ marginBottom: 16 }}>
@@ -2832,6 +3169,23 @@ function App() {
           onClose={closeEditorContextMenu}
         />
       ) : null}
+      
+      {/* Recovery Dialog */}
+      {showRecoveryDialog && (
+        <RecoveryDialog
+          onRecover={(filePath, content) => {
+            // Open the recovered file
+            void onOpenByPath(filePath)
+            // Update the content
+            setOpenFiles((prev) =>
+              prev.map((f) =>
+                f.path === filePath ? { ...f, content, dirty: true } : f
+              )
+            )
+          }}
+          onClose={() => setShowRecoveryDialog(false)}
+        />
+      )}
     </div>
   )
 }

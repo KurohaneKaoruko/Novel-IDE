@@ -1,3 +1,5 @@
 export { LexicalEditor } from './LexicalEditor'
+export { EditorErrorBoundary } from './EditorErrorBoundary'
+export { SimpleFallbackEditor } from './SimpleFallbackEditor'
 export type { LexicalEditorProps } from '../../types/editor'
 export type { ExtendedLexicalEditor } from './LexicalEditor'
