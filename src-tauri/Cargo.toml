@@ -26,9 +26,13 @@ notify = "6.1.1"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
+epub-builder = "0.4.8"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory"] }
+
+[target.'cfg(all(windows, target_env = "msvc"))'.dependencies]
+printpdf = "0.8.2"
 
 [profile.dev]
 incremental = true
@@ -37,8 +41,6 @@ incremental = true
 panic = "abort"
 lto = true
 codegen-units = 1
-
-
 
 
 

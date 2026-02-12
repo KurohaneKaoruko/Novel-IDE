@@ -6,14 +6,16 @@ use crate::app_data;
 use crate::branding;
 use crate::chat_history;
 use crate::secrets;
+use crate::spec_kit;
+use crate::spec_kit_export;
 use crate::state::AppState;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 use tauri::AppHandle;
 use tauri::Emitter;
-use tauri::Manager;
 use tauri::State;
 use notify::{EventKind, RecursiveMode, Watcher};
 
@@ -132,6 +134,8 @@ pub fn init_novel(state: State<'_, AppState>) -> Result<(), String> {
     let raw = serde_json::json!({ "relations": [] }).to_string();
     fs::write(relations_path, raw).map_err(|e| format!("write relations failed: {e}"))?;
   }
+
+  spec_kit::ensure_spec_kit_defaults(&novel_dir)?;
 
   Ok(())
 }
@@ -917,6 +921,166 @@ pub async fn ai_assistance_generate(
       ).await
     }
   }
+}
+
+#[tauri::command]
+pub fn spec_kit_generate_outline(state: State<'_, AppState>) -> Result<spec_kit::StorySpec, String> {
+  let root = get_workspace_root(&state)?;
+  let novel_dir = root.join(".novel");
+  spec_kit::ensure_spec_kit_defaults(&novel_dir)?;
+
+  let config = spec_kit::load_config(&novel_dir)?;
+  let template = spec_kit::load_story_template(&novel_dir, &config.story_type)?;
+  let spec = spec_kit::generate_story_spec_from_config(&config, &template);
+
+  let spec_path = novel_dir.join(".spec-kit").join("story_spec.json");
+  let raw = serde_json::to_string_pretty(&spec).map_err(|e| format!("serialize story spec failed: {e}"))?;
+  fs::write(spec_path, raw).map_err(|e| format!("write story spec failed: {e}"))?;
+
+  let _ = append_spec_kit_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "event": "generate_outline",
+      "story_type": config.story_type,
+      "chapter_count": spec.chapters.len()
+    }),
+  );
+
+  Ok(spec)
+}
+
+#[tauri::command]
+pub fn spec_kit_validate_story_spec(state: State<'_, AppState>) -> Result<spec_kit::ValidationReport, String> {
+  let root = get_workspace_root(&state)?;
+  let novel_dir = root.join(".novel");
+  let config = spec_kit::load_config(&novel_dir).ok();
+
+  let spec_path = novel_dir.join(".spec-kit").join("story_spec.json");
+  let raw = fs::read_to_string(&spec_path).map_err(|e| format!("read story spec failed: {e}"))?;
+  let spec: spec_kit::StorySpec = serde_json::from_str(&raw).map_err(|e| format!("parse story spec failed: {e}"))?;
+
+  let mut report = spec_kit::validate_story_spec(&spec, config.as_ref());
+
+  let outline_path = novel_dir.join(".cache").join("outline.json");
+  if outline_path.exists() {
+    if let Ok(outline_raw) = fs::read_to_string(&outline_path) {
+      if let Err(msg) = validate_outline("", &outline_raw) {
+        report.issues.push(spec_kit::ValidationIssue {
+          severity: "error".to_string(),
+          code: "timeline.conflict".to_string(),
+          message: msg,
+          path: ".novel/.cache/outline.json".to_string(),
+        });
+      }
+    }
+  }
+
+  let err_count = report.issues.iter().filter(|i| i.severity == "error").count();
+  let warn_count = report.issues.iter().filter(|i| i.severity == "warning").count();
+  let _ = append_spec_kit_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "event": "validate_story_spec",
+      "errors": err_count,
+      "warnings": warn_count
+    }),
+  );
+
+  Ok(report)
+}
+
+#[tauri::command]
+pub fn spec_kit_match_character_arcs(state: State<'_, AppState>) -> Result<spec_kit::ArcMap, String> {
+  let root = get_workspace_root(&state)?;
+  let novel_dir = root.join(".novel");
+
+  let spec_path = novel_dir.join(".spec-kit").join("story_spec.json");
+  let raw = fs::read_to_string(&spec_path).map_err(|e| format!("read story spec failed: {e}"))?;
+  let mut spec: spec_kit::StorySpec = serde_json::from_str(&raw).map_err(|e| format!("parse story spec failed: {e}"))?;
+
+  let arc_map = spec_kit::generate_arc_map_and_fill_defaults(&mut spec);
+
+  let spec_raw = serde_json::to_string_pretty(&spec).map_err(|e| format!("serialize story spec failed: {e}"))?;
+  fs::write(&spec_path, spec_raw).map_err(|e| format!("write story spec failed: {e}"))?;
+
+  let arc_map_path = novel_dir.join(".spec-kit").join("arc_map.json");
+  let arc_raw = serde_json::to_string_pretty(&arc_map).map_err(|e| format!("serialize arc map failed: {e}"))?;
+  fs::write(arc_map_path, arc_raw).map_err(|e| format!("write arc map failed: {e}"))?;
+
+  let _ = append_spec_kit_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "event": "match_character_arcs",
+      "characters": spec.characters.len()
+    }),
+  );
+
+  Ok(arc_map)
+}
+
+#[tauri::command]
+pub fn spec_kit_export_markdown(state: State<'_, AppState>) -> Result<String, String> {
+  let root = get_workspace_root(&state)?;
+  let (path, bytes) = spec_kit_export::export_markdown(&root)?;
+  append_spec_kit_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "event": "export_markdown",
+      "path": path,
+      "bytes": bytes
+    }),
+  )?;
+  Ok(path)
+}
+
+#[tauri::command]
+pub fn spec_kit_export_epub(state: State<'_, AppState>) -> Result<String, String> {
+  let root = get_workspace_root(&state)?;
+  let (path, bytes) = spec_kit_export::export_epub(&root)?;
+  append_spec_kit_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "event": "export_epub",
+      "path": path,
+      "bytes": bytes
+    }),
+  )?;
+  Ok(path)
+}
+
+#[tauri::command]
+pub fn spec_kit_export_pdf(state: State<'_, AppState>) -> Result<String, String> {
+  let root = get_workspace_root(&state)?;
+  let (path, bytes) = spec_kit_export::export_pdf(&root)?;
+  append_spec_kit_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "event": "export_pdf",
+      "path": path,
+      "bytes": bytes
+    }),
+  )?;
+  Ok(path)
+}
+
+fn append_spec_kit_log(root: &Path, entry: serde_json::Value) -> Result<(), String> {
+  let log_dir = root.join(".novel").join(".logs");
+  fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir failed: {e}"))?;
+  let path = log_dir.join("spec_kit.jsonl");
+  let mut line = entry.to_string();
+  line.push('\n');
+  fs::OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(path)
+    .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
+    .map_err(|e| format!("append log failed: {e}"))
 }
 
 fn get_workspace_root(state: &State<'_, AppState>) -> Result<PathBuf, String> {

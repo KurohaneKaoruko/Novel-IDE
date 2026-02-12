@@ -12,6 +12,8 @@ mod secrets;
 mod state;
 mod modification_types;
 mod ai_response_parser;
+mod spec_kit;
+mod spec_kit_export;
 
 fn main() {
   tauri::Builder::default()
@@ -46,7 +48,13 @@ fn main() {
       commands::git_commit,
       commands::git_log,
       commands::chat_generate_stream,
-      commands::ai_assistance_generate
+      commands::ai_assistance_generate,
+      commands::spec_kit_generate_outline,
+      commands::spec_kit_validate_story_spec,
+      commands::spec_kit_match_character_arcs,
+      commands::spec_kit_export_markdown,
+      commands::spec_kit_export_epub,
+      commands::spec_kit_export_pdf
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

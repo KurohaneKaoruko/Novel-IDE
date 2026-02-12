@@ -102,9 +102,11 @@ function ConfigListenerPlugin({ wrapperRef }: { wrapperRef: React.RefObject<HTML
 function InitialContentPlugin({
   content,
   lastEditorContentRef,
+  onChange,
 }: {
   content: string
   lastEditorContentRef: MutableRefObject<string | null>
+  onChange: (content: string, editor: any) => void
 }) {
   const [editor] = useLexicalComposerContext()
   
@@ -127,7 +129,14 @@ function InitialContentPlugin({
         root.append(paragraph)
       })
     })
-  }, [editor, content, lastEditorContentRef])
+
+    editor.getEditorState().read(() => {
+      const root = $getRoot()
+      const textContent = root.getTextContent()
+      lastEditorContentRef.current = textContent
+      onChange(textContent, editor)
+    })
+  }, [editor, content, lastEditorContentRef, onChange])
   
   return null
 }
@@ -298,8 +307,19 @@ export function LexicalEditor({
   const contentEditableRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const lastEditorContentRef = useRef<string | null>(null)
+  const onChangeRef = useRef(onChange)
   const [useFallback, setUseFallback] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
+
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
+
+  const emitOnChange = useMemo(() => {
+    return (content: string, editor: any) => {
+      onChangeRef.current(content, editor)
+    }
+  }, [])
   
   // Apply editor configuration CSS variables on mount
   useEffect(() => {
@@ -321,10 +341,10 @@ export function LexicalEditor({
         const root = $getRoot()
         const textContent = root.getTextContent()
         lastEditorContentRef.current = textContent
-        onChange(textContent, editor)
+        emitOnChange(textContent, editor)
       })
     }
-  }, [onChange])
+  }, [])
   
   // Use a ref to store the debounce timer
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -448,7 +468,7 @@ export function LexicalEditor({
           <KeyboardShortcutsPlugin />
           {useRichText && <ListPlugin />}
           <OnChangePlugin onChange={debouncedHandleChange} />
-          <InitialContentPlugin content={initialContent} lastEditorContentRef={lastEditorContentRef} />
+          <InitialContentPlugin content={initialContent} lastEditorContentRef={lastEditorContentRef} onChange={emitOnChange} />
           <EditorRefPlugin editorRef={editorRef} onReady={onReady} />
           <ConfigListenerPlugin wrapperRef={wrapperRef} />
           <AIAssistPlugin />

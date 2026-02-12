@@ -82,21 +82,10 @@ export function AIAssistPlugin({ onReady }: AIAssistPluginProps) {
           if ($isRangeSelection(selection)) {
             selection.insertText(text)
           } else {
-            // If no selection, insert at the end
             const root = $getRoot()
-            const lastChild = root.getLastChild()
-            if (lastChild) {
-              lastChild.selectEnd()
-              const newSelection = $getSelection()
-              if ($isRangeSelection(newSelection)) {
-                newSelection.insertText(text)
-              }
-            } else {
-              // Empty editor, create a paragraph with text
-              const paragraph = $createParagraphNode()
-              paragraph.append($createTextNode(text))
-              root.append(paragraph)
-            }
+            const paragraph = $createParagraphNode()
+            paragraph.append($createTextNode(text))
+            root.append(paragraph)
           }
         })
         
@@ -116,21 +105,10 @@ export function AIAssistPlugin({ onReady }: AIAssistPluginProps) {
             // Delete current selection and insert new text
             selection.insertText(text)
           } else {
-            // No selection, insert at end
             const root = $getRoot()
-            const lastChild = root.getLastChild()
-            if (lastChild) {
-              lastChild.selectEnd()
-              const newSelection = $getSelection()
-              if ($isRangeSelection(newSelection)) {
-                newSelection.insertText(text)
-              }
-            } else {
-              // Empty editor
-              const paragraph = $createParagraphNode()
-              paragraph.append($createTextNode(text))
-              root.append(paragraph)
-            }
+            const paragraph = $createParagraphNode()
+            paragraph.append($createTextNode(text))
+            root.append(paragraph)
           }
         })
         

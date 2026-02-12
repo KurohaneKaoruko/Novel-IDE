@@ -51,6 +51,8 @@ import { ChapterManager } from './components/ChapterManager'
 import { CharacterManager } from './components/CharacterManager'
 import { PlotLineManager } from './components/PlotLineManager'
 import { WritingGoalPanel } from './components/WritingGoalPanel'
+import { SpecKitPanel } from './components/SpecKitPanel'
+import { SpecKitLintPanel } from './components/SpecKitLintPanel'
 import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
 import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks/useAutoSave'
 import { logError } from './utils/errorLogger'
@@ -106,8 +108,8 @@ function App() {
   const [activeDiffTab, setActiveDiffTab] = useState<string | null>(null)
   
   // Activity Bar State
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines'>('files')
-  const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | null>('chat')
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit'>('files')
+  const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | 'spec-kit' | null>('chat')
 
   // Workspace & Files
   const [workspaceInput, setWorkspaceInput] = useState('')
@@ -1621,6 +1623,13 @@ function App() {
           >
             <span className="activity-bar-icon">📈</span>
           </div>
+          <div
+            className={`activity-bar-item ${activeSidebarTab === 'specKit' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('specKit')}
+            title="Spec-Kit"
+          >
+            <span className="activity-bar-icon">🧩</span>
+          </div>
           <div className="spacer" />
           <div
             className="activity-bar-item"
@@ -1802,6 +1811,8 @@ function App() {
             }}
           />
         ) : null}
+
+        {activeSidebarTab === 'specKit' ? <SpecKitPanel /> : null}
       </div>
 
       {/* Main Content */}
@@ -1941,6 +1952,33 @@ function App() {
                         setError(null)
                         try {
                           const response = await aiAssistanceService.condenseText(selection, activeFile.path)
+                          const changeSet = aiAssistanceService.convertToChangeSet(
+                            response,
+                            activeFile.path,
+                            activeFile.content,
+                            1,
+                            1
+                          )
+                          diffContext.addChangeSet(changeSet)
+                          onOpenDiffView(changeSet.id)
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : String(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      },
+                      condition: (hasSelection) => hasSelection,
+                    },
+                    {
+                      id: 'ai-spec-kit-fix',
+                      label: 'Spec-Kit 修正',
+                      icon: '🧩',
+                      action: async (_editor, selection) => {
+                        if (!selection || !activeFile) return
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          const response = await aiAssistanceService.specKitFixText(selection, activeFile.path)
                           const changeSet = aiAssistanceService.convertToChangeSet(
                             response,
                             activeFile.path,
@@ -2171,6 +2209,10 @@ function App() {
                 }}
               />
             ) : null}
+
+            {activeRightTab === 'spec-kit' ? (
+              <SpecKitLintPanel text={activeFile?.content ?? ''} enabled={!!activeFile} />
+            ) : null}
           </aside>
         ) : null}
 
@@ -2198,6 +2240,13 @@ function App() {
             title="写作目标"
           >
             🎯
+          </div>
+          <div
+            className={`right-activity-item ${activeRightTab === 'spec-kit' ? 'active' : ''}`}
+            onClick={() => setActiveRightTab(activeRightTab === 'spec-kit' ? null : 'spec-kit')}
+            title="Spec-Kit 检查"
+          >
+            🧩
           </div>
         </div>
       </div>
