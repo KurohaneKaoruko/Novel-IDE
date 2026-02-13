@@ -1,4 +1,3 @@
-import type * as monaco from 'monaco-editor';
 import type { SensitiveWordMatch } from '../services/SensitiveWordService';
 
 export interface SensitiveWordHoverProviderParams {
@@ -17,9 +16,9 @@ function getSeverityEmoji(severity: SensitiveWordMatch['severity']): string {
   return '🚫';
 }
 
-export function createSensitiveWordHoverProvider({ getMatches }: SensitiveWordHoverProviderParams): monaco.languages.HoverProvider {
+export function createSensitiveWordHoverProvider({ getMatches }: SensitiveWordHoverProviderParams): { provideHover: (model: any, position: any) => any } {
   return {
-    provideHover: (model, position) => {
+    provideHover: (model: any, position: any) => {
       const RangeCtor = (globalThis as any).monaco?.Range;
       if (!RangeCtor) return null;
 

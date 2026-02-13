@@ -52,9 +52,8 @@ function clamp01(v: number): number {
 
 function countMatches(text: string, re: RegExp): number {
   let count = 0;
-  let m: RegExpExecArray | null;
   const r = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
-  while ((m = r.exec(text))) count += 1;
+  while (r.exec(text)) count += 1;
   return count;
 }
 
