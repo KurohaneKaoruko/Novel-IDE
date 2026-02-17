@@ -148,6 +148,9 @@ function App() {
   const chatSessionIdRef = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   )
+  // Chat session management (future feature)
+  // const [chatSessions, setChatSessions] = useState<Array<{ id: string; name: string; updatedAt: number }>>([])
+  // const [showSessionManager, setShowSessionManager] = useState(false)
 
   // Settings & Agents
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null)
@@ -1596,13 +1599,6 @@ function App() {
             <span className="activity-bar-icon">📁</span>
           </div>
           <div
-            className={`activity-bar-item ${activeSidebarTab === 'git' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('git')}
-            title="源代码管理"
-          >
-            <span className="activity-bar-icon">📦</span>
-          </div>
-          <div
             className={`activity-bar-item ${activeSidebarTab === 'chapters' ? 'active' : ''}`}
             onClick={() => setActiveSidebarTab('chapters')}
             title="章节管理"
@@ -1629,6 +1625,13 @@ function App() {
             title="Spec-Kit"
           >
             <span className="activity-bar-icon">🧩</span>
+          </div>
+          <div
+            className={`activity-bar-item ${activeSidebarTab === 'git' ? 'active' : ''}`}
+            onClick={() => setActiveSidebarTab('git')}
+            title="源代码管理"
+          >
+            <span className="activity-bar-icon">📦</span>
           </div>
           <div className="spacer" />
           <div
@@ -2035,6 +2038,21 @@ function App() {
             {activeRightTab === 'chat' ? (
               <>
                 <div className="ai-header">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, color: '#888', fontWeight: 500 }}>AI 对话</span>
+                    <button 
+                      className="icon-button" 
+                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      onClick={() => {
+                        const newId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+                        chatSessionIdRef.current = newId
+                        setChatMessages([])
+                      }}
+                      title="新建对话"
+                    >
+                      ➕ 新会话
+                    </button>
+                  </div>
                   <div className="ai-config-row">
                     <select
                       className="ai-select"
