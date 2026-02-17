@@ -2920,7 +2920,7 @@ function App() {
                       let base = editingProvider.base_url
                       if (k === 'OpenAI') base = 'https://api.openai.com/v1'
                       else if (k === 'Anthropic') base = 'https://api.anthropic.com'
-                      else if (k === 'Minimax') base = 'https://api.minimax.chat/v1'
+                      else if (k === 'Minimax') base = 'https://api.minimaxi.com/v1'
                       else if (k === 'ZAI') base = 'https://open.bigmodel.cn/api/paas/v4'
                       else if (k === 'Custom') base = ''
                       setEditingProvider((p) => ({ ...p, kind: k, base_url: base }))
@@ -2947,7 +2947,7 @@ function App() {
                   <input
                     value={editingProvider.model_name ?? ''}
                     onChange={(e) => setEditingProvider((p) => ({ ...p, model_name: e.target.value }))}
-                    placeholder={editingProvider.kind === 'Minimax' ? '例如：abab6.5s-chat' : editingProvider.kind === 'ZAI' ? '例如：glm-4' : '例如：gpt-4o, deepseek-chat'}
+                    placeholder={editingProvider.kind === 'Minimax' ? '例如：MiniMax-M2.1, MiniMax-M2.5' : editingProvider.kind === 'ZAI' ? '例如：glm-4' : '例如：gpt-4o, deepseek-chat'}
                   />
                 </div>
                 <div className="form-group">
