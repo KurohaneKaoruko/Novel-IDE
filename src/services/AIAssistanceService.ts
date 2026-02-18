@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ChangeSet, FileModification } from './ModificationService';
+import type { ChangeSet } from './ModificationService';
 import { diffService } from './DiffService';
 import type { SpecKitConfig } from './SpecKitService';
 
@@ -125,39 +125,37 @@ export class AIAssistanceService {
   convertToChangeSet(
     response: AIAssistanceResponse,
     filePath: string,
-    fileContent: string,
+    _fileContent: string,
     selectionStartLine: number,
     _selectionEndLine: number
   ): ChangeSet {
-    // Compute diff between original and modified text
     const diffResult = diffService.computeDiff(
       response.originalText,
       response.modifiedText
     );
 
-    // Convert diff to modifications
     const modifications = diffService.diffToModifications(diffResult);
 
-    // Adjust line numbers to match the file position
     const adjustedModifications = modifications.map(mod => ({
       ...mod,
       lineStart: mod.lineStart + selectionStartLine - 1,
       lineEnd: mod.lineEnd + selectionStartLine - 1,
     }));
 
-    // Create file modification
-    const fileModification: FileModification = {
-      filePath,
-      originalContent: fileContent,
-      modifications: adjustedModifications,
-      status: 'pending',
-    };
+    let additions = 0;
+    let deletions = 0;
+    for (const mod of adjustedModifications) {
+      if (mod.type === 'add') additions++;
+      else if (mod.type === 'delete') deletions++;
+      else if (mod.type === 'modify') { additions++; deletions++; }
+    }
 
-    // Create change set
     const changeSet: ChangeSet = {
       id: this.generateChangeSetId(),
       timestamp: Date.now(),
-      files: [fileModification],
+      filePath,
+      modifications: adjustedModifications,
+      stats: { additions, deletions },
       status: 'pending',
     };
 

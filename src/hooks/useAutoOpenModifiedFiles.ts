@@ -16,7 +16,7 @@ export function useAutoOpenModifiedFiles(
   options: UseAutoOpenModifiedFilesOptions
 ) {
   const { onOpenFile, enabled = true } = options
-  const { changeSets, activeChangeSetId, setActiveChangeSet } = useDiff()
+  const { changeSets, activeChangeSetId } = useDiff()
 
   // Track which files have been auto-opened
   const openedFilesRef = new Set<string>()
@@ -59,7 +59,7 @@ export function useAutoOpenModifiedFiles(
  * Hook that highlights modified lines in the editor
  */
 export function useHighlightModifiedLines() {
-  const { changeSets, activeChangeSetId, getChangeSet } = useDiff()
+  const { activeChangeSetId, getChangeSet } = useDiff()
 
   const activeChangeSet = activeChangeSetId ? getChangeSet(activeChangeSetId) : null
 

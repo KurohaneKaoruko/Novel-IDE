@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// MCP Server 配置
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
     pub id: String,
@@ -13,6 +14,7 @@ pub struct McpServer {
 }
 
 /// MCP Tool 定义
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpTool {
     pub name: String,
@@ -21,6 +23,7 @@ pub struct McpTool {
 }
 
 /// MCP Resource 定义
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpResource {
     pub uri: String,
@@ -30,6 +33,7 @@ pub struct McpResource {
 }
 
 /// MCP Server 运行时状态
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerStatus {
     pub server_id: String,
@@ -40,6 +44,7 @@ pub struct McpServerStatus {
 }
 
 /// 预配置的 MCP Servers
+#[allow(dead_code)]
 pub fn default_mcp_servers() -> Vec<McpServer> {
     vec![
         // 可以添加默认的 MCP 服务器配置
@@ -48,6 +53,7 @@ pub fn default_mcp_servers() -> Vec<McpServer> {
 }
 
 impl McpServer {
+    #[allow(dead_code)]
     pub fn new(id: &str, name: &str, command: &str) -> Self {
         Self {
             id: id.to_string(),

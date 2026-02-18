@@ -12,7 +12,7 @@ export type TabItem = {
 
 type TabBarProps = {
   tabs: TabItem[]
-  activeTab: string
+  activeTab: string | null
   onTabSelect: (id: string) => void
   onTabClose: (id: string) => void
   onTabsReorder?: (fromIndex: number, toIndex: number) => void

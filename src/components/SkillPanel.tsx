@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { getSkills, getSkillCategories, getSkillsByCategory, applySkill, type Skill } from '../tauri'
+import { useState, useEffect } from 'react'
+import { getSkills, getSkillCategories, type Skill } from '../tauri'
 import './SkillPanel.css'
 
 type SkillPanelProps = {
@@ -44,7 +44,7 @@ export function SkillPanel({ isOpen, onClose, onApplySkill, currentContent = '' 
     if (!selectedSkill || !currentContent) return
     setApplying(true)
     try {
-      const result = await onApplySkill(selectedSkill.id, currentContent)
+      await onApplySkill(selectedSkill.id, currentContent)
       onClose()
     } catch (error) {
       console.error('Failed to apply skill:', error)

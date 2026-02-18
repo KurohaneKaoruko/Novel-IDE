@@ -46,7 +46,7 @@ export function StatsPanel({ stats }: StatsPanelProps) {
         </div>
         <div className="stats-main-divider" />
         <div className="stats-main-item">
-          <span className="stats-main-value">{stats.avgFormatted}</span>
+          <span className="stats-main-value">{avgFormatted}</span>
           <span className="stats-main-label">日均</span>
         </div>
       </div>

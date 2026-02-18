@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
-import type { FileModification } from '../services';
+import type { ChangeSet } from '../services';
 import './DiffView.css';
 
 export type ViewMode = 'split' | 'unified';
 
 export interface DiffViewProps {
-  fileModification: FileModification;
+  changeSet: ChangeSet;
   viewMode: ViewMode;
   onAccept: (modificationId: string) => void;
   onReject: (modificationId: string) => void;
@@ -14,13 +14,8 @@ export interface DiffViewProps {
   onClose?: () => void;
 }
 
-/**
- * DiffView Component
- * Displays file modifications with side-by-side or unified diff view
- * Supports accepting/rejecting individual modifications or all at once
- */
 export const DiffView: React.FC<DiffViewProps> = ({
-  fileModification,
+  changeSet,
   viewMode,
   onAccept,
   onReject,
@@ -28,53 +23,16 @@ export const DiffView: React.FC<DiffViewProps> = ({
   onRejectAll,
   onClose,
 }) => {
-  const { filePath, originalContent, modifications, status } = fileModification;
+  const { filePath, modifications, stats, status } = changeSet;
 
-  // Split content into lines for display
-  const originalLines = useMemo(() => originalContent.split('\n'), [originalContent]);
-
-  // Calculate modified content by applying all modifications
-  const modifiedContent = useMemo(() => {
-    let result = originalContent;
-    // Sort modifications by line number (descending) to apply from bottom to top
-    const sortedMods = [...modifications].sort((a, b) => b.lineStart - a.lineStart);
-    
-    for (const mod of sortedMods) {
-      if (mod.status !== 'accepted') continue;
-      
-      const lines = result.split('\n');
-      const before = lines.slice(0, mod.lineStart);
-      const after = lines.slice(mod.lineEnd + 1);
-      
-      if (mod.type === 'add' && mod.modifiedText) {
-        const newLines = mod.modifiedText.split('\n');
-        result = [...before, ...newLines, ...after].join('\n');
-      } else if (mod.type === 'delete') {
-        result = [...before, ...after].join('\n');
-      } else if (mod.type === 'modify' && mod.modifiedText) {
-        const newLines = mod.modifiedText.split('\n');
-        result = [...before, ...newLines, ...after].join('\n');
-      }
-    }
-    
-    return result;
-  }, [originalContent, modifications]);
-
-  const modifiedLines = useMemo(() => modifiedContent.split('\n'), [modifiedContent]);
-
-  // Get modification statistics
-  const stats = useMemo(() => {
-    const additions = modifications.filter(m => m.type === 'add').length;
-    const deletions = modifications.filter(m => m.type === 'delete').length;
-    const changes = modifications.filter(m => m.type === 'modify').length;
+  const modifiedStats = useMemo(() => {
     const pending = modifications.filter(m => m.status === 'pending').length;
     const accepted = modifications.filter(m => m.status === 'accepted').length;
     const rejected = modifications.filter(m => m.status === 'rejected').length;
     
-    return { additions, deletions, changes, pending, accepted, rejected };
+    return { pending, accepted, rejected };
   }, [modifications]);
 
-  // Render line with modification highlighting
   const renderLine = (lineNum: number, content: string, type: 'original' | 'modified') => {
     const mod = modifications.find(m => lineNum >= m.lineStart && lineNum <= m.lineEnd);
     
@@ -96,51 +54,65 @@ export const DiffView: React.FC<DiffViewProps> = ({
     );
   };
 
-  // Render split view (side-by-side)
   const renderSplitView = () => {
+    const originalLines: Array<{ lineNum: number; content: string }> = [];
+    const modifiedLines: Array<{ lineNum: number; content: string }> = [];
+
+    for (const mod of modifications) {
+      if (mod.type === 'delete' || mod.type === 'modify') {
+        const lines = (mod.originalText || '').split('\n');
+        lines.forEach((line, i) => {
+          originalLines.push({ lineNum: mod.lineStart + i, content: line });
+        });
+      }
+      if (mod.type === 'add' || mod.type === 'modify') {
+        const lines = (mod.modifiedText || '').split('\n');
+        lines.forEach((line, i) => {
+          modifiedLines.push({ lineNum: mod.lineStart + i, content: line });
+        });
+      }
+    }
+
     return (
       <div className="diff-split-view">
         <div className="diff-pane diff-pane-original">
           <div className="diff-pane-header">Original</div>
           <div className="diff-pane-content">
-            {originalLines.map((line, idx) => renderLine(idx, line, 'original'))}
+            {originalLines.map((line) => renderLine(line.lineNum, line.content, 'original'))}
           </div>
         </div>
         <div className="diff-pane diff-pane-modified">
           <div className="diff-pane-header">Modified</div>
           <div className="diff-pane-content">
-            {modifiedLines.map((line, idx) => renderLine(idx, line, 'modified'))}
+            {modifiedLines.map((line) => renderLine(line.lineNum, line.content, 'modified'))}
           </div>
         </div>
       </div>
     );
   };
 
-  // Render unified view (interleaved)
   const renderUnifiedView = () => {
-    const lines: Array<{ lineNum: number; content: string; type: 'original' | 'modified' | 'unchanged' }> = [];
-    
-    // Simple unified view: show all original lines with modifications highlighted
-    originalLines.forEach((line, idx) => {
-      const mod = modifications.find(m => idx >= m.lineStart && idx <= m.lineEnd);
-      if (mod) {
-        if (mod.type === 'delete') {
-          lines.push({ lineNum: idx, content: line, type: 'original' });
-        } else if (mod.type === 'modify' && mod.modifiedText) {
-          lines.push({ lineNum: idx, content: line, type: 'original' });
-          lines.push({ lineNum: idx, content: mod.modifiedText, type: 'modified' });
-        } else if (mod.type === 'add' && mod.modifiedText) {
-          lines.push({ lineNum: idx, content: mod.modifiedText, type: 'modified' });
-        }
-      } else {
-        lines.push({ lineNum: idx, content: line, type: 'unchanged' });
+    const lines: Array<{ lineNum: number; content: string; type: 'original' | 'modified' }> = [];
+
+    for (const mod of modifications) {
+      if (mod.type === 'delete' || mod.type === 'modify') {
+        const modLines = (mod.originalText || '').split('\n');
+        modLines.forEach((line, i) => {
+          lines.push({ lineNum: mod.lineStart + i, content: line, type: 'original' });
+        });
       }
-    });
-    
+      if (mod.type === 'add' || mod.type === 'modify') {
+        const modLines = (mod.modifiedText || '').split('\n');
+        modLines.forEach((line, i) => {
+          lines.push({ lineNum: mod.lineStart + i, content: line, type: 'modified' });
+        });
+      }
+    }
+
     return (
       <div className="diff-unified-view">
         <div className="diff-pane-content">
-          {lines.map((line) => renderLine(line.lineNum, line.content, line.type === 'modified' ? 'modified' : 'original'))}
+          {lines.map((line) => renderLine(line.lineNum, line.content, line.type))}
         </div>
       </div>
     );
@@ -154,11 +126,10 @@ export const DiffView: React.FC<DiffViewProps> = ({
           <span className="diff-stats">
             <span className="diff-stat-add">+{stats.additions}</span>
             <span className="diff-stat-delete">-{stats.deletions}</span>
-            <span className="diff-stat-modify">~{stats.changes}</span>
           </span>
           <span className="diff-status">
-            {status === 'pending' && `${stats.pending} pending`}
-            {status === 'partial' && `${stats.accepted} accepted, ${stats.pending} pending`}
+            {status === 'pending' && `${modifiedStats.pending} pending`}
+            {status === 'partial' && `${modifiedStats.accepted} accepted, ${modifiedStats.pending} pending`}
             {status === 'accepted' && 'All accepted'}
             {status === 'rejected' && 'All rejected'}
           </span>
@@ -167,7 +138,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
           <button 
             className="diff-btn diff-btn-accept-all" 
             onClick={onAcceptAll}
-            disabled={stats.pending === 0}
+            disabled={modifiedStats.pending === 0}
             title="Accept all pending modifications"
           >
             Accept All
@@ -175,7 +146,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
           <button 
             className="diff-btn diff-btn-reject-all" 
             onClick={onRejectAll}
-            disabled={stats.pending === 0}
+            disabled={modifiedStats.pending === 0}
             title="Reject all pending modifications"
           >
             Reject All

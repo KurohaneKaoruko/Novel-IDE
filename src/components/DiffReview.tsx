@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
-import type { ChangeSet, FileModification } from '../services/ModificationService'
+import { useMemo, useState } from 'react'
+import type { ChangeSet } from '../services/ModificationService'
 import './DiffReview.css'
 
 type DiffReviewProps = {
@@ -158,7 +158,7 @@ function SplitDiffView({ changeSet }: { changeSet: ChangeSet }) {
         <div className="diff-pane-content">
           {modifications.map((mod) => (
             <div key={mod.id} className="diff-block">
-              {mod.type !== 'delete' && (
+              {mod.type !== 'delete' && mod.modifiedText && (
                 <>
                   {mod.modifiedText.split('\n').map((line, i) => (
                     <div key={i} className={`diff-line ${mod.type === 'add' ? 'add' : 'modify'}`}>

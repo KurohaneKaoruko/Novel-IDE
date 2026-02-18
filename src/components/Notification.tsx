@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, type ReactNode } from 'react'
+import { useState, useCallback } from 'react'
 import './Notification.css'
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error'
@@ -11,12 +11,6 @@ export type Notification = {
   title?: string
   message: string
   duration?: number
-}
-
-type NotificationContextType = {
-  notifications: Notification[]
-  addNotification: (notification: Omit<Notification, 'id'>) => void
-  removeNotification: (id: string) => void
 }
 
 let notificationId = 0

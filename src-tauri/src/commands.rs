@@ -6,11 +6,13 @@ use crate::app_data;
 use crate::branding;
 use crate::chat_history;
 use crate::secrets;
+use crate::skills::{Skill, SkillManager};
 use crate::spec_kit;
 use crate::spec_kit_export;
 use crate::state::AppState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
@@ -1345,33 +1347,34 @@ fn build_tree(root: &Path, path: &Path, max_depth: usize) -> Result<FsEntry, Str
 // ============ Skill Commands ============
 
 #[tauri::command]
-pub fn get_skills() -> Vec<skills::Skill> {
-    let manager = skills::SkillManager::new();
+pub fn get_skills() -> Vec<Skill> {
+    let manager = SkillManager::new();
     manager.get_all().into_iter().cloned().collect()
 }
 
 #[tauri::command]
 pub fn get_skill_categories() -> Vec<String> {
-    let manager = skills::SkillManager::new();
+    let manager = SkillManager::new();
     manager.categories()
 }
 
 #[tauri::command]
-pub fn get_skills_by_category(category: String) -> Vec<skills::Skill> {
-    let manager = skills::SkillManager::new();
+pub fn get_skills_by_category(category: String) -> Vec<Skill> {
+    let manager = SkillManager::new();
     manager.get_by_category(&category).into_iter().cloned().collect()
 }
 
 #[tauri::command]
 pub fn apply_skill(skill_id: String, content: String) -> String {
-    let manager = skills::SkillManager::new();
+    let manager = SkillManager::new();
     manager.apply_skill(&skill_id, &content)
 }
 
 // ============ Book Split Commands ============
 
-use crate::book_split::{BookAnalysis, BookSplitConfig, BookSplitResult, ChapterInfo, CharacterInfo, SettingInfo, SplitChapter};
+use crate::book_split::{BookAnalysis, BookSplitConfig, BookSplitResult, ChapterInfo, SplitChapter};
 
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn analyze_book(content: String, title: String) -> Result<BookAnalysis, String> {
     // 简单分析实现
@@ -1480,6 +1483,7 @@ pub async fn analyze_book(content: String, title: String) -> Result<BookAnalysis
     Ok(analysis)
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn split_book(content: String, title: String, config: BookSplitConfig) -> Result<BookSplitResult, String> {
     let words: Vec<&str> = content.lines().collect();
@@ -1498,7 +1502,7 @@ pub async fn split_book(content: String, title: String, config: BookSplitConfig)
         if current_words >= target_words {
             // 查找合适的断点（句号、段落结束）
             let mut break_point = current_content.len();
-            for (i, c) in current_content.char().rev().enumerate() {
+            for (i, c) in current_content.chars().rev().enumerate() {
                 if c == '。' || c == '！' || c == '？' || c == '\n' {
                     break_point = current_content.len() - i;
                     break;
@@ -1513,6 +1517,8 @@ pub async fn split_book(content: String, title: String, config: BookSplitConfig)
                 title: format!("第{}章", chapter_id),
                 content: chapter_content,
                 word_count: chapter_words,
+                start_index: 0,
+                end_index: 0,
                 summary: None,
             });
             
@@ -1531,22 +1537,28 @@ pub async fn split_book(content: String, title: String, config: BookSplitConfig)
                 title: format!("第{}章", chapter_id),
                 content: current_content,
                 word_count: chapter_words,
+                start_index: 0,
+                end_index: 0,
                 summary: None,
             });
         }
     }
-    
+
+    let total_words: usize = chapters.iter().map(|c| c.word_count).sum();
     let mut metadata = HashMap::new();
     metadata.insert("total_chapters".to_string(), chapters.len().to_string());
     metadata.insert("target_words_per_chapter".to_string(), target_words.to_string());
-    
+
     Ok(BookSplitResult {
+        title: title.clone(),
         original_title: title,
         chapters,
+        total_words,
         metadata,
     })
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn extract_chapters(content: String) -> Result<Vec<ChapterInfo>, String> {
     let lines: Vec<&str> = content.lines().collect();
@@ -1610,14 +1622,14 @@ pub async fn extract_chapters(content: String) -> Result<Vec<ChapterInfo>, Strin
 
 // ============ AI Book Analysis Commands ============
 
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn ai_analyze_book_deep(
     content: String,
     title: String,
-    openai_key: String,
+    _openai_key: String,
 ) -> Result<String, String> {
-    // 调用AI进行深度分析
-    let prompt = format!(r#"请分析以下小说内容，提供详细的书本结构分析：
+    let _prompt = format!(r#"请分析以下小说内容，提供详细的书本结构分析：
 
 书籍标题：{}
 
@@ -1648,14 +1660,15 @@ pub async fn ai_analyze_book_deep(
     Ok("AI分析功能需要配置API Key".to_string())
 }
 
+#[allow(dead_code)]
 #[tauri::command]
 pub async fn ai_split_by_ai(
     content: String,
-    title: String,
+    _title: String,
     target_words: u32,
-    openai_key: String,
+    _openai_key: String,
 ) -> Result<String, String> {
-    let prompt = format!(r#"请将以下小说内容拆分成章节，每章大约{}字：
+    let _prompt = format!(r#"请将以下小说内容拆分成章节，每章大约{}字：
 
 要求：
 1. 在合适的断点分割（句号、段落结束）
@@ -1677,7 +1690,7 @@ pub async fn ai_split_by_ai(
 
 // ============ Book Analysis Commands ============
 
-use crate::book_split::{BookAnalysisResult, BookAnalysisConfig, Act, PlotLine, TurningPoint, ClimaxPoint, PowerMoment, CharacterAnalysis, WorldSetting, WritingTechnique};
+use crate::book_split::{BookAnalysisResult, Act, TurningPoint, PowerMoment, CharacterAnalysis, WritingTechnique};
 
 #[tauri::command]
 pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysisResult, String> {
@@ -1690,23 +1703,19 @@ pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysis
     
     // 分析章节标题模式
     let mut chapter_count = 0;
-    let mut current_chapter_start = 0;
     
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         // 检测章节标题
         if trimmed.starts_with("第") && (trimmed.contains("章") || trimmed.contains("节") || trimmed.contains("回")) {
             chapter_count += 1;
-            if chapter_count == 1 {
-                current_chapter_start = i;
-            }
         }
     }
     
     let actual_chapters = if chapter_count > 0 { chapter_count } else { estimated_chapters };
     
     // 生成结构分析
-    result.structure.type = if actual_chapters > 100 {
+    result.structure.r#type = if actual_chapters > 100 {
         "长篇多线结构".to_string()
     } else if actual_chapters > 50 {
         "中长篇结构".to_string()
@@ -1738,17 +1747,17 @@ pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysis
         result.rhythm.turning_points = vec![
             TurningPoint {
                 chapter: actual_chapters / 4,
-                type: "minor_climax".to_string(),
+                r#type: "minor_climax".to_string(),
                 description: "First conflict resolution".to_string()
             },
             TurningPoint {
                 chapter: actual_chapters / 2,
-                type: "major_turn".to_string(),
+                r#type: "major_turn".to_string(),
                 description: "Core conflict erupts".to_string()
             },
             TurningPoint {
                 chapter: (actual_chapters as f32 * 0.75) as usize,
-                type: "climax".to_string(),
+                r#type: "climax".to_string(),
                 description: "Final battle".to_string()
             },
         ];
@@ -1764,9 +1773,9 @@ pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysis
     
     // Analyze common web novel power moments
     result.power_moments = vec![
-        PowerMoment { chapter: actual_chapters / 5, type: "face_slap".to_string(), description: "Protagonist shames the antagonist".to_string(), frequency: "high".to_string() },
-        PowerMoment { chapter: actual_chapters / 3, type: "reversal".to_string(), description: "Weak to strong, defeats powerful enemy".to_string(), frequency: "medium".to_string() },
-        PowerMoment { chapter: actual_chapters / 2, type: "gain".to_string(), description: "Obtain treasure/legacy".to_string(), frequency: "high".to_string() },
+        PowerMoment { chapter: actual_chapters / 5, r#type: "face_slap".to_string(), description: "Protagonist shames the antagonist".to_string(), frequency: "high".to_string() },
+        PowerMoment { chapter: actual_chapters / 3, r#type: "reversal".to_string(), description: "Weak to strong, defeats powerful enemy".to_string(), frequency: "medium".to_string() },
+        PowerMoment { chapter: actual_chapters / 2, r#type: "gain".to_string(), description: "Obtain treasure/legacy".to_string(), frequency: "high".to_string() },
     ];
     
     // Character analysis (sample)
@@ -1820,7 +1829,7 @@ pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysis
         title,
         word_count,
         actual_chapters,
-        result.structure.type,
+        result.structure.r#type,
         result.rhythm.conflict_density,
         result.rhythm.conflict_density
     );

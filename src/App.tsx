@@ -53,10 +53,9 @@ import { PlotLineManager } from './components/PlotLineManager'
 import { WritingGoalPanel } from './components/WritingGoalPanel'
 import { SpecKitPanel } from './components/SpecKitPanel'
 import { SpecKitLintPanel } from './components/SpecKitLintPanel'
-import { DiffReviewPanel } from './components/DiffReviewPanel'
 import { StatusBar } from './components/StatusBar'
-import { CommandPalette, type Command } from './components/CommandPalette'
-import { TabBar, type TabItem } from './components/TabBar'
+import { CommandPalette } from './components/CommandPalette'
+import { TabBar } from './components/TabBar'
 import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
 import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks/useAutoSave'
 import { logError } from './utils/errorLogger'
@@ -199,13 +198,10 @@ function App() {
   //   dictionary: sensitiveWordDictionary,
   //   debounceMs: 500,
   // })
-  const sensitiveWordCount = 0
-  const isSensitiveWordDetecting = false
   const [gitError, setGitError] = useState<string | null>(null)
 
   // Stats & Visuals
   const [chapterWordTarget, setChapterWordTarget] = useState<number>(2000)
-  const [writingSeconds, setWritingSeconds] = useState<number>(0)
   const [graphNodes, setGraphNodes] = useState<Array<{ id: string; name: string }>>([])
   const [graphEdges, setGraphEdges] = useState<Array<{ from: string; to: string; type?: string }>>([])
 
@@ -1540,10 +1536,8 @@ function App() {
   }, [chatMessages, workspaceRoot])
 
   useEffect(() => {
-    setWritingSeconds(0)
     if (!activePath) return
-    const t = window.setInterval(() => setWritingSeconds((s) => s + 1), 1000)
-    return () => window.clearInterval(t)
+    return () => {}
   }, [activePath])
 
   useEffect(() => {
@@ -2145,39 +2139,28 @@ function App() {
                             <span>AI 正在处理文件...</span>
                           </div>
                         ) : null}
-                        {m.role === 'assistant' && m.changeSet && m.changeSet.files.length > 0 ? (
+                        {m.role === 'assistant' && m.changeSet && m.changeSet.modifications.length > 0 ? (
                           <div className="file-modifications">
                             <div className="file-modifications-header">
                               <span className="file-icon">📝</span>
-                              <span>修改了 {m.changeSet.files.length} 个文件</span>
+                              <span>修改了 {m.changeSet.filePath.split('/').pop()}</span>
                             </div>
                             <div className="file-modifications-list">
-                              {m.changeSet.files.map((fileModification) => {
-                                const stats = {
-                                  additions: fileModification.modifications.filter(mod => mod.type === 'add').length,
-                                  deletions: fileModification.modifications.filter(mod => mod.type === 'delete').length,
-                                  modifications: fileModification.modifications.filter(mod => mod.type === 'modify').length,
-                                }
-                                return (
-                                  <div
-                                    key={fileModification.filePath}
-                                    className="file-modification-item"
-                                    onClick={() => onOpenDiffView(m.changeSet!.id)}
-                                    title="点击查看差异"
-                                  >
-                                    <div className="file-modification-name">
-                                      <span className="file-icon">📄</span>
-                                      <span className="file-name">{fileModification.filePath.split('/').pop()}</span>
-                                    </div>
-                                    <div className="file-modification-path">{fileModification.filePath}</div>
-                                    <div className="file-modification-stats">
-                                      {stats.additions > 0 && <span className="stat-add">+{stats.additions}</span>}
-                                      {stats.deletions > 0 && <span className="stat-delete">-{stats.deletions}</span>}
-                                      {stats.modifications > 0 && <span className="stat-modify">~{stats.modifications}</span>}
-                                    </div>
-                                  </div>
-                                )
-                              })}
+                              <div
+                                className="file-modification-item"
+                                onClick={() => onOpenDiffView(m.changeSet!.id)}
+                                title="点击查看差异"
+                              >
+                                <div className="file-modification-name">
+                                  <span className="file-icon">📄</span>
+                                  <span className="file-name">{m.changeSet.filePath.split('/').pop()}</span>
+                                </div>
+                                <div className="file-modification-path">{m.changeSet.filePath}</div>
+                                <div className="file-modification-stats">
+                                  {m.changeSet.stats.additions > 0 && <span className="stat-add">+{m.changeSet.stats.additions}</span>}
+                                  {m.changeSet.stats.deletions > 0 && <span className="stat-delete">-{m.changeSet.stats.deletions}</span>}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         ) : null}
@@ -2305,7 +2288,7 @@ function App() {
                   }}
                 >
                   <span className="diff-panel-tab-title">
-                    {changeSet.files.length} file{changeSet.files.length !== 1 ? 's' : ''}
+                    {changeSet.filePath.split('/').pop()}
                   </span>
                   <span className="diff-panel-tab-status">{changeSet.status}</span>
                   <button
@@ -2336,18 +2319,14 @@ function App() {
             <div className="diff-panel-content">
               {activeDiffTab && diffContext.changeSets.has(activeDiffTab) ? (
                 <div className="diff-panel-files">
-                  {diffContext.changeSets.get(activeDiffTab)!.files.map((fileModification) => (
-                    <div key={fileModification.filePath} className="diff-panel-file">
-                      <DiffView
-                        fileModification={fileModification}
-                        viewMode={diffContext.viewMode}
-                        onAccept={(modId) => onAcceptModification(activeDiffTab, modId)}
-                        onReject={(modId) => onRejectModification(activeDiffTab, modId)}
-                        onAcceptAll={() => onAcceptAllModifications(activeDiffTab)}
-                        onRejectAll={() => onRejectAllModifications(activeDiffTab)}
-                      />
-                    </div>
-                  ))}
+                  <DiffView
+                    changeSet={diffContext.changeSets.get(activeDiffTab)!}
+                    viewMode={diffContext.viewMode}
+                    onAccept={(modId) => onAcceptModification(activeDiffTab, modId)}
+                    onReject={(modId) => onRejectModification(activeDiffTab, modId)}
+                    onAcceptAll={() => onAcceptAllModifications(activeDiffTab)}
+                    onRejectAll={() => onRejectAllModifications(activeDiffTab)}
+                  />
                 </div>
               ) : (
                 <div className="diff-panel-empty">

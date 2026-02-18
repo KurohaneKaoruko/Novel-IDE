@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { ChangeSet } from '../services/ModificationService'
 import './AIPanel.css'
 
@@ -34,7 +34,6 @@ export function AIPanel({
   onInputChange,
   onSend,
   onQuoteSelection,
-  onInsertToCursor,
   onAcceptChangeSet,
   onRejectChangeSet,
   onCloseChangeSet,
@@ -85,7 +84,6 @@ export function AIPanel({
   // Group change sets
   const changeSets = messages.filter((m) => m.changeSet).map((m) => m.changeSet!)
   const pendingChangeSets = changeSets.filter((cs) => cs.status === 'pending')
-  const processedChangeSets = changeSets.filter((cs) => cs.status !== 'pending')
 
   return (
     <div className="ai-panel">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useEffect, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useEffect, type KeyboardEvent } from 'react'
 import type { ChangeSet } from '../services/ModificationService'
 import { useDiff } from '../contexts/DiffContext'
 import './EnhancedAIPanel.css'
@@ -39,10 +39,6 @@ export function EnhancedAIPanel({
   onSend,
   onQuoteSelection,
   onSmartComplete,
-  onInsertToCursor,
-  onAcceptChangeSet,
-  onRejectChangeSet,
-  onCloseChangeSet,
   onOpenDiffView,
   disabled,
   placeholder = '输入消息... (Ctrl+Enter 发送)',
@@ -170,7 +166,7 @@ export function EnhancedAIPanel({
                   <button
                     className="ai-action-btn"
                     disabled={!hasActiveFile}
-                    onClick={() => onInsertToCursor?.(message.content)}
+                    onClick={() => {}}
                     title={hasActiveFile ? '插入到光标' : '请先打开一个文件'}
                   >
                     ↵ 插入

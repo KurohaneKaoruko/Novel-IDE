@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
 
 /// Skill 定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +258,7 @@ impl SkillManager {
         manager
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Option<&Skill> {
         self.skills.get(id)
     }
@@ -285,10 +284,12 @@ impl SkillManager {
         cats
     }
 
+    #[allow(dead_code)]
     pub fn add(&mut self, skill: Skill) {
         self.skills.insert(skill.id.clone(), skill);
     }
 
+    #[allow(dead_code)]
     pub fn remove(&mut self, id: &str) {
         self.skills.remove(id);
     }

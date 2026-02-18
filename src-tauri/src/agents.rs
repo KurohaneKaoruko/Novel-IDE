@@ -81,8 +81,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.8,
       max_tokens: 32000,
@@ -115,8 +116,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.7,
       max_tokens: 32000,
@@ -149,8 +151,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.75,
       max_tokens: 32000,
@@ -184,8 +187,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.7,
       max_tokens: 32000,
@@ -220,8 +224,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.65,
       max_tokens: 32000,
@@ -256,8 +261,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.7,
       max_tokens: 32000,
@@ -292,8 +298,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.75,
       max_tokens: 32000,
@@ -328,8 +335,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.7,
       max_tokens: 32000,
@@ -365,8 +373,9 @@ pub fn default_agents() -> Vec<Agent> {
 ## 输出格式
 - 可以使用颜文字和网络流行语
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 减少空行使用
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.8,
       max_tokens: 32000,
@@ -401,8 +410,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.65,
       max_tokens: 32000,
@@ -435,8 +445,9 @@ pub fn default_agents() -> Vec<Agent> {
 
 ## 输出格式
 - 不使用 Markdown 格式（除非用户开启）
+- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
 - 不使用空行或段首空格
-- 直接输出小说内容
+- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.7,
       max_tokens: 32000,

@@ -12,9 +12,24 @@ export interface FileModification {
 }
 
 /**
- * Represents a set of changes across multiple files
+ * Represents a set of changes for a single file
  */
 export interface ChangeSet {
+  id: string;
+  timestamp: number;
+  filePath: string;
+  modifications: Modification[];
+  stats: {
+    additions: number;
+    deletions: number;
+  };
+  status: 'pending' | 'partial' | 'accepted' | 'rejected';
+}
+
+/**
+ * Represents a set of changes across multiple files (legacy)
+ */
+export interface MultiFileChangeSet {
   id: string;
   timestamp: number;
   files: FileModification[];
@@ -47,28 +62,36 @@ export class ModificationService {
    * @returns The created ChangeSet
    */
   createChangeSet(files: FileModification[]): ChangeSet {
+    if (files.length === 0) {
+      throw new Error('Cannot create ChangeSet with no files');
+    }
+
+    const firstFile = files[0];
+    let additions = 0;
+    let deletions = 0;
+
+    for (const mod of firstFile.modifications) {
+      if (mod.type === 'add') additions++;
+      else if (mod.type === 'delete') deletions++;
+      else if (mod.type === 'modify') { additions++; deletions++; }
+    }
+
     const changeSet: ChangeSet = {
       id: this.generateChangeSetId(),
       timestamp: Date.now(),
-      files: files.map(file => ({
-        ...file,
+      filePath: firstFile.filePath,
+      modifications: firstFile.modifications.map(mod => ({
+        ...mod,
         status: 'pending',
-        modifications: file.modifications.map(mod => ({
-          ...mod,
-          status: 'pending',
-        })),
       })),
+      stats: { additions, deletions },
       status: 'pending',
     };
 
-    // Store the change set
     this.changeSets.set(changeSet.id, changeSet);
 
-    // Create backups of original file contents
     const backupMap = new Map<string, string>();
-    for (const file of changeSet.files) {
-      backupMap.set(file.filePath, file.originalContent);
-    }
+    backupMap.set(firstFile.filePath, firstFile.originalContent);
     this.fileBackups.set(changeSet.id, backupMap);
 
     return changeSet;
@@ -86,33 +109,13 @@ export class ModificationService {
       throw new Error(`ChangeSet with id ${changeSetId} not found`);
     }
 
-    // Find the modification
-    let targetFile: FileModification | undefined;
-    let targetMod: Modification | undefined;
-
-    for (const file of changeSet.files) {
-      const mod = file.modifications.find(m => m.id === modificationId);
-      if (mod) {
-        targetFile = file;
-        targetMod = mod;
-        break;
-      }
-    }
-
-    if (!targetFile || !targetMod) {
+    const targetMod = changeSet.modifications.find(m => m.id === modificationId);
+    if (!targetMod) {
       throw new Error(`Modification with id ${modificationId} not found in ChangeSet ${changeSetId}`);
     }
 
-    // Update modification status
     targetMod.status = 'accepted';
-
-    // Apply the modification to the file
-    await this.applyModificationToFile(targetFile, targetMod);
-
-    // Update file status
-    this.updateFileStatus(targetFile);
-
-    // Update change set status
+    await this.applyModificationToFile(changeSet.filePath, targetMod);
     this.updateChangeSetStatus(changeSet);
   }
 
@@ -128,30 +131,12 @@ export class ModificationService {
       throw new Error(`ChangeSet with id ${changeSetId} not found`);
     }
 
-    // Find the modification
-    let targetFile: FileModification | undefined;
-    let targetMod: Modification | undefined;
-
-    for (const file of changeSet.files) {
-      const mod = file.modifications.find(m => m.id === modificationId);
-      if (mod) {
-        targetFile = file;
-        targetMod = mod;
-        break;
-      }
-    }
-
-    if (!targetFile || !targetMod) {
+    const targetMod = changeSet.modifications.find(m => m.id === modificationId);
+    if (!targetMod) {
       throw new Error(`Modification with id ${modificationId} not found in ChangeSet ${changeSetId}`);
     }
 
-    // Update modification status
     targetMod.status = 'rejected';
-
-    // Update file status
-    this.updateFileStatus(targetFile);
-
-    // Update change set status
     this.updateChangeSetStatus(changeSet);
   }
 
@@ -166,31 +151,16 @@ export class ModificationService {
       throw new Error(`ChangeSet with id ${changeSetId} not found`);
     }
 
-    // Track which files were successfully modified for rollback
-    const modifiedFiles: string[] = [];
-
     try {
-      // Accept all modifications in all files
-      for (const file of changeSet.files) {
-        for (const mod of file.modifications) {
-          if (mod.status === 'pending') {
-            mod.status = 'accepted';
-          }
+      for (const mod of changeSet.modifications) {
+        if (mod.status === 'pending') {
+          mod.status = 'accepted';
         }
-
-        // Apply all accepted modifications to the file
-        await this.applyAllModificationsToFile(file);
-        modifiedFiles.push(file.filePath);
-
-        // Update file status
-        file.status = 'accepted';
       }
-
-      // Update change set status
+      await this.applyAllModificationsToChangeSet(changeSet);
       changeSet.status = 'accepted';
     } catch (error) {
-      // Rollback all changes if any file operation fails
-      await this.rollbackFiles(changeSetId, modifiedFiles);
+      await this.rollbackFile(changeSetId, changeSet.filePath);
       throw new Error(`Failed to accept all modifications: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -206,17 +176,11 @@ export class ModificationService {
       throw new Error(`ChangeSet with id ${changeSetId} not found`);
     }
 
-    // Reject all modifications in all files
-    for (const file of changeSet.files) {
-      for (const mod of file.modifications) {
-        if (mod.status === 'pending') {
-          mod.status = 'rejected';
-        }
+    for (const mod of changeSet.modifications) {
+      if (mod.status === 'pending') {
+        mod.status = 'rejected';
       }
-      file.status = 'rejected';
     }
-
-    // Update change set status
     changeSet.status = 'rejected';
   }
 
@@ -232,20 +196,8 @@ export class ModificationService {
       throw new Error(`ChangeSet with id ${changeSetId} not found`);
     }
 
-    // Find the modification
-    let targetFile: FileModification | undefined;
-    let targetMod: Modification | undefined;
-
-    for (const file of changeSet.files) {
-      const mod = file.modifications.find(m => m.id === modificationId);
-      if (mod) {
-        targetFile = file;
-        targetMod = mod;
-        break;
-      }
-    }
-
-    if (!targetFile || !targetMod) {
+    const targetMod = changeSet.modifications.find(m => m.id === modificationId);
+    if (!targetMod) {
       throw new Error(`Modification with id ${modificationId} not found in ChangeSet ${changeSetId}`);
     }
 
@@ -253,24 +205,14 @@ export class ModificationService {
       throw new Error(`Modification ${modificationId} is not in accepted state, cannot undo`);
     }
 
-    // Restore the file to its original state
     const backupMap = this.fileBackups.get(changeSetId);
-    if (!backupMap || !backupMap.has(targetFile.filePath)) {
-      throw new Error(`No backup found for file ${targetFile.filePath} in ChangeSet ${changeSetId}`);
+    if (!backupMap || !backupMap.has(changeSet.filePath)) {
+      throw new Error(`No backup found for file ${changeSet.filePath} in ChangeSet ${changeSetId}`);
     }
     
-    const backup = backupMap.get(targetFile.filePath)!;
-
-    // Write the backup content back to the file
-    await this.writeFile(targetFile.filePath, backup);
-
-    // Update modification status
+    const backup = backupMap.get(changeSet.filePath)!;
+    await this.writeFile(changeSet.filePath, backup);
     targetMod.status = 'pending';
-
-    // Update file status
-    this.updateFileStatus(targetFile);
-
-    // Update change set status
     this.updateChangeSetStatus(changeSet);
   }
 
@@ -291,16 +233,14 @@ export class ModificationService {
     let rejectedModifications = 0;
     let pendingModifications = 0;
 
-    for (const file of changeSet.files) {
-      for (const mod of file.modifications) {
-        totalModifications++;
-        if (mod.status === 'accepted') {
-          acceptedModifications++;
-        } else if (mod.status === 'rejected') {
-          rejectedModifications++;
-        } else if (mod.status === 'pending') {
-          pendingModifications++;
-        }
+    for (const mod of changeSet.modifications) {
+      totalModifications++;
+      if (mod.status === 'accepted') {
+        acceptedModifications++;
+      } else if (mod.status === 'rejected') {
+        rejectedModifications++;
+      } else if (mod.status === 'pending') {
+        pendingModifications++;
       }
     }
 
@@ -311,7 +251,7 @@ export class ModificationService {
       acceptedModifications,
       rejectedModifications,
       pendingModifications,
-      filesAffected: changeSet.files.length,
+      filesAffected: 1,
     };
   }
 
@@ -335,58 +275,50 @@ export class ModificationService {
 
   /**
    * Apply a single modification to a file
-   * @param file - The file modification object
+   * @param filePath - The file path
    * @param modification - The modification to apply
    */
-  private async applyModificationToFile(file: FileModification, modification: Modification): Promise<void> {
-    // Read current file content
-    const currentContent = await this.readFile(file.filePath);
-    
-    // Apply the modification
+  private async applyModificationToFile(filePath: string, modification: Modification): Promise<void> {
+    const currentContent = await this.readFile(filePath);
     const lines = currentContent.split('\n');
-    const startIdx = modification.lineStart - 1; // Convert to 0-based index
+    const startIdx = modification.lineStart - 1;
     const endIdx = modification.lineEnd - 1;
 
     if (modification.type === 'add') {
-      // Insert new lines
       const newLines = (modification.modifiedText || '').split('\n');
       lines.splice(startIdx, 0, ...newLines);
     } else if (modification.type === 'delete') {
-      // Remove lines
       const deleteCount = endIdx - startIdx + 1;
       lines.splice(startIdx, deleteCount);
     } else if (modification.type === 'modify') {
-      // Replace lines
       const deleteCount = endIdx - startIdx + 1;
       const newLines = (modification.modifiedText || '').split('\n');
       lines.splice(startIdx, deleteCount, ...newLines);
     }
 
     const modifiedContent = lines.join('\n');
-
-    // Write the modified content back to the file
-    await this.writeFile(file.filePath, modifiedContent);
+    await this.writeFile(filePath, modifiedContent);
   }
 
   /**
-   * Apply all accepted modifications to a file
-   * @param file - The file modification object
+   * Apply all accepted modifications to a change set
+   * @param changeSet - The change set
    */
-  private async applyAllModificationsToFile(file: FileModification): Promise<void> {
-    // Get accepted modifications sorted by line number (descending)
-    const acceptedMods = file.modifications
+  private async applyAllModificationsToChangeSet(changeSet: ChangeSet): Promise<void> {
+    const backupMap = this.fileBackups.get(changeSet.id);
+    if (!backupMap) return;
+
+    const originalContent = backupMap.get(changeSet.filePath);
+    if (!originalContent) return;
+
+    const acceptedMods = changeSet.modifications
       .filter(mod => mod.status === 'accepted')
       .sort((a, b) => b.lineStart - a.lineStart);
 
-    if (acceptedMods.length === 0) {
-      return;
-    }
+    if (acceptedMods.length === 0) return;
 
-    // Start with original content
-    let content = file.originalContent;
-    const lines = content.split('\n');
+    const lines = originalContent.split('\n');
 
-    // Apply each modification from bottom to top
     for (const mod of acceptedMods) {
       const startIdx = mod.lineStart - 1;
       const endIdx = mod.lineEnd - 1;
@@ -404,39 +336,16 @@ export class ModificationService {
       }
     }
 
-    content = lines.join('\n');
-
-    // Write the modified content to the file
-    await this.writeFile(file.filePath, content);
+    const content = lines.join('\n');
+    await this.writeFile(changeSet.filePath, content);
   }
 
   /**
-   * Update the status of a file based on its modifications
-   * @param file - The file modification object
-   */
-  private updateFileStatus(file: FileModification): void {
-    const statuses = file.modifications.map(mod => mod.status);
-    const allAccepted = statuses.every(status => status === 'accepted');
-    const allRejected = statuses.every(status => status === 'rejected');
-    const allPending = statuses.every(status => status === 'pending');
-
-    if (allAccepted) {
-      file.status = 'accepted';
-    } else if (allRejected) {
-      file.status = 'rejected';
-    } else if (allPending) {
-      file.status = 'pending';
-    } else {
-      file.status = 'partial';
-    }
-  }
-
-  /**
-   * Update the status of a change set based on its files
+   * Update the status of a change set based on its modifications
    * @param changeSet - The change set to update
    */
   private updateChangeSetStatus(changeSet: ChangeSet): void {
-    const statuses = changeSet.files.map(file => file.status);
+    const statuses = changeSet.modifications.map(mod => mod.status);
     const allAccepted = statuses.every(status => status === 'accepted');
     const allRejected = statuses.every(status => status === 'rejected');
     const allPending = statuses.every(status => status === 'pending');
@@ -453,21 +362,19 @@ export class ModificationService {
   }
 
   /**
-   * Rollback files to their original state
+   * Rollback a file to its original state
    * @param changeSetId - The ID of the change set
-   * @param filePaths - Array of file paths to rollback
+   * @param filePath - The file path to rollback
    */
-  private async rollbackFiles(changeSetId: string, filePaths: string[]): Promise<void> {
+  private async rollbackFile(changeSetId: string, filePath: string): Promise<void> {
     const backupMap = this.fileBackups.get(changeSetId);
     if (!backupMap) {
       throw new Error(`No backups found for ChangeSet ${changeSetId}`);
     }
 
-    for (const filePath of filePaths) {
-      const backup = backupMap.get(filePath);
-      if (backup) {
-        await this.writeFile(filePath, backup);
-      }
+    const backup = backupMap.get(filePath);
+    if (backup) {
+      await this.writeFile(filePath, backup);
     }
   }
 

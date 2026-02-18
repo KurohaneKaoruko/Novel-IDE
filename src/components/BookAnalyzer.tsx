@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { 拆书Analyze, 拆书ExtractTechniques, type Book拆书Result, type WritingTechnique } from '../tauri'
+import { 拆书Analyze, 拆书ExtractTechniques, type Book拆书Result } from '../tauri'
 import './BookAnalyzer.css'
 
 type BookAnalyzerProps = {

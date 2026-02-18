@@ -107,6 +107,7 @@ export type Agent = {
   system_prompt: string
   temperature: number
   max_tokens: number
+  chapter_word_target?: number
 }
 
 export async function getAgents(): Promise<Agent[]> {

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Book analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +37,7 @@ pub struct BookAnalysisResult {
 /// Book structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookStructure {
-    pub type: String, // linear/multi-threaded/circular/flashback etc
+    pub r#type: String, // linear/multi-threaded/circular/flashback etc
     pub acts: Vec<Act>,
     pub pacing: String, // fast/medium/slow
     pub audience: String, // target audience
@@ -73,7 +72,7 @@ pub struct RhythmAnalysis {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurningPoint {
     pub chapter: usize,
-    pub type: String, // major turn/小高潮/意外 etc
+    pub r#type: String, // major turn/小高潮/意外 etc
     pub description: String,
 }
 
@@ -81,7 +80,7 @@ pub struct TurningPoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClimaxPoint {
     pub chapter: usize,
-    pub type: String, // battle/emotion/reveal etc
+    pub r#type: String, // battle/emotion/reveal etc
     pub intensity: u8, // 1-10
     pub description: String,
 }
@@ -90,7 +89,7 @@ pub struct ClimaxPoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerMoment {
     pub chapter: usize,
-    pub type: String, // face-slapping/revenge/harem/system reward etc
+    pub r#type: String, // face-slapping/revenge/harem/system reward etc
     pub description: String,
     pub frequency: String, // occurrence frequency
 }
@@ -111,7 +110,7 @@ pub struct CharacterAnalysis {
 pub struct CharacterRelationship {
     pub from: String,
     pub to: String,
-    pub type: String, // enemy/lover/brother/master-disciple etc
+    pub r#type: String, // enemy/lover/brother/master-disciple etc
     pub description: String,
 }
 
@@ -143,6 +142,7 @@ pub struct WritingTechnique {
 }
 
 /// Book analysis config
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookAnalysisConfig {
     pub target_words_per_chapter: usize,
@@ -175,7 +175,7 @@ impl BookAnalysisResult {
             author: None,
             source: "unknown".to_string(),
             structure: BookStructure {
-                type: "pending".to_string(),
+                r#type: "pending".to_string(),
                 acts: vec![],
                 pacing: "pending".to_string(),
                 audience: "pending".to_string(),
@@ -198,4 +198,119 @@ impl BookAnalysisResult {
             learnable_points: vec![],
         }
     }
+}
+
+// ============ Additional Types for Commands ============
+
+/// Simple book analysis
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookAnalysis {
+    pub title: String,
+    pub author: Option<String>,
+    pub total_words: usize,
+    pub chapters: Vec<ChapterInfo>,
+    pub outline: BookOutline,
+    pub themes: Vec<String>,
+    pub style: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookOutline {
+    pub structure: String,
+    pub genre: String,
+    pub target_audience: String,
+}
+
+impl BookAnalysis {
+    #[allow(dead_code)]
+    pub fn new(title: &str) -> Self {
+        Self {
+            title: title.to_string(),
+            author: None,
+            total_words: 0,
+            chapters: vec![],
+            outline: BookOutline {
+                structure: "未知".to_string(),
+                genre: "未知".to_string(),
+                target_audience: "通用".to_string(),
+            },
+            themes: vec![],
+            style: String::new(),
+        }
+    }
+}
+
+/// Chapter information
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChapterInfo {
+    pub id: usize,
+    pub title: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub word_count: usize,
+    pub summary: String,
+    pub key_events: Vec<String>,
+    pub characters_appearing: Vec<String>,
+}
+
+/// Book split config
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookSplitConfig {
+    pub target_chapter_words: usize,
+    pub preserve_chapter_titles: bool,
+    pub min_chapter_words: usize,
+}
+
+impl Default for BookSplitConfig {
+    fn default() -> Self {
+        Self {
+            target_chapter_words: 3000,
+            preserve_chapter_titles: true,
+            min_chapter_words: 500,
+        }
+    }
+}
+
+/// Book split result
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookSplitResult {
+    pub title: String,
+    pub original_title: String,
+    pub chapters: Vec<SplitChapter>,
+    pub total_words: usize,
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+/// Split chapter
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplitChapter {
+    pub id: usize,
+    pub title: String,
+    pub content: String,
+    pub word_count: usize,
+    pub start_index: usize,
+    pub end_index: usize,
+    pub summary: Option<String>,
+}
+
+/// Character info for character extraction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterInfo {
+    pub name: String,
+    pub role: String,
+    pub description: String,
+}
+
+/// Setting info for world building
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingInfo {
+    pub name: String,
+    pub category: String,
+    pub description: String,
 }

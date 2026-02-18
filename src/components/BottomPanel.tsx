@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, type ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import './BottomPanel.css'
 
 export type PanelTab = {

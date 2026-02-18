@@ -1,6 +1,5 @@
 'use client'
 
-import { useCallback, useState } from 'react'
 import './SettingsPanel.css'
 
 export type Theme = 'light' | 'dark' | 'system'

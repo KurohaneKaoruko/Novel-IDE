@@ -292,6 +292,15 @@ impl AgentRuntime {
       if path.trim().is_empty() {
         return Err("empty path".to_string());
       }
+      // 清理多余的空行：只保留单个换行，连续空行压缩为一个
+      let cleaned_text = text
+        .lines()
+        .map(|line| line.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n");
+      // 移除连续超过2个换行符的情况（压缩为双换行）
+      let cleaned_text = cleaned_text
+        .replace("\n\n\n", "\n\n");
       let fixed = ensure_default_ext(path);
       let rel_norm = fixed.as_str().replace('\\', "/");
       let rel = commands::validate_relative_path(fixed.as_str())?;
@@ -302,14 +311,14 @@ impl AgentRuntime {
         } else {
           String::new()
         };
-        commands::validate_outline(&existing, text)?;
+        commands::validate_outline(&existing, &cleaned_text)?;
       }
       if let Some(parent) = target.parent() {
         if !parent.exists() {
           return Err("parent directory does not exist; create it first".to_string());
         }
       }
-      fs::write(&target, text).map_err(|e| format!("write failed: {e}"))?;
+      fs::write(&target, cleaned_text).map_err(|e| format!("write failed: {e}"))?;
       if rel_norm.starts_with("concept/") && rel_norm.to_lowercase().ends_with(".md") {
         commands::update_concept_index(&ctx.workspace_root, &rel_norm, text)?;
       }
