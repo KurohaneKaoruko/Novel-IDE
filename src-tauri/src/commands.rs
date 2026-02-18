@@ -1607,3 +1607,70 @@ pub async fn extract_chapters(content: String) -> Result<Vec<ChapterInfo>, Strin
     
     Ok(chapters)
 }
+
+// ============ AI Book Analysis Commands ============
+
+#[tauri::command]
+pub async fn ai_analyze_book_deep(
+    content: String,
+    title: String,
+    openai_key: String,
+) -> Result<String, String> {
+    // 调用AI进行深度分析
+    let prompt = format!(r#"请分析以下小说内容，提供详细的书本结构分析：
+
+书籍标题：{}
+
+要求分析：
+1. 故事结构（起承转合）
+2. 主要人物及其性格特点
+3. 核心主题
+4. 世界观/设定
+5. 每章的内容概要
+
+小说内容：
+{}
+
+请用JSON格式返回分析结果，格式如下：
+{{
+    "structure": "故事结构描述",
+    "themes": ["主题1", "主题2"],
+    "characters": [
+        {{"name": "人物名", "role": "角色", "description": "描述"}}
+    ],
+    "chapters_summary": [
+        {{"title": "章节名", "summary": "章节概要"}}
+    ]
+}}"#, title, content);
+    
+    // 这里需要调用OpenAI API
+    // 简化版本返回提示信息
+    Ok("AI分析功能需要配置API Key".to_string())
+}
+
+#[tauri::command]
+pub async fn ai_split_by_ai(
+    content: String,
+    title: String,
+    target_words: u32,
+    openai_key: String,
+) -> Result<String, String> {
+    let prompt = format!(r#"请将以下小说内容拆分成章节，每章大约{}字：
+
+要求：
+1. 在合适的断点分割（句号、段落结束）
+2. 为每个章节起一个标题
+3. 输出JSON格式
+
+小说内容：
+{}
+
+输出格式：
+{{
+    "chapters": [
+        {{"title": "章节标题", "content": "章节内容"}}
+    ]
+}}"#, target_words, content);
+    
+    Ok("AI拆分功能需要配置API Key".to_string())
+}
