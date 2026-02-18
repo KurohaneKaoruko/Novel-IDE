@@ -1703,8 +1703,8 @@ pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysis
     
     // 分析章节标题模式
     let mut chapter_count = 0;
-    
-    for (i, line) in lines.iter().enumerate() {
+
+    for line in lines.iter() {
         let trimmed = line.trim();
         // 检测章节标题
         if trimmed.starts_with("第") && (trimmed.contains("章") || trimmed.contains("节") || trimmed.contains("回")) {

@@ -300,6 +300,7 @@ pub struct SplitChapter {
 
 /// Character info for character extraction
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct CharacterInfo {
     pub name: String,
     pub role: String,
