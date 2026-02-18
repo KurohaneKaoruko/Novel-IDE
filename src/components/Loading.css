@@ -1,0 +1,118 @@
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.loading-spinner {
+  position: relative;
+}
+
+.loading-small .loading-spinner {
+  width: 20px;
+  height: 20px;
+}
+
+.loading-medium .loading-spinner {
+  width: 32px;
+  height: 32px;
+}
+
+.loading-large .loading-spinner {
+  width: 48px;
+  height: 48px;
+}
+
+.loading-spinner-ring {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent-primary, #2196f3);
+  animation: loading-spin 1.2s linear infinite;
+}
+
+.loading-spinner-ring:nth-child(2) {
+  animation-delay: -0.4s;
+  border-top-color: var(--accent-secondary, #4caf50);
+}
+
+.loading-spinner-ring:nth-child(3) {
+  animation-delay: -0.8s;
+  border-top-color: var(--accent-tertiary, #ff9800);
+}
+
+@keyframes loading-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+}
+
+/* Fullscreen */
+.loading-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+/* Overlay */
+.loading-overlay-container {
+  position: relative;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+[data-theme="dark"] .loading-overlay {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* Dots */
+.loading-dots {
+  display: inline-flex;
+  align-items: center;
+}
+
+.loading-dots-span {
+  animation: loading-dots-blink 1.4s infinite;
+  margin-left: 2px;
+}
+
+.loading-dots-span:nth-child(2) {
+  animation-delay: -0.2s;
+}
+
+.loading-dots-span:nth-child(3) {
+  animation-delay: -0.4s;
+}
+
+@keyframes loading-dots-blink {
+  0%, 20% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
+}
