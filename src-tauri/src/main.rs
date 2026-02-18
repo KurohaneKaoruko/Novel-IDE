@@ -16,6 +16,7 @@ mod spec_kit;
 mod spec_kit_export;
 mod skills;
 mod mcp;
+mod book_split;
 
 fn main() {
   tauri::Builder::default()
@@ -60,7 +61,10 @@ fn main() {
       commands::get_skills,
       commands::get_skill_categories,
       commands::get_skills_by_category,
-      commands::apply_skill
+      commands::apply_skill,
+      commands::analyze_book,
+      commands::split_book,
+      commands::extract_chapters
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

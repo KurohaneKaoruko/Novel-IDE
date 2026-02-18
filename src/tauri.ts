@@ -247,3 +247,83 @@ export type McpServerStatus = {
   resources: McpResource[]
   error: string | null
 }
+
+// ============ Book Split Types ============
+
+export type ChapterInfo = {
+  id: number
+  title: string
+  start_line: number
+  end_line: number
+  word_count: number
+  summary: string
+  key_events: string[]
+  characters_appearing: string[]
+}
+
+export type BookOutline = {
+  structure: string
+  acts: Array<{ id: number; name: string; description: string; chapters: number[] }>
+  arcs: Array<{ id: number; name: string; description: string; characters: string[] }>
+}
+
+export type CharacterInfo = {
+  name: string
+  role: string
+  description: string
+  appearances: number[]
+}
+
+export type SettingInfo = {
+  name: string
+  category: string
+  description: string
+}
+
+export type BookAnalysis = {
+  title: string
+  author: string | null
+  total_words: number
+  chapters: ChapterInfo[]
+  outline: BookOutline
+  characters: CharacterInfo[]
+  settings: SettingInfo[]
+  themes: string[]
+  style: string
+}
+
+export type BookSplitConfig = {
+  split_by_chapters: boolean
+  target_chapter_words: number
+  extract_outline: boolean
+  extract_characters: boolean
+  extract_settings: boolean
+  analyze_themes: boolean
+  analyze_style: boolean
+}
+
+export type SplitChapter = {
+  id: number
+  title: string
+  content: string
+  word_count: number
+  summary: string | null
+}
+
+export type BookSplitResult = {
+  original_title: string
+  chapters: SplitChapter[]
+  metadata: Record<string, string>
+}
+
+export async function analyzeBook(content: string, title: string): Promise<BookAnalysis> {
+  return invoke<BookAnalysis>('analyze_book', { content, title })
+}
+
+export async function splitBook(content: string, title: string, config: BookSplitConfig): Promise<BookSplitResult> {
+  return invoke<BookSplitResult>('split_book', { content, title, config })
+}
+
+export async function extractChapters(content: string): Promise<ChapterInfo[]> {
+  return invoke<ChapterInfo[]>('extract_chapters', { content })
+}

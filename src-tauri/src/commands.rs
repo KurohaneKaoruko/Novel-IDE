@@ -1367,3 +1367,243 @@ pub fn apply_skill(skill_id: String, content: String) -> String {
     let manager = skills::SkillManager::new();
     manager.apply_skill(&skill_id, &content)
 }
+
+// ============ Book Split Commands ============
+
+use crate::book_split::{BookAnalysis, BookSplitConfig, BookSplitResult, ChapterInfo, CharacterInfo, SettingInfo, SplitChapter};
+
+#[tauri::command]
+pub async fn analyze_book(content: String, title: String) -> Result<BookAnalysis, String> {
+    // 简单分析实现
+    let words = content.chars().filter(|c| !c.is_whitespace()).count();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    let mut analysis = BookAnalysis::new(&title);
+    analysis.total_words = words;
+    
+    // 尝试识别章节
+    let mut chapter_count = 0;
+    let mut current_chapter = String::new();
+    let mut chapter_start = 0;
+    
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        // 检测章节标题模式
+        if trimmed.starts_with("第") && (trimmed.contains("章") || trimmed.contains("节") || trimmed.contains("回")) {
+            if chapter_count > 0 {
+                // 保存上一章
+                let chapter_words = current_chapter.chars().filter(|c| !c.is_whitespace()).count();
+                analysis.chapters.push(ChapterInfo {
+                    id: chapter_count,
+                    title: format!("第{}章", chapter_count),
+                    start_line: chapter_start,
+                    end_line: i - 1,
+                    word_count: chapter_words,
+                    summary: format!("第{}章内容，约{}字", chapter_count, chapter_words),
+                    key_events: vec![],
+                    characters_appearing: vec![],
+                });
+            }
+            chapter_count += 1;
+            chapter_start = i;
+            current_chapter = String::new();
+        } else if chapter_count > 0 {
+            current_chapter.push_str(line);
+            current_chapter.push('\n');
+        }
+    }
+    
+    // 保存最后一章
+    if chapter_count > 0 && !current_chapter.is_empty() {
+        let chapter_words = current_chapter.chars().filter(|c| !c.is_whitespace()).count();
+        analysis.chapters.push(ChapterInfo {
+            id: chapter_count,
+            title: format!("第{}章", chapter_count),
+            start_line: chapter_start,
+            end_line: lines.len() - 1,
+            word_count: chapter_words,
+            summary: format!("最后一章，约{}字", chapter_words),
+            key_events: vec![],
+            characters_appearing: vec![],
+        });
+    }
+    
+    // 如果没有识别到章节，按字数拆分
+    if analysis.chapters.is_empty() {
+        let target_words = 3000;
+        let mut chapter_content = String::new();
+        let mut chapter_id = 1;
+        
+        for line in &lines {
+            chapter_content.push_str(line);
+            chapter_content.push('\n');
+            
+            let current_words = chapter_content.chars().filter(|c| !c.is_whitespace()).count();
+            if current_words >= target_words {
+                analysis.chapters.push(ChapterInfo {
+                    id: chapter_id,
+                    title: format!("第{}章", chapter_id),
+                    start_line: 0,
+                    end_line: 0,
+                    word_count: current_words,
+                    summary: format!("自动拆分章节，约{}字", current_words),
+                    key_events: vec![],
+                    characters_appearing: vec![],
+                });
+                chapter_id += 1;
+                chapter_content = String::new();
+            }
+        }
+        
+        // 最后一章
+        if !chapter_content.is_empty() {
+            let current_words = chapter_content.chars().filter(|c| !c.is_whitespace()).count();
+            if current_words > 100 {
+                analysis.chapters.push(ChapterInfo {
+                    id: chapter_id,
+                    title: format!("第{}章", chapter_id),
+                    start_line: 0,
+                    end_line: 0,
+                    word_count: current_words,
+                    summary: format!("自动拆分章节，约{}字", current_words),
+                    key_events: vec![],
+                    characters_appearing: vec![],
+                });
+            }
+        }
+    }
+    
+    analysis.outline.structure = if chapter_count > 10 { "多线复杂结构".to_string() } else { "线性结构".to_string() };
+    analysis.themes = vec!["待分析".to_string()];
+    analysis.style = "待分析".to_string();
+    
+    Ok(analysis)
+}
+
+#[tauri::command]
+pub async fn split_book(content: String, title: String, config: BookSplitConfig) -> Result<BookSplitResult, String> {
+    let words: Vec<&str> = content.lines().collect();
+    let target_words = config.target_chapter_words;
+    
+    let mut chapters: Vec<SplitChapter> = vec![];
+    let mut current_content = String::new();
+    let mut chapter_id = 1;
+    let mut current_words = 0;
+    
+    for line in words {
+        current_content.push_str(line);
+        current_content.push('\n');
+        current_words += line.chars().filter(|c| !c.is_whitespace()).count();
+        
+        if current_words >= target_words {
+            // 查找合适的断点（句号、段落结束）
+            let mut break_point = current_content.len();
+            for (i, c) in current_content.char().rev().enumerate() {
+                if c == '。' || c == '！' || c == '？' || c == '\n' {
+                    break_point = current_content.len() - i;
+                    break;
+                }
+            }
+            
+            let chapter_content = current_content[..break_point].to_string();
+            let chapter_words = chapter_content.chars().filter(|c| !c.is_whitespace()).count();
+            
+            chapters.push(SplitChapter {
+                id: chapter_id,
+                title: format!("第{}章", chapter_id),
+                content: chapter_content,
+                word_count: chapter_words,
+                summary: None,
+            });
+            
+            current_content = current_content[break_point..].to_string();
+            current_words = current_content.chars().filter(|c| !c.is_whitespace()).count();
+            chapter_id += 1;
+        }
+    }
+    
+    // 处理剩余内容
+    if !current_content.is_empty() {
+        let chapter_words = current_content.chars().filter(|c| !c.is_whitespace()).count();
+        if chapter_words > 50 {
+            chapters.push(SplitChapter {
+                id: chapter_id,
+                title: format!("第{}章", chapter_id),
+                content: current_content,
+                word_count: chapter_words,
+                summary: None,
+            });
+        }
+    }
+    
+    let mut metadata = HashMap::new();
+    metadata.insert("total_chapters".to_string(), chapters.len().to_string());
+    metadata.insert("target_words_per_chapter".to_string(), target_words.to_string());
+    
+    Ok(BookSplitResult {
+        original_title: title,
+        chapters,
+        metadata,
+    })
+}
+
+#[tauri::command]
+pub async fn extract_chapters(content: String) -> Result<Vec<ChapterInfo>, String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut chapters: Vec<ChapterInfo> = vec![];
+    let mut chapter_id = 0;
+    let mut current_title = String::new();
+    let mut current_content = String::new();
+    let mut start_line = 0;
+    
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        
+        // 检测章节标题
+        let is_chapter_title = trimmed.starts_with("第") 
+            && (trimmed.contains("章") || trimmed.contains("节") || trimmed.contains("回"))
+            && trimmed.len() < 50;
+        
+        if is_chapter_title {
+            // 保存上一章
+            if chapter_id > 0 && !current_content.is_empty() {
+                let word_count = current_content.chars().filter(|c| !c.is_whitespace()).count();
+                chapters.push(ChapterInfo {
+                    id: chapter_id,
+                    title: current_title,
+                    start_line,
+                    end_line: i - 1,
+                    word_count,
+                    summary: format!("约{}字", word_count),
+                    key_events: vec![],
+                    characters_appearing: vec![],
+                });
+            }
+            
+            chapter_id += 1;
+            current_title = trimmed.to_string();
+            current_content = String::new();
+            start_line = i;
+        } else if chapter_id > 0 {
+            current_content.push_str(line);
+            current_content.push('\n');
+        }
+    }
+    
+    // 保存最后一章
+    if chapter_id > 0 && !current_content.is_empty() {
+        let word_count = current_content.chars().filter(|c| !c.is_whitespace()).count();
+        chapters.push(ChapterInfo {
+            id: chapter_id,
+            title: current_title,
+            start_line,
+            end_line: lines.len() - 1,
+            word_count,
+            summary: format!("约{}字", word_count),
+            key_events: vec![],
+            characters_appearing: vec![],
+        });
+    }
+    
+    Ok(chapters)
+}
