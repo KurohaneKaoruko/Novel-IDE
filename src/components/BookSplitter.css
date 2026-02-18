@@ -333,3 +333,59 @@
   background: #252526;
   color: #666;
 }
+
+/* Themes */
+.result-themes {
+  margin-bottom: 16px;
+}
+
+.result-themes h4,
+.result-characters h4,
+.chapters-preview h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #888);
+  margin: 0 0 8px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.themes-list,
+.characters-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.theme-tag,
+.character-tag {
+  padding: 4px 10px;
+  background: var(--accent-light, #e3f2fd);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--accent-primary, #2196f3);
+}
+
+.character-tag {
+  background: #fff3e0;
+  color: #ff9800;
+}
+
+/* Insert Button */
+.insert-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #4caf50;
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.insert-btn:hover {
+  background: #43a047;
+}

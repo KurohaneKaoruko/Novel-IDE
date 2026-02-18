@@ -7,7 +7,7 @@ import './BookSplitter.css'
 type BookSplitterProps = {
   isOpen: boolean
   onClose: () => void
-  onInsertChapters?: (chapters: string[]) => void
+  onInsertChapters?: (chapters: { title: string; content: string }[]) => void
 }
 
 export function BookSplitter({ isOpen, onClose, onInsertChapters }: BookSplitterProps) {
@@ -69,11 +69,11 @@ export function BookSplitter({ isOpen, onClose, onInsertChapters }: BookSplitter
     if (!result || !onInsertChapters) return
     
     if (mode === 'split' && 'chapters' in result) {
-      const texts = result.chapters.map(ch => `${ch.title}\n${ch.content}`)
+      const texts = result.chapters.map(ch => ({ title: ch.title, content: ch.content }))
       onInsertChapters(texts)
       onClose()
     } else if (mode === 'extract' && Array.isArray(result)) {
-      const texts = result.map(ch => `${ch.title}\n${ch.summary}`)
+      const texts = result.map(ch => ({ title: ch.title, content: ch.summary || '' }))
       onInsertChapters(texts)
       onClose()
     }
@@ -178,6 +178,28 @@ export function BookSplitter({ isOpen, onClose, onInsertChapters }: BookSplitter
                       <span className="stat-label">结构</span>
                     </div>
                   </div>
+                  
+                  {result.themes.length > 0 && (
+                    <div className="result-themes">
+                      <h4>主题</h4>
+                      <div className="themes-list">
+                        {result.themes.map((theme, i) => (
+                          <span key={i} className="theme-tag">{theme}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {result.characters.length > 0 && (
+                    <div className="result-characters">
+                      <h4>人物</h4>
+                      <div className="characters-list">
+                        {result.characters.slice(0, 5).map((char, i) => (
+                          <span key={i} className="character-tag">{char.name}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   
                   {result.chapters.length > 0 && (
                     <div className="chapters-preview">

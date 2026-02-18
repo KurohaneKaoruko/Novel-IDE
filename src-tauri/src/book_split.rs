@@ -134,3 +134,32 @@ impl BookAnalysis {
         }
     }
 }
+
+/// AI辅助拆书 - 使用AI深度分析书籍内容
+pub async fn ai_analyze_book(content: String, title: String) -> Result<BookAnalysis, String> {
+    // 这里可以调用AI来深度分析
+    // 实际实现会使用AI来提取更准确的信息
+    let mut analysis = BookAnalysis::new(&title);
+    analysis.total_words = content.chars().filter(|c| !c.is_whitespace()).count();
+    analysis
+}
+
+/// 生成详细的大纲
+pub fn generate_outline(content: String) -> BookOutline {
+    BookOutline {
+        structure: "待AI分析".to_string(),
+        acts: vec![],
+        arcs: vec![],
+    }
+}
+
+/// 提取所有人物
+pub fn extract_all_characters(content: String) -> Vec<CharacterInfo> {
+    // 简单的人物名提取，实际会使用NLP
+    vec![]
+}
+
+/// 提取世界观设定
+pub fn extract_settings(content: String) -> Vec<SettingInfo> {
+    vec![]
+}
