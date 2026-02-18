@@ -1,166 +1,166 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 拆书分析结果
+/// Book analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Book拆书Result {
+pub struct BookAnalysisResult {
     pub title: String,
     pub author: Option<String>,
-    pub source: String, // 来源：原创/同人/大纲等
+    pub source: String, // source: original/fanfic/outline etc
     
-    // 结构分析
-    pub structure: Book结构,
-    pub plot_arcs: Vec<剧情线>,
+    // structure analysis
+    pub structure: BookStructure,
+    pub plot_arcs: Vec<PlotLine>,
     
-    // 节奏分析
-    pub rhythm: 节奏分析,
-    pub climax_points: Vec<高潮点>,
+    // rhythm analysis
+    pub rhythm: RhythmAnalysis,
+    pub climax_points: Vec<ClimaxPoint>,
     
-    // 爽点分析
-    pub 爽点列表: Vec<爽点>,
+    // power moments analysis
+    pub power_moments: Vec<PowerMoment>,
     
-    // 人物分析
-    pub characters: Vec<人物分析>,
-    pub character_relationships: Vec<人物关系>,
+    // character analysis
+    pub characters: Vec<CharacterAnalysis>,
+    pub character_relationships: Vec<CharacterRelationship>,
     
-    // 世界观
-    pub world_settings: Vec<世界设定>,
-    pub power_system: Vec<力量体系>,
+    // world view
+    pub world_settings: Vec<WorldSetting>,
+    pub power_system: Vec<PowerSystem>,
     
-    // 写作技巧
-    pub techniques: Vec<写作技巧>,
+    // writing techniques
+    pub techniques: Vec<WritingTechnique>,
     
-    // 总结
+    // summary
     pub summary: String,
     pub learnable_points: Vec<String>,
 }
 
-/// 书籍结构
+/// Book structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Book结构 {
-    pub type: String, // 线性/多线/环状/倒叙等
-    pub acts: Vec<幕>,
-    pub pacing: String, // 快节奏/中等/慢节奏
-    pub audience: String, // 目标读者
+pub struct BookStructure {
+    pub type: String, // linear/multi-threaded/circular/flashback etc
+    pub acts: Vec<Act>,
+    pub pacing: String, // fast/medium/slow
+    pub audience: String, // target audience
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 幕 {
+pub struct Act {
     pub id: usize,
-    pub name: String, // 铺垫/发展/高潮/结局
+    pub name: String, // setup/develop/climax/ending
     pub chapters: Vec<usize>,
     pub description: String,
 }
 
-/// 剧情线
+/// Plot line
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 剧情线 {
+pub struct PlotLine {
     pub name: String,
     pub main: bool,
     pub chapters: Vec<usize>,
     pub description: String,
 }
 
-/// 节奏分析
+/// Rhythm analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 节奏分析 {
-    pub average_chapter_length: usize, // 平均章节字数
-    pub conflict_density: String, // 冲突密度：高/中/低
-    pub turning_points: Vec<转折点>,
-    pub chapter_hooks: Vec<String>, // 章尾钩子类型
+pub struct RhythmAnalysis {
+    pub average_chapter_length: usize, // average chapter word count
+    pub conflict_density: String, // conflict density: high/medium/low
+    pub turning_points: Vec<TurningPoint>,
+    pub chapter_hooks: Vec<String>, // chapter hook types
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 转折点 {
+pub struct TurningPoint {
     pub chapter: usize,
-    pub type: String, // 重大转折/小高潮/意外等
+    pub type: String, // major turn/小高潮/意外 etc
     pub description: String,
 }
 
-/// 高潮点
+/// Climax point
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 高潮点 {
+pub struct ClimaxPoint {
     pub chapter: usize,
-    pub type: String, // 战斗/情感/揭秘等
+    pub type: String, // battle/emotion/reveal etc
     pub intensity: u8, // 1-10
     pub description: String,
 }
 
-/// 爽点
+/// Power moment / Thrilling moment
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 爽点 {
+pub struct PowerMoment {
     pub chapter: usize,
-    pub type: String, // 打脸/逆袭/开后宫/系统奖励等
+    pub type: String, // face-slapping/revenge/harem/system reward etc
     pub description: String,
-    pub frequency: String, // 出现频率
+    pub frequency: String, // occurrence frequency
 }
 
-/// 人物分析
+/// Character analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 人物分析 {
+pub struct CharacterAnalysis {
     pub name: String,
-    pub role: String, // 主角/反派/配角/工具人
-    pub archetype: String, // 人设原型
-    pub growth: String, // 成长曲线
-    pub main_moments: Vec<String>, // 高光时刻
-    pub relationships: Vec<String>, // 与其他人物的关系
+    pub role: String, // protagonist/antagonist/supporting/tool
+    pub archetype: String, // character archetype
+    pub growth: String, // growth curve
+    pub main_moments: Vec<String>, // highlight moments
+    pub relationships: Vec<String>, // relationships with other characters
 }
 
-/// 人物关系
+/// Character relationship
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 人物关系 {
+pub struct CharacterRelationship {
     pub from: String,
     pub to: String,
-    pub type: String, // 敌人/恋人/兄弟/师徒等
+    pub type: String, // enemy/lover/brother/master-disciple etc
     pub description: String,
 }
 
-/// 世界设定
+/// World setting
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 世界设定 {
+pub struct WorldSetting {
     pub name: String,
-    pub category: String, // 地理/势力/物品/规则等
-    pub importance: String, // 核心/重要/辅助
+    pub category: String, // geography/faction/item/rule etc
+    pub importance: String, // core/important/auxiliary
     pub description: String,
 }
 
-/// 力量体系
+/// Power system
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 力量体系 {
+pub struct PowerSystem {
     pub name: String,
-    pub levels: Vec<String>, // 等级划分
-    pub cultivation_method: String, // 修炼方式
-    pub resources: Vec<String>, // 资源/道具
+    pub levels: Vec<String>, // level hierarchy
+    pub cultivation_method: String, // cultivation method
+    pub resources: Vec<String>, // resources/items
 }
 
-/// 写作技巧
+/// Writing technique
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct 写作技巧 {
-    pub category: String, // 叙事/对话/描写/节奏等
+pub struct WritingTechnique {
+    pub category: String, // narrative/dialogue/description/rhythm etc
     pub technique: String,
     pub example: String,
-    pub application: String, // 如何应用
+    pub application: String, // how to apply
 }
 
-/// 拆书配置
+/// Book analysis config
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Book拆书Config {
+pub struct BookAnalysisConfig {
     pub target_words_per_chapter: usize,
     pub analyze_rhythm: bool,
     pub analyze_climax: bool,
-    pub analyze_爽点: bool,
+    pub analyze_power_moments: bool,
     pub extract_characters: bool,
     pub extract_world: bool,
     pub extract_techniques: bool,
 }
 
-impl Default for Book拆书Config {
+impl Default for BookAnalysisConfig {
     fn default() -> Self {
         Self {
             target_words_per_chapter: 3000,
             analyze_rhythm: true,
             analyze_climax: true,
-            analyze_爽点: true,
+            analyze_power_moments: true,
             extract_characters: true,
             extract_world: true,
             extract_techniques: true,
@@ -168,27 +168,27 @@ impl Default for Book拆书Config {
     }
 }
 
-impl Book拆书Result {
+impl BookAnalysisResult {
     pub fn new(title: &str) -> Self {
         Self {
             title: title.to_string(),
             author: None,
-            source: "未知".to_string(),
-            structure: Book结构 {
-                type: "待分析".to_string(),
+            source: "unknown".to_string(),
+            structure: BookStructure {
+                type: "pending".to_string(),
                 acts: vec![],
-                pacing: "待分析".to_string(),
-                audience: "待分析".to_string(),
+                pacing: "pending".to_string(),
+                audience: "pending".to_string(),
             },
             plot_arcs: vec![],
-            rhythm: 节奏分析 {
+            rhythm: RhythmAnalysis {
                 average_chapter_length: 0,
-                conflict_density: "待分析".to_string(),
+                conflict_density: "pending".to_string(),
                 turning_points: vec![],
                 chapter_hooks: vec![],
             },
             climax_points: vec![],
-            爽点列表: vec![],
+            power_moments: vec![],
             characters: vec![],
             character_relationships: vec![],
             world_settings: vec![],

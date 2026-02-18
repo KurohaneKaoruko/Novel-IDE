@@ -1675,13 +1675,13 @@ pub async fn ai_split_by_ai(
     Ok("AI拆分功能需要配置API Key".to_string())
 }
 
-// ============ 拆书 Commands ============
+// ============ Book Analysis Commands ============
 
-use crate::book_split::{Book拆书Result, Book拆书Config, 幕, 剧情线, 转折点, 高潮点, 爽点, 人物分析, 世界设定, 写作技巧};
+use crate::book_split::{BookAnalysisResult, BookAnalysisConfig, Act, PlotLine, TurningPoint, ClimaxPoint, PowerMoment, CharacterAnalysis, WorldSetting, WritingTechnique};
 
 #[tauri::command]
-pub async fn 拆书_analyze(content: String, title: String) -> Result<Book拆书Result, String> {
-    let mut result = Book拆书Result::new(&title);
+pub async fn book_analyze(content: String, title: String) -> Result<BookAnalysisResult, String> {
+    let mut result = BookAnalysisResult::new(&title);
     let word_count = content.chars().filter(|c| !c.is_whitespace()).count();
     let lines: Vec<&str> = content.lines().collect();
     
@@ -1714,13 +1714,13 @@ pub async fn 拆书_analyze(content: String, title: String) -> Result<Book拆书
         "中短篇结构".to_string()
     };
     
-    // 估算幕结构
+    // Estimate act structure
     let chapters_per_act = (actual_chapters as f32 / 4.0).ceil() as usize;
     result.structure.acts = vec![
-        幕 { id: 1, name: "起".to_string(), chapters: (1..=chapters_per_act).collect(), description: "开头铺垫".to_string() },
-        幕 { id: 2, name: "承".to_string(), chapters: (chapters_per_act+1..=chapters_per_act*2).collect(), description: "发展深入".to_string() },
-        幕 { id: 3, name: "转".to_string(), chapters: (chapters_per_act*2+1..=chapters_per_act*3).collect(), description: "高潮转折".to_string() },
-        幕 { id: 4, name: "合".to_string(), chapters: (chapters_per_act*3+1..=actual_chapters).collect(), description: "结局收尾".to_string() },
+        Act { id: 1, name: "opening".to_string(), chapters: (1..=chapters_per_act).collect(), description: "setup and introduction".to_string() },
+        Act { id: 2, name: "development".to_string(), chapters: (chapters_per_act+1..=chapters_per_act*2).collect(), description: "develop and deepen".to_string() },
+        Act { id: 3, name: "climax".to_string(), chapters: (chapters_per_act*2+1..=chapters_per_act*3).collect(), description: "turning point and climax".to_string() },
+        Act { id: 4, name: "conclusion".to_string(), chapters: (chapters_per_act*3+1..=actual_chapters).collect(), description: "resolution and ending".to_string() },
     ];
     
     // 节奏分析
@@ -1733,23 +1733,23 @@ pub async fn 拆书_analyze(content: String, title: String) -> Result<Book拆书
         "低".to_string()
     };
     
-    // 添加一些示例转折点
+    // Add some sample turning points
     if actual_chapters > 10 {
         result.rhythm.turning_points = vec![
-            转折点 {
+            TurningPoint {
                 chapter: actual_chapters / 4,
-                type: "小高潮".to_string(),
-                description: "第一个冲突解决".to_string()
+                type: "minor_climax".to_string(),
+                description: "First conflict resolution".to_string()
             },
-            转折点 {
+            TurningPoint {
                 chapter: actual_chapters / 2,
-                type: "重大转折".to_string(),
-                description: "核心冲突爆发".to_string()
+                type: "major_turn".to_string(),
+                description: "Core conflict erupts".to_string()
             },
-            转折点 {
+            TurningPoint {
                 chapter: (actual_chapters as f32 * 0.75) as usize,
-                type: "高潮".to_string(),
-                description: "最终决战".to_string()
+                type: "climax".to_string(),
+                description: "Final battle".to_string()
             },
         ];
     }
@@ -1762,63 +1762,63 @@ pub async fn 拆书_analyze(content: String, title: String) -> Result<Book拆书
         "期待型".to_string(), // 修炼突破在即
     ];
     
-    // 分析常见的网文爽点
-    result.爽点列表 = vec![
-        爽点 { chapter: actual_chapters / 5, type: "打脸".to_string(), description: "主角实力打脸反派".to_string(), frequency: "高频".to_string() },
-        爽点 { chapter: actual_chapters / 3, type: "逆袭".to_string(), description: "弱变强战胜强敌".to_string(), frequency: "中频".to_string() },
-        爽点 { chapter: actual_chapters / 2, type: "收获".to_string(), description: "获得宝物/传承".to_string(), frequency: "高频".to_string() },
+    // Analyze common web novel power moments
+    result.power_moments = vec![
+        PowerMoment { chapter: actual_chapters / 5, type: "face_slap".to_string(), description: "Protagonist shames the antagonist".to_string(), frequency: "high".to_string() },
+        PowerMoment { chapter: actual_chapters / 3, type: "reversal".to_string(), description: "Weak to strong, defeats powerful enemy".to_string(), frequency: "medium".to_string() },
+        PowerMoment { chapter: actual_chapters / 2, type: "gain".to_string(), description: "Obtain treasure/legacy".to_string(), frequency: "high".to_string() },
     ];
     
-    // 人物分析（示例）
+    // Character analysis (sample)
     result.characters = vec![
-        人物分析 {
-            name: "主角".to_string(),
-            role: "主角".to_string(),
-            archetype: "废柴逆袭型".to_string(),
-            growth: "从弱到强的成长曲线".to_string(),
-            main_moments: vec!["第一次胜利".to_string(), "重大突破".to_string()],
-            relationships: vec!["与反派的对立".to_string(), "与伙伴的羁绊".to_string()],
+        CharacterAnalysis {
+            name: "protagonist".to_string(),
+            role: "protagonist".to_string(),
+            archetype: "loser_reversal".to_string(),
+            growth: "Weak to strong growth curve".to_string(),
+            main_moments: vec!["First victory".to_string(), "Major breakthrough".to_string()],
+            relationships: vec!["Conflict with antagonist".to_string(), "Bond with companions".to_string()],
         },
     ];
     
-    // 写作技巧总结
+    // Writing techniques summary
     result.techniques = vec![
-        写作技巧 {
-            category: "叙事".to_string(),
-            technique: "上帝视角为主".to_string(),
-            example: "全知全能视角".to_string(),
-            application: "适合新手入门".to_string()
+        WritingTechnique {
+            category: "narrative".to_string(),
+            technique: "Omniscient perspective".to_string(),
+            example: "All-knowing perspective".to_string(),
+            application: "Good for beginners".to_string()
         },
-        写作技巧 {
-            category: "节奏".to_string(),
-            technique: "小高潮不断".to_string(),
-            example: "每3-5章一个爽点".to_string(),
-            application: "保持读者阅读兴趣".to_string()
+        WritingTechnique {
+            category: "pacing".to_string(),
+            technique: "Continuous minor climaxes".to_string(),
+            example: "One power moment every 3-5 chapters".to_string(),
+            application: "Maintain reader interest".to_string()
         },
-        写作技巧 {
-            category: "对话".to_string(),
-            technique: "推进剧情型对话".to_string(),
-            example: "少废话，多信息".to_string(),
-            application: "避免水字数".to_string()
+        WritingTechnique {
+            category: "dialogue".to_string(),
+            technique: "Plot-advancing dialogue".to_string(),
+            example: "Less filler, more information".to_string(),
+            application: "Avoid padding".to_string()
         },
     ];
-    
-    // 可学习点
+
+    // Learnable points
     result.learnable_points = vec![
-        "节奏把控：平均{}字/章".replace("{}", &result.rhythm.average_chapter_length.to_string()),
-        "结构模式：四幕式结构".to_string(),
-        "爽点设计：打脸-逆袭-收获三板斧".to_string(),
-        "人物成长：废柴到强者的经典路线".to_string(),
-        "章尾钩子：每章结尾留悬念".to_string(),
+        "Pacing: ~{} words/chapter".replace("{}", &result.rhythm.average_chapter_length.to_string()),
+        "Structure: Four-act structure".to_string(),
+        "Power moment design: Face-slap - Reversal - Gain".to_string(),
+        "Character growth: Classic loser-to-hero route".to_string(),
+        "Chapter hooks: Leave suspense at end of each chapter".to_string(),
     ];
     
     result.summary = format!(
-        "《{}》约{}字，{}章，属于{}。\
-        节奏{}，冲突密度{}。\
-        主要爽点类型：打脸、逆袭、收获。\
-        可学习点：节奏把控、爽点设计、人物成长曲线。",
+        "\"{}\" has about {} words, {} chapters, belongs to {}. \
+        Pacing is {}, conflict density is {}. \
+        Main power moment types: face-slap, reversal, gain. \
+        Learnable points: pacing control, power moment design, character growth curve.",
         title,
-        word_count.toLocaleString(),
+        word_count,
         actual_chapters,
         result.structure.type,
         result.rhythm.conflict_density,
@@ -1829,53 +1829,53 @@ pub async fn 拆书_analyze(content: String, title: String) -> Result<Book拆书
 }
 
 #[tauri::command]
-pub async fn 拆书_extract_ Techniques(content: String) -> Result<Vec<写作技巧>, String> {
+pub async fn book_extract_techniques(content: String) -> Result<Vec<WritingTechnique>, String> {
     let mut techniques = vec![];
     
-    // 简单分析常见的写作模式
+    // Simple analysis of common writing patterns
     if content.contains("只见") || content.contains("那道") || content.contains("此人") {
-        techniques.push(写作技巧 {
-            category: "描写".to_string(),
-            technique: "外貌描写".to_string(),
-            example: "只见此人...".to_string(),
-            application: "出场人物介绍".to_string()
+        techniques.push(WritingTechnique {
+            category: "description".to_string(),
+            technique: "appearance description".to_string(),
+            example: "just see this person...".to_string(),
+            application: "character introduction".to_string()
         });
     }
     
     if content.contains("修为") || content.contains("灵气") || content.contains("功法") {
-        techniques.push(写作技巧 {
-            category: "设定".to_string(),
-            technique: "修炼体系".to_string(),
-            example: "灵气-功法-修为".to_string(),
-            application: "玄幻力量体系".to_string()
+        techniques.push(WritingTechnique {
+            category: "setting".to_string(),
+            technique: "cultivation system".to_string(),
+            example: "spiritual energy - technique - cultivation".to_string(),
+            application: "fantasy power system".to_string()
         });
     }
     
     if content.contains("冷笑") || content.contains("不屑") || content.contains("讥讽") {
-        techniques.push(写作技巧 {
-            category: "对话".to_string(),
-            technique: "反派嘲讽".to_string(),
-            example: "冷笑一声...".to_string(),
-            application: "制造冲突".to_string()
+        techniques.push(WritingTechnique {
+            category: "dialogue".to_string(),
+            technique: "antagonist mockery".to_string(),
+            example: "cold laugh...".to_string(),
+            application: "create conflict".to_string()
         });
     }
     
     if content.contains("系统") || content.contains("叮") || content.contains("恭喜") {
-        techniques.push(写作技巧 {
-            category: "金手指".to_string(),
-            technique: "系统流".to_string(),
-            example: "系统发布任务".to_string(),
-            application: "主角快速变强".to_string()
+        techniques.push(WritingTechnique {
+            category: "golden_finger".to_string(),
+            technique: "system stream".to_string(),
+            example: "system issues task".to_string(),
+            application: "protagonist gets strong quickly".to_string()
         });
     }
     
-    // 默认技巧
+    // Default technique
     if techniques.is_empty() {
-        techniques.push(写作技巧 {
-            category: "叙事".to_string(),
-            technique: "推进式叙事".to_string(),
-            example: "主线清晰".to_string(),
-            application: "保持剧情推进".to_string()
+        techniques.push(WritingTechnique {
+            category: "narrative".to_string(),
+            technique: "progressive narrative".to_string(),
+            example: "clear main plot".to_string(),
+            application: "keep story moving".to_string()
         });
     }
     
