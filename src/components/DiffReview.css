@@ -1,0 +1,386 @@
+.diff-review {
+  display: flex;
+  height: 100%;
+  background: var(--bg-primary, #fff);
+  border-left: 1px solid var(--border-color, #e5e5e5);
+}
+
+/* Sidebar */
+.diff-review-sidebar {
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f9f9f9);
+}
+
+.diff-review-sidebar-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.diff-review-title {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pending-badge {
+  background: #f57c00;
+  color: white;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.diff-review-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.diff-review-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-color, #eee);
+  transition: background 0.15s;
+}
+
+.diff-review-item:hover {
+  background: var(--bg-hover, #f0f0f0);
+}
+
+.diff-review-item.active {
+  background: var(--accent-light, #e3f2fd);
+  border-left: 3px solid var(--accent-color, #2196f3);
+}
+
+.diff-review-item-status {
+  font-size: 16px;
+}
+
+.diff-review-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-review-item-path {
+  font-size: 12px;
+  font-family: 'Consolas', monospace;
+  color: var(--text-primary, #333);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-review-item-stats {
+  font-size: 11px;
+  font-family: monospace;
+  margin-top: 2px;
+}
+
+.diff-review-item-stats .add {
+  color: #388e3c;
+  margin-right: 6px;
+}
+
+.diff-review-item-stats .delete {
+  color: #d32f2f;
+}
+
+.diff-review-item.accepted .diff-review-item-path {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* Main Area */
+.diff-review-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.diff-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.diff-review-file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.diff-review-file-path {
+  font-size: 13px;
+  font-family: 'Consolas', monospace;
+  color: var(--text-primary, #333);
+}
+
+.diff-review-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.diff-review-status.pending {
+  background: #fff3e0;
+  color: #f57c00;
+}
+
+.diff-review-status.accepted {
+  background: #e8f5e9;
+  color: #388e3c;
+}
+
+.diff-review-status.rejected {
+  background: #ffebee;
+  color: #d32f2f;
+}
+
+.diff-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-review-view-toggle {
+  display: flex;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.diff-review-view-toggle button {
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary, #666);
+}
+
+.diff-review-view-toggle button.active {
+  background: var(--accent-color, #2196f3);
+  color: white;
+}
+
+.diff-review-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.diff-review-btn.accept {
+  background: #4caf50;
+  color: white;
+}
+
+.diff-review-btn.accept:hover {
+  background: #43a047;
+}
+
+.diff-review-btn.reject {
+  background: #f44336;
+  color: white;
+}
+
+.diff-review-btn.reject:hover {
+  background: #e53935;
+}
+
+.diff-review-btn.close {
+  background: transparent;
+  color: var(--text-secondary, #999);
+  padding: 6px 10px;
+}
+
+.diff-review-btn.close:hover {
+  color: var(--text-primary, #333);
+  background: var(--bg-hover, #eee);
+}
+
+/* Diff Content */
+.diff-review-content {
+  flex: 1;
+  overflow: auto;
+}
+
+.diff-view-split {
+  display: flex;
+  height: 100%;
+}
+
+.diff-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.diff-pane-original {
+  border-right: 1px solid var(--border-color, #e5e5e5);
+}
+
+.diff-pane-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--bg-secondary, #f5f5f5);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  color: var(--text-secondary, #666);
+}
+
+.diff-pane-content {
+  flex: 1;
+  overflow: auto;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-block {
+  border-bottom: 1px solid var(--border-color, #eee);
+}
+
+.diff-line {
+  display: flex;
+  padding: 2px 8px;
+  white-space: pre;
+}
+
+.diff-line.delete {
+  background: #ffebee;
+}
+
+.diff-line.add {
+  background: #e8f5e9;
+}
+
+.diff-line.modify {
+  background: #fff3e0;
+}
+
+.diff-line .line-num {
+  width: 40px;
+  color: var(--text-muted, #999);
+  text-align: right;
+  padding-right: 12px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.diff-line .line-prefix {
+  width: 16px;
+  color: var(--text-muted, #999);
+  flex-shrink: 0;
+}
+
+.diff-line.delete .line-prefix,
+.diff-line.delete .line-num {
+  color: #d32f2f;
+}
+
+.diff-line.add .line-prefix,
+.diff-line.add .line-num {
+  color: #388e3c;
+}
+
+.diff-line .line-content {
+  flex: 1;
+}
+
+/* Unified View */
+.diff-view-unified {
+  height: 100%;
+}
+
+.diff-view-unified .diff-pane-content {
+  padding: 8px 0;
+}
+
+/* Dark mode */
+[data-theme="dark"] .diff-review {
+  background: #1e1e1e;
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-review-sidebar {
+  background: #252526;
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-review-sidebar-header {
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-review-item {
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-review-item:hover {
+  background: #2a2d2e;
+}
+
+[data-theme="dark"] .diff-review-item.active {
+  background: #37373d;
+  border-left-color: #0078d4;
+}
+
+[data-theme="dark"] .diff-review-header {
+  background: #252526;
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-review-file-path {
+  color: #e0e0e0;
+}
+
+[data-theme="dark"] .diff-review-view-toggle {
+  background: #1e1e1e;
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-view-split .diff-pane-original {
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-pane-header {
+  background: #252526;
+  border-color: #333;
+  color: #999;
+}
+
+[data-theme="dark"] .diff-pane-content {
+  background: #1e1e1e;
+}
+
+[data-theme="dark"] .diff-block {
+  border-color: #333;
+}
+
+[data-theme="dark"] .diff-line.delete {
+  background: #3a1d1d;
+}
+
+[data-theme="dark"] .diff-line.add {
+  background: #1d3a1d;
+}
+
+[data-theme="dark"] .diff-line.modify {
+  background: #3a2d1d;
+}
