@@ -2918,6 +2918,37 @@ function App() {
                             }
                           />
                         </div>
+                        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <label style={{ flex: '0 0 100px' }}>分章字数</label>
+                          <input
+                            type="number"
+                            className="ai-textarea"
+                            style={{ width: 100, height: 32 }}
+                            min={500}
+                            max={10000}
+                            value={agentsList.find((a) => a.id === agentEditorId)?.chapter_word_target ?? 3000}
+                            onChange={(e) =>
+                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, chapter_word_target: parseInt(e.target.value) || 3000 } : a)))
+                            }
+                          />
+                          <span style={{ fontSize: 11, color: '#888' }}>字/章 (0=不分章)</span>
+                        </div>
+                        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <label style={{ flex: '0 0 100px' }}>Max Tokens</label>
+                          <input
+                            type="number"
+                            className="ai-textarea"
+                            style={{ width: 100, height: 32 }}
+                            min={1024}
+                            max={128000}
+                            step={1024}
+                            value={agentsList.find((a) => a.id === agentEditorId)?.max_tokens ?? 32000}
+                            onChange={(e) =>
+                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, max_tokens: parseInt(e.target.value) || 32000 } : a)))
+                            }
+                          />
+                          <span style={{ fontSize: 11, color: '#888' }}>输出长度限制</span>
+                        </div>
                       </div>
                     </div>
                   )}
