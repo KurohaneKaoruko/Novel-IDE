@@ -188,3 +188,62 @@ export async function listChatSessions(workspace_root?: string | null): Promise<
 export async function getChatSession(id: string): Promise<ChatSession> {
   return invoke<ChatSession>('get_chat_session', { id })
 }
+
+// ============ Skills ============
+
+export type Skill = {
+  id: string
+  name: string
+  description: string
+  prompt: string
+  category: string
+  enabled: boolean
+}
+
+export async function getSkills(): Promise<Skill[]> {
+  return invoke<Skill[]>('get_skills')
+}
+
+export async function getSkillCategories(): Promise<string[]> {
+  return invoke<string[]>('get_skill_categories')
+}
+
+export async function getSkillsByCategory(category: string): Promise<Skill[]> {
+  return invoke<Skill[]>('get_skills_by_category', { category })
+}
+
+export async function applySkill(skillId: string, content: string): Promise<string> {
+  return invoke<string>('apply_skill', { skillId, content })
+}
+
+// ============ MCP ============
+
+export type McpServer = {
+  id: string
+  name: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  enabled: boolean
+}
+
+export type McpTool = {
+  name: string
+  description: string
+  input_schema: unknown
+}
+
+export type McpResource = {
+  uri: string
+  name: string
+  description: string
+  mime_type: string
+}
+
+export type McpServerStatus = {
+  server_id: string
+  connected: boolean
+  tools: McpTool[]
+  resources: McpResource[]
+  error: string | null
+}

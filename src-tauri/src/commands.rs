@@ -775,7 +775,7 @@ async fn call_openai_compatible(
   }
   out_messages.extend(messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})));
 
-  let max_tokens = max_tokens_override.unwrap_or(2048);
+  let max_tokens = max_tokens_override.unwrap_or(32000);
   let temperature = temperature_override.unwrap_or(0.7);
 
   let send_once = |msgs: Vec<serde_json::Value>| {
@@ -850,7 +850,7 @@ async fn call_anthropic(
   let url = "https://api.anthropic.com/v1/messages";
   let body = serde_json::json!({
     "model": cfg.model_name,
-    "max_tokens": max_tokens_override.unwrap_or(2048),
+    "max_tokens": max_tokens_override.unwrap_or(32000),
     "system": system_prompt,
     "messages": messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>()
   });
@@ -1340,4 +1340,30 @@ fn build_tree(root: &Path, path: &Path, max_depth: usize) -> Result<FsEntry, Str
       children: vec![],
     })
   }
+}
+
+// ============ Skill Commands ============
+
+#[tauri::command]
+pub fn get_skills() -> Vec<skills::Skill> {
+    let manager = skills::SkillManager::new();
+    manager.get_all().into_iter().cloned().collect()
+}
+
+#[tauri::command]
+pub fn get_skill_categories() -> Vec<String> {
+    let manager = skills::SkillManager::new();
+    manager.categories()
+}
+
+#[tauri::command]
+pub fn get_skills_by_category(category: String) -> Vec<skills::Skill> {
+    let manager = skills::SkillManager::new();
+    manager.get_by_category(&category).into_iter().cloned().collect()
+}
+
+#[tauri::command]
+pub fn apply_skill(skill_id: String, content: String) -> String {
+    let manager = skills::SkillManager::new();
+    manager.apply_skill(&skill_id, &content)
 }

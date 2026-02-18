@@ -135,7 +135,7 @@ impl Default for LegacyOpenAiSettings {
       base_url: "https://api.openai.com/v1".to_string(),
       model: "gpt-4o-mini".to_string(),
       temperature: 0.7,
-      max_tokens: 1024,
+      max_tokens: 32000,
     }
   }
 }
@@ -153,7 +153,7 @@ impl Default for LegacyAnthropicSettings {
     Self {
       api_key: String::new(),
       model: "claude-3-5-sonnet-20241022".to_string(),
-      max_tokens: 1024,
+      max_tokens: 32000,
     }
   }
 }
