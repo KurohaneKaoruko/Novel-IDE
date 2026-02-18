@@ -1,0 +1,206 @@
+.file-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.file-explorer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary, #666);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.file-explorer-title {
+  font-weight: 600;
+}
+
+.file-explorer-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.file-explorer-action {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--text-secondary, #666);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-explorer-action:hover {
+  background: var(--bg-hover, #eee);
+  color: var(--text-primary, #333);
+}
+
+.file-explorer-search {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.file-explorer-search input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #333);
+  outline: none;
+  transition: all 0.15s;
+}
+
+.file-explorer-search input:focus {
+  border-color: var(--accent-color, #2196f3);
+  box-shadow: 0 0 0 2px var(--accent-light, rgba(33, 150, 243, 0.1));
+}
+
+.file-explorer-search input::placeholder {
+  color: var(--text-muted, #aaa);
+}
+
+.file-explorer-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.file-explorer-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-size: 13px;
+}
+
+.file-explorer-tree {
+  padding: 4px 0;
+}
+
+.file-explorer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  transition: all 0.1s;
+  user-select: none;
+}
+
+.file-explorer-item:hover {
+  background: var(--bg-hover, #f0f0f0);
+  color: var(--text-primary, #333);
+}
+
+.file-explorer-item.active {
+  background: var(--accent-light, #e3f2fd);
+  color: var(--accent-color, #1976d2);
+}
+
+.file-explorer-item.dir {
+  font-weight: 500;
+}
+
+.file-explorer-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.file-explorer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-explorer-count {
+  font-size: 10px;
+  color: var(--text-muted, #999);
+  background: var(--bg-hover, #eee);
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.file-explorer-children {
+  /* Children container */
+}
+
+/* Scrollbar styling */
+.file-explorer-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.file-explorer-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-explorer-content::-webkit-scrollbar-thumb {
+  background: var(--border-color, #ccc);
+  border-radius: 4px;
+}
+
+.file-explorer-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted, #999);
+}
+
+/* Dark mode */
+[data-theme="dark"] .file-explorer-header {
+  color: #999;
+  border-color: #333;
+}
+
+[data-theme="dark"] .file-explorer-action {
+  color: #999;
+}
+
+[data-theme="dark"] .file-explorer-action:hover {
+  background: #333;
+  color: #fff;
+}
+
+[data-theme="dark"] .file-explorer-search input {
+  background: #252526;
+  border-color: #333;
+  color: #fff;
+}
+
+[data-theme="dark"] .file-explorer-search input:focus {
+  border-color: #0078d4;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+}
+
+[data-theme="dark"] .file-explorer-item {
+  color: #999;
+}
+
+[data-theme="dark"] .file-explorer-item:hover {
+  background: #2a2d2e;
+  color: #fff;
+}
+
+[data-theme="dark"] .file-explorer-item.active {
+  background: #37373d;
+  color: #fff;
+}
+
+[data-theme="dark"] .file-explorer-count {
+  background: #333;
+  color: #888;
+}
+
+[data-theme="dark"] .file-explorer-content::-webkit-scrollbar-thumb {
+  background: #444;
+}

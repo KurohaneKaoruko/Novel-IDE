@@ -53,6 +53,10 @@ import { PlotLineManager } from './components/PlotLineManager'
 import { WritingGoalPanel } from './components/WritingGoalPanel'
 import { SpecKitPanel } from './components/SpecKitPanel'
 import { SpecKitLintPanel } from './components/SpecKitLintPanel'
+import { DiffReviewPanel } from './components/DiffReviewPanel'
+import { StatusBar } from './components/StatusBar'
+import { CommandPalette, type Command } from './components/CommandPalette'
+import { TabBar, type TabItem } from './components/TabBar'
 import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
 import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks/useAutoSave'
 import { logError } from './utils/errorLogger'
@@ -102,11 +106,15 @@ type ExplorerModalState =
 function App() {
   // Diff Context
   const diffContext = useDiff()
-  
+
   // DiffView State
   const [showDiffPanel, setShowDiffPanel] = useState(false)
   const [activeDiffTab, setActiveDiffTab] = useState<string | null>(null)
-  
+
+  // Modern UI State
+  const [showCommandPalette, setShowCommandPalette] = useState(false)
+  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+
   // Activity Bar State
   const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit'>('files')
   const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | 'spec-kit' | null>('chat')
@@ -122,7 +130,7 @@ function App() {
   const [previewHtml, setPreviewHtml] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  
+
   // New state for model modal
   const [showModelModal, setShowModelModal] = useState(false)
   const [editingProvider, setEditingProvider] = useState<Partial<ModelProvider>>({})
@@ -436,11 +444,11 @@ function App() {
           setActivePath(existing.path)
           return
         }
-        
+
         // Check for auto-saved content
         const autoSaved = getAutoSavedContent(entry.path)
         let content = await readText(entry.path)
-        
+
         // If auto-saved content exists and is different, use it
         if (autoSaved && autoSaved.content !== content) {
           content = autoSaved.content
@@ -495,15 +503,15 @@ function App() {
     try {
       await writeText(activeFile.path, activeFile.content)
       setOpenFiles((prev) => prev.map((f) => (f.path === activeFile.path ? { ...f, dirty: false } : f)))
-      
+
       // Clear backup and auto-save after successful save
       clearBackupContent(activeFile.path)
       clearAutoSavedContent(activeFile.path)
-      
+
       await refreshTree()
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e))
-      
+
       // Use error handler to show user-friendly error and recovery options
       const result = await handleFileSaveError({
         filePath: activeFile.path,
@@ -523,7 +531,7 @@ function App() {
           console.log('Save as not implemented yet')
         },
       })
-      
+
       // Keep dirty flag if save failed
       if (result === 'cancel') {
         setError(error.message)
@@ -706,20 +714,20 @@ function App() {
   const getSelectionText = useCallback((): string => {
     const editor = editorRef.current
     if (!editor) return ''
-    
+
     // Use Lexical's getSelectedText method from AIAssistPlugin
     const extendedEditor = editor as any
     if (extendedEditor.getSelectedText && typeof extendedEditor.getSelectedText === 'function') {
       return extendedEditor.getSelectedText()
     }
-    
+
     return ''
   }, [])
 
   const insertAtCursor = useCallback((text: string) => {
     const editor = editorRef.current
     if (!editor || !text) return
-    
+
     // Use Lexical's insertTextAtCursor method from AIAssistPlugin
     const extendedEditor = editor as any
     if (extendedEditor.insertTextAtCursor && typeof extendedEditor.insertTextAtCursor === 'function') {
@@ -939,9 +947,9 @@ function App() {
       return
     }
 
-    const messagesToSend = [...chatMessages, user].map((m) => ({ 
+    const messagesToSend = [...chatMessages, user].map((m) => ({
       id: m.id,
-      role: m.role, 
+      role: m.role,
       content: m.content,
       timestamp: m.timestamp || Date.now()
     }))
@@ -965,11 +973,11 @@ function App() {
   const onSmartComplete = useCallback(() => {
     if (!activeFile) return
     const editor = editorRef.current
-    
+
     // Use getContextBeforeCursor from AIAssistPlugin to get last 1200 characters
     const extendedEditor = editor as any
     let snippet = ''
-    
+
     if (extendedEditor?.getContextBeforeCursor && typeof extendedEditor.getContextBeforeCursor === 'function') {
       snippet = extendedEditor.getContextBeforeCursor(1200)
     } else {
@@ -977,7 +985,7 @@ function App() {
       const full: string = extendedEditor?.getContent?.() ?? activeFile.content
       snippet = full.slice(Math.max(0, full.length - 1200))
     }
-    
+
     const nearing = chapterWordTarget > 0 && activeCharCount >= Math.floor(chapterWordTarget * 0.9)
     const prompt =
       `续写补全：本章目标字数 ${chapterWordTarget}，当前 ${activeCharCount}。\n` +
@@ -1063,12 +1071,12 @@ function App() {
   // const openEditorContextMenu = useCallback((e: MouseEvent) => {
   //   e.preventDefault()
   //   e.stopPropagation()
-  //   
+  //
   //   const selectedText = getSelectionText()
   //   if (!selectedText || selectedText.trim().length === 0) {
   //     return
   //   }
-  //   
+  //
   //   setEditorContextMenu({
   //     x: e.clientX,
   //     y: e.clientY,
@@ -1082,19 +1090,19 @@ function App() {
 
   const handleAIPolish = useCallback(async () => {
     if (!editorContextMenu || !activeFile) return
-    
+
     const selectedText = editorContextMenu.selectedText
-    
+
     setBusy(true)
     setError(null)
-    
+
     try {
       // Call AI assistance service
       const response = await aiAssistanceService.polishText(
         selectedText,
         activeFile.path
       )
-      
+
       // Convert to ChangeSet (without line numbers for now - will be improved in task 7)
       const changeSet = aiAssistanceService.convertToChangeSet(
         response,
@@ -1103,7 +1111,7 @@ function App() {
         1, // placeholder
         1  // placeholder
       )
-      
+
       // Add to diff context and open diff view
       diffContext.addChangeSet(changeSet)
       onOpenDiffView(changeSet.id)
@@ -1116,19 +1124,19 @@ function App() {
 
   const handleAIExpand = useCallback(async () => {
     if (!editorContextMenu || !activeFile) return
-    
+
     const selectedText = editorContextMenu.selectedText
-    
+
     setBusy(true)
     setError(null)
-    
+
     try {
       // Call AI assistance service
       const response = await aiAssistanceService.expandText(
         selectedText,
         activeFile.path
       )
-      
+
       // Convert to ChangeSet (without line numbers for now - will be improved in task 7)
       const changeSet = aiAssistanceService.convertToChangeSet(
         response,
@@ -1137,7 +1145,7 @@ function App() {
         1, // placeholder
         1  // placeholder
       )
-      
+
       // Add to diff context and open diff view
       diffContext.addChangeSet(changeSet)
       onOpenDiffView(changeSet.id)
@@ -1150,19 +1158,19 @@ function App() {
 
   const handleAICondense = useCallback(async () => {
     if (!editorContextMenu || !activeFile) return
-    
+
     const selectedText = editorContextMenu.selectedText
-    
+
     setBusy(true)
     setError(null)
-    
+
     try {
       // Call AI assistance service
       const response = await aiAssistanceService.condenseText(
         selectedText,
         activeFile.path
       )
-      
+
       // Convert to ChangeSet (without line numbers for now - will be improved in task 7)
       const changeSet = aiAssistanceService.convertToChangeSet(
         response,
@@ -1171,7 +1179,7 @@ function App() {
         1, // placeholder
         1  // placeholder
       )
-      
+
       // Add to diff context and open diff view
       diffContext.addChangeSet(changeSet)
       onOpenDiffView(changeSet.id)
@@ -1220,13 +1228,13 @@ function App() {
   // Handle tab switching with state save/restore
   useEffect(() => {
     if (!activePath || !editorRef.current) return
-    
+
     // Save state of previous tab
     const previousPath = openFiles.find(f => f.path !== activePath)?.path
     if (previousPath) {
       editorManager.saveState(previousPath)
     }
-    
+
     // Restore state of current tab
     editorManager.restoreState(activePath)
   }, [activePath, openFiles])
@@ -1303,7 +1311,7 @@ function App() {
         if (!workspaceRoot && last) {
           await openWorkspacePath(last)
         }
-        
+
         // Check for recovery candidates after workspace is loaded
         setTimeout(() => {
           setShowRecoveryDialog(true)
@@ -1344,7 +1352,7 @@ function App() {
   useEffect(() => {
     const unsubscribe = editorConfigManager.subscribe((config) => {
       setEditorUserConfig(config)
-      
+
       // Apply CSS variables to the editor container
       const editorContainer = document.querySelector('.lexical-editor-wrapper')
       if (editorContainer instanceof HTMLElement) {
@@ -1354,7 +1362,7 @@ function App() {
         })
       }
     })
-    
+
     // Apply initial CSS variables
     const editorContainer = document.querySelector('.lexical-editor-wrapper')
     if (editorContainer instanceof HTMLElement) {
@@ -1363,7 +1371,7 @@ function App() {
         editorContainer.style.setProperty(key, value)
       })
     }
-    
+
     return unsubscribe
   }, [])
 
@@ -1415,19 +1423,19 @@ function App() {
       if (!streamId) return
       const changeSet = p.changeSet as import('./services/ModificationService').ChangeSet | undefined
       if (!changeSet) return
-      
+
       // Add the ChangeSet to the DiffContext
       diffContext.addChangeSet(changeSet)
-      
+
       // Update the chat message with the ChangeSet
-      setChatMessages((prev) => 
-        prev.map((m) => 
-          m.role === 'assistant' && m.streamId === streamId 
-            ? { ...m, changeSet } 
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.role === 'assistant' && m.streamId === streamId
+            ? { ...m, changeSet }
             : m
         )
       )
-      
+
       // Open the DiffView panel
       onOpenDiffView(changeSet.id)
     }).then((u) => unlistenFns.push(u))
@@ -1490,6 +1498,11 @@ function App() {
         e.preventDefault()
         chatInputRef.current?.focus()
       }
+      // Command Palette: Ctrl+Shift+P
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        setShowCommandPalette(true)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -1546,26 +1559,26 @@ function App() {
     canvas.width = Math.floor(cssW * dpr)
     canvas.height = Math.floor(cssH * dpr)
     // canvas.style.width is handled by CSS (100%)
-    
+
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, cssW, cssH)
-    
+
     const nodes = graphNodes.slice()
     const n = nodes.length
     const cx = cssW / 2
     const cy = cssH / 2
     const r = Math.min(cssW, cssH) * 0.35
-    
+
     const placed = nodes.map((node, i) => {
       const a = (Math.PI * 2 * i) / Math.max(1, n)
       return { ...node, x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }
     })
-    
+
     const byId = new Map<string, { id: string; name: string; x: number; y: number }>()
     for (const p of placed) byId.set(p.id, p)
-    
+
     ctx.lineWidth = 1
     ctx.strokeStyle = '#3a3a3a'
     for (const e of graphEdges) {
@@ -1833,46 +1846,40 @@ function App() {
 
       {/* Main Content */}
       <div className="main-content">
-        <div className="editor-tabs">
-          {openFiles.length === 0 ? (
-            <div className="editor-tab">无文件</div>
-          ) : (
-            openFiles.map((f) => (
-              <div
-                key={f.path}
-                className={f.path === activePath ? 'editor-tab active' : 'editor-tab'}
-                onClick={() => setActivePath(f.path)}
-              >
-                {f.name}
-                {f.dirty ? ' *' : ''}
-                <span
-                  style={{ marginLeft: 8 }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    void (async () => {
-                      if (f.dirty) {
-                        const ok = await showConfirm(`文件“${f.name}”未保存，确认关闭吗？`)
-                        if (!ok) return
-                      }
-                      // Destroy editor instance in EditorManager
-                      editorManager.destroyEditor(f.path)
-                      
-                      setOpenFiles((prev) => {
-                        const next = prev.filter((p) => p.path !== f.path)
-                        if (activePath === f.path) {
-                          setActivePath(next[next.length - 1]?.path ?? null)
-                        }
-                        return next
-                      })
-                    })()
-                  }}
-                >
-                  ×
-                </span>
-              </div>
-            ))
-          )}
-          <div className="spacer" />
+        <TabBar
+          tabs={openFiles.map((f) => ({
+            id: f.path,
+            title: f.name,
+            path: f.path,
+            dirty: f.dirty,
+          }))}
+          activeTab={activePath}
+          onTabSelect={(id) => setActivePath(id)}
+          onTabClose={async (id) => {
+            const file = openFiles.find(f => f.path === id)
+            if (file?.dirty) {
+              const ok = await showConfirm(`文件"${file.name}"未保存，确认关闭吗？`)
+              if (!ok) return
+            }
+            editorManager.destroyEditor(id)
+            setOpenFiles((prev) => {
+              const next = prev.filter((p) => p.path !== id)
+              if (activePath === id) {
+                setActivePath(next[next.length - 1]?.path ?? null)
+              }
+              return next
+            })
+          }}
+          onTabsReorder={(fromIndex, toIndex) => {
+            setOpenFiles((prev) => {
+              const next = [...prev]
+              const [removed] = next.splice(fromIndex, 1)
+              next.splice(toIndex, 0, removed)
+              return next
+            })
+          }}
+        />
+        <div className="editor-tabs-actions">
           <button className="icon-button" disabled={!workspaceRoot} onClick={() => void onNewChapter()} title="新建章节">
             +
           </button>
@@ -2048,8 +2055,8 @@ function App() {
                 <div className="ai-header">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <span style={{ fontSize: 11, color: '#888', fontWeight: 500 }}>AI 对话</span>
-                    <button 
-                      className="icon-button" 
+                    <button
+                      className="icon-button"
                       style={{ fontSize: 12, padding: '4px 8px' }}
                       onClick={() => {
                         const newId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -2152,8 +2159,8 @@ function App() {
                                   modifications: fileModification.modifications.filter(mod => mod.type === 'modify').length,
                                 }
                                 return (
-                                  <div 
-                                    key={fileModification.filePath} 
+                                  <div
+                                    key={fileModification.filePath}
                                     className="file-modification-item"
                                     onClick={() => onOpenDiffView(m.changeSet!.id)}
                                     title="点击查看差异"
@@ -2417,7 +2424,7 @@ function App() {
                 {/* Editor Configuration Section */}
                 <div style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>编辑器配置</h3>
-                  
+
                   {/* Font Family */}
                   <div className="form-group">
                     <label>字体</label>
@@ -2562,7 +2569,7 @@ function App() {
                 {/* Sensitive Word Configuration Section */}
                 <div style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>敏感词检测</h3>
-                  
+
                   {/* Enable/Disable Toggle */}
                   <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
                     <label style={{ flex: 1, writingMode: 'horizontal-tb' }}>启用敏感词检测</label>
@@ -2578,7 +2585,7 @@ function App() {
                     <label style={{ fontSize: 12, color: '#ccc', marginBottom: 6, display: 'block' }}>
                       自定义敏感词词库
                     </label>
-                    
+
                     {/* Add Word Input */}
                     <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                       <input
@@ -2691,7 +2698,7 @@ function App() {
                       + 添加模型
                     </button>
                   </div>
-                  
+
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {appSettings.providers.map((p) => (
                       <div
@@ -2784,7 +2791,7 @@ function App() {
 
                 <div style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>智能体管理</h3>
-                  
+
                   {/* Built-in Agents */}
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>内置智能体</div>
@@ -3053,7 +3060,7 @@ function App() {
                         const ok = await getApiKeyStatus(pid)
                         setApiKeyStatus((m) => ({ ...m, [pid]: ok }))
                         if (rawKey && !ok) {
-                          await showErrorDialog(`API Key 已提交保存，但读取状态仍为“未设置”（provider=${pid}）。可能是系统凭据存储不可用。`)
+                          await showErrorDialog(`API Key 已提交保存，但读取状态仍为"未设置"（provider=${pid}）。可能是系统凭据存储不可用。`)
                           return
                         }
                       } catch {
@@ -3076,17 +3083,17 @@ function App() {
         </div>
       )}
 
-      <div className="status-bar">
-        <div className="status-item">字数：{activeCharCount} / {chapterWordTarget}</div>
-        <div className="status-item">写作：{writingSeconds}s</div>
-        <div className="status-item">Git：{gitError ? '不可用' : `${gitItems.length} 变更`}</div>
-        {sensitiveWordEnabled && (
-          <div className="status-item" title={isSensitiveWordDetecting ? '检测中...' : `检测到 ${sensitiveWordCount} 个敏感词`}>
-            敏感词：{isSensitiveWordDetecting ? '...' : sensitiveWordCount}
-          </div>
-        )}
-        <div className="status-spacer" />
-      </div>
+      <StatusBar
+        info={{
+          charCount: activeCharCount,
+          chapterTarget: chapterWordTarget,
+          gitStatus: gitItems.length > 0 ? 'modified' : 'clean',
+          gitBranch: 'main',
+          theme,
+        }}
+        onThemeToggle={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
+        onGitClick={() => setActiveSidebarTab('git')}
+      />
 
       {chatContextMenu ? (
         <div className="context-menu" style={{ left: chatContextMenu.x, top: chatContextMenu.y }}>
@@ -3268,7 +3275,7 @@ function App() {
           onClose={closeEditorContextMenu}
         />
       ) : null}
-      
+
       {/* Recovery Dialog */}
       {showRecoveryDialog && (
         <RecoveryDialog
@@ -3283,6 +3290,24 @@ function App() {
             )
           }}
           onClose={() => setShowRecoveryDialog(false)}
+        />
+      )}
+
+      {/* Command Palette */}
+      {showCommandPalette && (
+        <CommandPalette
+          commands={[
+            { id: 'save', label: '保存文件', category: '文件', shortcut: 'Ctrl+S', action: () => void onSaveActive() },
+            { id: 'newChapter', label: '新建章节', category: '文件', action: () => void onNewChapter() },
+            { id: 'toggleTheme', label: '切换主题', category: '视图', action: () => setTheme(t => t === 'light' ? 'dark' : 'light') },
+            { id: 'toggleSidebar', label: '切换侧边栏', category: '视图', shortcut: 'Ctrl+B', action: () => {} },
+            { id: 'openSettings', label: '打开设置', category: '设置', shortcut: 'Ctrl+,', action: () => setShowSettings(true) },
+            { id: 'aiChat', label: 'AI 对话', category: 'AI', shortcut: 'Ctrl+Shift+L', action: () => {} },
+            { id: 'smartComplete', label: '智能补全', category: 'AI', action: () => void onSmartComplete() },
+            { id: 'gitCommit', label: 'Git 提交', category: 'Git', action: () => {} },
+            { id: 'gitPush', label: 'Git 推送', category: 'Git', action: () => {} },
+          ]}
+          onClose={() => setShowCommandPalette(false)}
         />
       )}
     </div>
