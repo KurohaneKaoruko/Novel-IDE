@@ -1,0 +1,155 @@
+{
+  "name": "novel-ai-assistant",
+  "displayName": "Novel AI Assistant",
+  "description": "AI小说创作助手 - 基于Novel-IDE的VSCode插件",
+  "version": "1.0.0",
+  "publisher": "novel-ide",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "novel",
+    "ai",
+    "writing",
+    "assistant",
+    "creative"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:novel-ai.openPanel"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "novel-ai.openPanel",
+        "title": "打开AI创作助手",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "novel-ai.quoteSelection",
+        "title": "引用选区"
+      },
+      {
+        "command": "novel-ai.insertToCursor",
+        "title": "插入到光标位置"
+      },
+      {
+        "command": "novel-ai.newChapter",
+        "title": "新建章节"
+      },
+      {
+        "command": "novel-ai.smartComplete",
+        "title": "智能补全"
+      }
+    ],
+    "views": {
+      "walkthrough": [
+        {
+          "id": "novel-ai.welcome",
+          "title": "欢迎使用 Novel AI Assistant",
+          "description": "AI小说创作助手",
+          "media": {
+            "image": "assets/welcome.png"
+          }
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Novel AI Assistant",
+      "properties": {
+        "novelAI.provider": {
+          "type": "string",
+          "enum": ["openai", "claude", "qianwen", "custom"],
+          "default": "openai",
+          "description": "AI Provider"
+        },
+        "novelAI.apiBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "API Base URL"
+        },
+        "novelAI.model": {
+          "type": "string",
+          "default": "gpt-4",
+          "description": "Model名称"
+        },
+        "novelAI.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key (支持SecureStorage)"
+        },
+        "novelAI.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2
+        },
+        "novelAI.maxTokens": {
+          "type": "number",
+          "default": 4096
+        },
+        "novelAI.workspace": {
+          "type": "string",
+          "default": "",
+          "description": "小说工作区路径"
+        },
+        "novelAI.chapterWordCount": {
+          "type": "number",
+          "default": 3000,
+          "description": "章节目标字数"
+        },
+        "novelAI.enableMarkdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用Markdown输出"
+        },
+        "novelAI.autoSaveInterval": {
+          "type": "number",
+          "default": 30,
+          "description": "自动保存间隔(秒)"
+        },
+        "novelAI.theme": {
+          "type": "string",
+          "enum": ["auto", "light", "dark"],
+          "default": "auto",
+          "description": "主题"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "novel-ai.openPanel",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "novel-ai.quoteSelection",
+        "key": "ctrl+shift+q",
+        "mac": "cmd+shift+q"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.3.8",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "vscode": "^1.85.0"
+  }
+}
