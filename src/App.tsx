@@ -17,7 +17,8 @@ import {
   getAgents,
   getApiKeyStatus,
   getAppSettings,
-  getLastWorkspace,
+  forgetExternalProject,
+  getProjectPickerState,
   gitCommit,
   gitDiff,
   gitInit,
@@ -28,10 +29,12 @@ import {
   listWorkspaceTree,
   openFolderDialog,
   readText,
+  rememberExternalProject,
   renameEntry,
   setAgents,
   setApiKey,
   setAppSettings,
+  setLaunchMode,
   saveChatSession,
   setWorkspace,
   writeText,
@@ -40,7 +43,10 @@ import {
   type FsEntry,
   type GitCommitInfo,
   type GitStatusItem,
+  type LaunchMode,
   type ModelProvider,
+  type ProjectItem,
+  type ProjectSource,
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
 import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager } from './services'
@@ -60,6 +66,7 @@ import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHa
 import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks/useAutoSave'
 import { logError } from './utils/errorLogger'
 import { RecoveryDialog } from './components/RecoveryDialog'
+import { ProjectPickerPage } from './components/ProjectPickerPage'
 
 type OpenFile = {
   path: string
@@ -142,8 +149,13 @@ function App() {
   const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | 'spec-kit' | null>('chat')
 
   // Workspace & Files
+  const [appView, setAppView] = useState<'project-picker' | 'workspace'>('project-picker')
   const [workspaceInput, setWorkspaceInput] = useState('')
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
+  const [defaultProjectsRoot, setDefaultProjectsRoot] = useState<string>('')
+  const [defaultProjects, setDefaultProjects] = useState<ProjectItem[]>([])
+  const [externalProjects, setExternalProjects] = useState<ProjectItem[]>([])
+  const [launchMode, setLaunchModeState] = useState<LaunchMode>('picker')
   const [lastWorkspace, setLastWorkspace] = useState<string | null>(null)
   const [tree, setTree] = useState<FsEntry | null>(null)
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
@@ -170,6 +182,7 @@ function App() {
   const graphCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const gitCommitInputRef = useRef<HTMLInputElement | null>(null)
   const autoOpenedRef = useRef(false)
+  const [isMobileLayout, setIsMobileLayout] = useState(false)
 
   // Chat State
   const [chatMessages, setChatMessages] = useState<ChatItem[]>([])
@@ -327,6 +340,7 @@ function App() {
     try {
       const s = await getAppSettings()
       setAppSettingsState(s)
+      setLaunchModeState(s.launch_mode)
       setSettingsError(null)
     } catch (e) {
       setSettingsError(e instanceof Error ? e.message : String(e))
@@ -337,17 +351,19 @@ function App() {
   const openWorkspacePath = useCallback(
     async (path: string) => {
       const p = path.trim()
-      if (!p) return
+      if (!p) return false
       setError(null)
       setBusy(true)
       try {
         const info = await setWorkspace(p)
         setWorkspaceRoot(info.root)
         setLastWorkspace(info.root)
+        return true
       } catch (e) {
         setWorkspaceRoot(null)
         setTree(null)
         setError(e instanceof Error ? e.message : String(e))
+        return false
       } finally {
         setBusy(false)
       }
@@ -466,19 +482,92 @@ function App() {
     }
   }, [workspaceRoot])
 
-  const onOpenWorkspace = useCallback(async () => {
+  const refreshProjectPickerState = useCallback(async () => {
+    if (!isTauriApp()) return
     try {
-      if (!isTauriApp()) {
-        await openWorkspacePath(workspaceInput)
-      } else {
-        const selected = await openFolderDialog()
-        if (!selected) return
-        await openWorkspacePath(selected)
-      }
+      const state = await getProjectPickerState()
+      setDefaultProjectsRoot(state.default_root)
+      setDefaultProjects(state.default_projects)
+      setExternalProjects(state.external_projects)
+      setLastWorkspace(state.last_workspace)
+      setLaunchModeState(state.launch_mode)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [openWorkspacePath, workspaceInput])
+  }, [])
+
+  const onOpenProjectFromPicker = useCallback(
+    async (path: string, source: ProjectSource) => {
+      const ok = await openWorkspacePath(path)
+      if (!ok) return
+      if (isTauriApp() && source === 'external') {
+        try {
+          await rememberExternalProject(path)
+        } catch {
+          // Ignore memory persistence errors, project is still opened.
+        }
+      }
+      setAppView('workspace')
+      if (isMobileLayout) {
+        setSidebarCollapsed(true)
+        setActiveRightTab(null)
+      }
+      if (isTauriApp()) {
+        void refreshProjectPickerState()
+      }
+    },
+    [isMobileLayout, openWorkspacePath, refreshProjectPickerState],
+  )
+
+  const onLoadExternalProject = useCallback(async () => {
+    try {
+      if (!isTauriApp()) {
+        const ok = await openWorkspacePath(workspaceInput)
+        if (ok) setAppView('workspace')
+        return
+      }
+      const selected = await openFolderDialog()
+      if (!selected) return
+      const ok = await openWorkspacePath(selected)
+      if (!ok) return
+      try {
+        await rememberExternalProject(selected)
+      } catch {
+        // Keep opened state even if remembering fails.
+      }
+      setAppView('workspace')
+      void refreshProjectPickerState()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [openWorkspacePath, refreshProjectPickerState, workspaceInput])
+
+  const onForgetExternalProject = useCallback(
+    async (path: string) => {
+      if (!isTauriApp()) return
+      try {
+        await forgetExternalProject(path)
+        await refreshProjectPickerState()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [refreshProjectPickerState],
+  )
+
+  const onLaunchModeChange = useCallback(
+    async (mode: LaunchMode) => {
+      setLaunchModeState(mode)
+      if (!isTauriApp()) return
+      try {
+        await setLaunchMode(mode)
+        await refreshProjectPickerState()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [refreshProjectPickerState],
+  )
 
   const onOpenFile = useCallback(
     async (entry: FsEntry) => {
@@ -1344,26 +1433,50 @@ function App() {
   }, [appSettings, showSettings])
 
   useEffect(() => {
-    if (!isTauriApp()) return
+    const updateLayout = () => {
+      setIsMobileLayout(window.innerWidth <= 900)
+    }
+    updateLayout()
+    window.addEventListener('resize', updateLayout)
+    return () => window.removeEventListener('resize', updateLayout)
+  }, [])
+
+  useEffect(() => {
+    if (!isMobileLayout) return
+    setSidebarCollapsed(true)
+    setActiveRightTab(null)
+  }, [isMobileLayout])
+
+  useEffect(() => {
     if (autoOpenedRef.current) return
     autoOpenedRef.current = true
     void (async () => {
+      if (!isTauriApp()) {
+        setAppView('project-picker')
+        return
+      }
       try {
-        const last = await getLastWorkspace()
-        setLastWorkspace(last)
-        if (!workspaceRoot && last) {
-          await openWorkspacePath(last)
-        }
+        const pickerState = await getProjectPickerState()
+        setDefaultProjectsRoot(pickerState.default_root)
+        setDefaultProjects(pickerState.default_projects)
+        setExternalProjects(pickerState.external_projects)
+        setLastWorkspace(pickerState.last_workspace)
+        setLaunchModeState(pickerState.launch_mode)
 
-        // Check for recovery candidates after workspace is loaded
-        setTimeout(() => {
-          setShowRecoveryDialog(true)
-        }, 1000) // Delay to let workspace load first
+        if (pickerState.launch_mode === 'auto_last' && pickerState.last_workspace) {
+          const opened = await openWorkspacePath(pickerState.last_workspace)
+          if (opened) {
+            setAppView('workspace')
+            return
+          }
+        }
+        setAppView('project-picker')
       } catch {
+        setAppView('project-picker')
         setLastWorkspace(null)
       }
     })()
-  }, [openWorkspacePath, workspaceRoot])
+  }, [openWorkspacePath])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -1379,7 +1492,18 @@ function App() {
     void refreshGit()
     void loadProjectSettings()
     void loadSensitiveWordSettings()
-  }, [loadProjectSettings, loadSensitiveWordSettings, refreshGit, workspaceRoot])
+    void refreshProjectPickerState()
+    setAppView((prev) => (prev === 'workspace' ? prev : 'workspace'))
+  }, [loadProjectSettings, loadSensitiveWordSettings, refreshGit, refreshProjectPickerState, workspaceRoot])
+
+  useEffect(() => {
+    if (!isTauriApp()) return
+    if (!workspaceRoot) return
+    const timer = window.setTimeout(() => {
+      setShowRecoveryDialog(true)
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [workspaceRoot])
 
   // Auto-save sensitive word settings when they change
   useEffect(() => {
@@ -1653,6 +1777,29 @@ function App() {
 
   // --- Render ---
 
+  if (appView === 'project-picker') {
+    return (
+      <ProjectPickerPage
+        busy={busy}
+        error={error}
+        defaultRoot={defaultProjectsRoot}
+        defaultProjects={defaultProjects}
+        externalProjects={externalProjects}
+        lastWorkspace={lastWorkspace}
+        launchMode={launchMode}
+        onSelectProject={onOpenProjectFromPicker}
+        onLoadExternalProject={() => void onLoadExternalProject()}
+        onForgetExternalProject={(path) => void onForgetExternalProject(path)}
+        onRefresh={() => void refreshProjectPickerState()}
+        onLaunchModeChange={(mode) => void onLaunchModeChange(mode)}
+        manualPathEnabled={!isTauriApp()}
+        onOpenManualPath={(path) => {
+          void onOpenProjectFromPicker(path, 'external')
+        }}
+      />
+    )
+  }
+
   return (
     <div className="app-container" data-theme={theme} data-density={uiDensity} data-motion={uiMotion}>
       <div className="workbench-body">
@@ -1722,6 +1869,16 @@ function App() {
           <div
             className="activity-bar-item"
             onClick={() => {
+              setAppView('project-picker')
+              void refreshProjectPickerState()
+            }}
+            title="切换项目"
+          >
+            <span className="activity-bar-icon">🗂️</span>
+          </div>
+          <div
+            className="activity-bar-item"
+            onClick={() => {
               setShowSettings(true)
               if (!appSettings) void reloadAppSettings()
             }}
@@ -1765,8 +1922,14 @@ function App() {
                 </>
               ) : (
                 <div style={{ padding: 20, textAlign: 'center' }}>
-                  <button className="primary-button" onClick={() => void onOpenWorkspace()}>
-                    打开文件夹
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      setAppView('project-picker')
+                      void refreshProjectPickerState()
+                    }}
+                  >
+                    项目选择页
                   </button>
                   {error ? <div className="error-text">{error}</div> : null}
                   {lastWorkspace ? (
@@ -2029,8 +2192,14 @@ function App() {
             <div className="welcome-screen">
               <h1>Novel IDE</h1>
               <div className="welcome-actions">
-                <button className="welcome-btn" onClick={() => void onOpenWorkspace()}>
-                  打开文件夹
+                <button
+                  className="welcome-btn"
+                  onClick={() => {
+                    setAppView('project-picker')
+                    void refreshProjectPickerState()
+                  }}
+                >
+                  选择项目
                 </button>
               </div>
               {!workspaceRoot && error ? <div className="error-text">{error}</div> : null}
@@ -2387,6 +2556,44 @@ function App() {
                         void persistAppSettings(next, prev)
                       }}
                     />
+                  </div>
+                  <div className="form-group">
+                    <label>启动行为</label>
+                    <select
+                      value={appSettings.launch_mode}
+                      onChange={(e) => {
+                        const mode = e.target.value as LaunchMode
+                        const prev = appSettings
+                        const next = { ...appSettings, launch_mode: mode }
+                        setAppSettingsState(next)
+                        setLaunchModeState(mode)
+                        void persistAppSettings(next, prev)
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="picker">总是显示项目选择页</option>
+                      <option value="auto_last">自动打开上次项目</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>项目管理</label>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        setShowSettings(false)
+                        setAppView('project-picker')
+                        void refreshProjectPickerState()
+                      }}
+                    >
+                      打开项目选择页
+                    </button>
                   </div>
                   <div className="form-group">
                     <label>章节目标字数</label>
@@ -3381,6 +3588,16 @@ function App() {
           commands={[
             { id: 'save', label: '保存文件', category: '文件', shortcut: 'Ctrl+S', action: () => void onSaveActive() },
             { id: 'newChapter', label: '新建章节', category: '文件', action: () => void onNewChapter() },
+            {
+              id: 'switchProject',
+              label: '切换项目',
+              category: '文件',
+              action: () => {
+                setShowCommandPalette(false)
+                setAppView('project-picker')
+                void refreshProjectPickerState()
+              },
+            },
             { id: 'toggleTheme', label: '切换主题', category: '视图', action: toggleTheme },
             { id: 'toggleDensity', label: '切换界面密度', category: '视图', action: toggleDensity },
             { id: 'toggleSidebar', label: '切换侧边栏', category: '视图', shortcut: 'Ctrl+B', action: toggleSidebar },

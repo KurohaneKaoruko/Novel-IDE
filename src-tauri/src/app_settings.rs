@@ -12,6 +12,20 @@ pub struct AppSettings {
   pub providers: Vec<ModelProvider>,
   pub active_provider_id: String,
   pub active_agent_id: String,
+  pub launch_mode: LaunchMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LaunchMode {
+  Picker,
+  AutoLast,
+}
+
+impl Default for LaunchMode {
+  fn default() -> Self {
+    Self::Picker
+  }
 }
 
 impl Default for AppSettings {
@@ -47,6 +61,7 @@ impl Default for AppSettings {
       providers,
       active_provider_id: "openai".to_string(),
       active_agent_id: "fantasy".to_string(),
+      launch_mode: LaunchMode::default(),
     }
   }
 }
@@ -220,6 +235,7 @@ pub fn load(app: &tauri::AppHandle) -> Result<AppSettings, String> {
           providers,
           active_provider_id: legacy.providers.active,
           active_agent_id: legacy.active_agent_id,
+          launch_mode: LaunchMode::default(),
         };
         migrated = ensure_sane(migrated);
 

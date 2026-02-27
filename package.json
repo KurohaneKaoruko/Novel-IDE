@@ -18,6 +18,10 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:android:dev": "tauri android dev",
+    "tauri:android:build": "tauri android build",
+    "tauri:ios:dev": "tauri ios dev",
+    "tauri:ios:build": "tauri ios build",
     "clean": "powershell -ExecutionPolicy Bypass -File ./scripts/clean-build.ps1",
     "clean:full": "powershell -ExecutionPolicy Bypass -File ./scripts/clean-build.ps1 && npm install"
   },

@@ -12,6 +12,27 @@ export type AppSettings = {
   providers: ModelProvider[]
   active_provider_id: string
   active_agent_id: string
+  launch_mode: LaunchMode
+}
+
+export type LaunchMode = 'picker' | 'auto_last'
+
+export type ProjectSource = 'default' | 'external'
+
+export type ProjectItem = {
+  name: string
+  path: string
+  source: ProjectSource
+  is_valid_workspace: boolean
+  last_opened_at: number | null
+}
+
+export type ProjectPickerState = {
+  default_root: string
+  default_projects: ProjectItem[]
+  external_projects: ProjectItem[]
+  last_workspace: string | null
+  launch_mode: LaunchMode
 }
 
 export type ModelProvider = {
@@ -40,6 +61,22 @@ export async function setWorkspace(path: string): Promise<WorkspaceInfo> {
 
 export async function getLastWorkspace(): Promise<string | null> {
   return invoke<string | null>('get_last_workspace')
+}
+
+export async function getProjectPickerState(): Promise<ProjectPickerState> {
+  return invoke<ProjectPickerState>('get_project_picker_state')
+}
+
+export async function rememberExternalProject(path: string): Promise<void> {
+  return invoke<void>('remember_external_project', { path })
+}
+
+export async function forgetExternalProject(path: string): Promise<void> {
+  return invoke<void>('forget_external_project', { path })
+}
+
+export async function setLaunchMode(mode: LaunchMode): Promise<void> {
+  return invoke<void>('set_launch_mode', { mode })
 }
 
 export async function openFolderDialog(): Promise<string | null> {

@@ -1680,3 +1680,114 @@ textarea:focus-visible {
 .select-none { user-select: none; }
 .select-text { user-select: text; }
 
+/* ========================================
+   Responsive Layout
+   ======================================== */
+@media (max-width: 1200px) {
+  :root {
+    --sidebar-width: 248px;
+    --right-panel-width: 328px;
+  }
+}
+
+@media (max-width: 900px) {
+  :root {
+    --activity-bar-width: 44px;
+    --right-activity-width: 44px;
+    --status-bar-height: 26px;
+  }
+
+  .workbench-body {
+    position: relative;
+  }
+
+  .sidebar {
+    position: fixed;
+    left: var(--activity-bar-width);
+    top: 0;
+    bottom: var(--status-bar-height);
+    width: min(82vw, 320px);
+    z-index: 920;
+    box-shadow: var(--shadow-lg);
+    transition: transform var(--transition-normal);
+  }
+
+  .sidebar.collapsed {
+    width: min(82vw, 320px);
+    border-right: 1px solid var(--border-subtle);
+    transform: translateX(-110%);
+    overflow: hidden;
+  }
+
+  .right-panel-container {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: var(--status-bar-height);
+    z-index: 940;
+    pointer-events: none;
+    border-left: none;
+    background: transparent;
+  }
+
+  .right-panel-content {
+    width: min(88vw, 380px);
+    box-shadow: var(--shadow-lg);
+    pointer-events: auto;
+  }
+
+  .right-activity-bar {
+    pointer-events: auto;
+    background: rgba(30, 30, 30, 0.9);
+    backdrop-filter: blur(8px);
+  }
+}
+
+@media (max-width: 768px) {
+  .editor-content {
+    flex-direction: column;
+  }
+
+  .preview-pane {
+    width: 100%;
+    max-width: none;
+    border-left: 0;
+    border-top: 1px solid var(--border-subtle);
+    height: 36%;
+    padding: var(--space-md);
+  }
+
+  .message {
+    max-width: 100%;
+  }
+
+  .ai-input-area {
+    padding: var(--space-md);
+  }
+
+  .ai-textarea {
+    height: 84px;
+  }
+}
+
+@media (max-width: 560px) {
+  .activity-bar-item,
+  .right-activity-item {
+    width: 40px;
+    height: 40px;
+  }
+
+  .activity-bar-icon {
+    font-size: 20px;
+  }
+
+  .sidebar-header {
+    padding: 0 var(--space-sm);
+  }
+
+  .modal-content {
+    width: 96%;
+    max-height: 92vh;
+  }
+}
+

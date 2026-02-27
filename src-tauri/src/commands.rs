@@ -12,7 +12,7 @@ use crate::spec_kit_export;
 use crate::state::AppState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
@@ -29,6 +29,36 @@ pub fn ping() -> &'static str {
 #[derive(Serialize)]
 pub struct WorkspaceInfo {
   pub root: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ProjectItem {
+  pub name: String,
+  pub path: String,
+  pub source: String,
+  pub is_valid_workspace: bool,
+  pub last_opened_at: Option<i64>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ProjectPickerState {
+  pub default_root: String,
+  pub default_projects: Vec<ProjectItem>,
+  pub external_projects: Vec<ProjectItem>,
+  pub last_workspace: Option<String>,
+  pub launch_mode: app_settings::LaunchMode,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ExternalProjectsStore {
+  #[serde(default)]
+  projects: Vec<ExternalProjectRecord>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ExternalProjectRecord {
+  path: String,
+  added_at: i64,
 }
 
 #[tauri::command]
@@ -52,6 +82,10 @@ pub fn set_workspace(app: AppHandle, state: State<'_, AppState>, path: String) -
 
 #[tauri::command]
 pub fn get_last_workspace(app: AppHandle) -> Result<Option<String>, String> {
+  get_last_workspace_internal(&app)
+}
+
+fn get_last_workspace_internal(app: &AppHandle) -> Result<Option<String>, String> {
   let path = last_workspace_path(&app)?;
   if !path.exists() {
     return Ok(None);
@@ -83,6 +117,178 @@ fn save_last_workspace(app: &AppHandle, root: &Path) -> Result<(), String> {
   }
   let payload = serde_json::json!({ "path": root.to_string_lossy().to_string() }).to_string();
   fs::write(path, payload).map_err(|e| format!("write last workspace failed: {e}"))
+}
+
+fn external_projects_path(app: &AppHandle) -> Result<PathBuf, String> {
+  app_data::data_file_path(app, "external_projects.json")
+}
+
+fn load_external_projects(app: &AppHandle) -> Result<Vec<ExternalProjectRecord>, String> {
+  let path = external_projects_path(app)?;
+  if !path.exists() {
+    return Ok(Vec::new());
+  }
+  let raw = fs::read_to_string(&path).map_err(|e| format!("read external projects failed: {e}"))?;
+  let parsed = serde_json::from_str::<ExternalProjectsStore>(&raw)
+    .map_err(|e| format!("parse external projects failed: {e}"))?;
+  Ok(parsed.projects)
+}
+
+fn save_external_projects(app: &AppHandle, records: &[ExternalProjectRecord]) -> Result<(), String> {
+  let path = external_projects_path(app)?;
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|e| format!("create external projects dir failed: {e}"))?;
+  }
+  let payload = ExternalProjectsStore {
+    projects: records.to_vec(),
+  };
+  let raw = serde_json::to_string_pretty(&payload).map_err(|e| format!("serialize external projects failed: {e}"))?;
+  fs::write(path, raw).map_err(|e| format!("write external projects failed: {e}"))
+}
+
+fn default_projects_root() -> Result<PathBuf, String> {
+  let exe = std::env::current_exe().map_err(|e| format!("resolve current executable failed: {e}"))?;
+  let install_dir = exe
+    .parent()
+    .ok_or_else(|| "resolve install directory failed".to_string())?;
+  Ok(install_dir.join("projects"))
+}
+
+fn is_valid_workspace_root(path: &Path) -> bool {
+  path.join("concept").is_dir() || path.join("outline").is_dir() || path.join("stories").is_dir()
+}
+
+fn to_project_item(path: &Path, source: &str, last_opened_at: Option<i64>) -> ProjectItem {
+  let name = path
+    .file_name()
+    .map(|v| v.to_string_lossy().to_string())
+    .unwrap_or_else(|| path.to_string_lossy().to_string());
+  ProjectItem {
+    name,
+    path: path.to_string_lossy().to_string(),
+    source: source.to_string(),
+    is_valid_workspace: is_valid_workspace_root(path),
+    last_opened_at,
+  }
+}
+
+fn list_default_projects(root: &Path) -> Result<Vec<ProjectItem>, String> {
+  let mut projects: Vec<ProjectItem> = Vec::new();
+  if !root.exists() {
+    return Ok(projects);
+  }
+  for entry in fs::read_dir(root).map_err(|e| format!("read default projects failed: {e}"))? {
+    let entry = entry.map_err(|e| format!("read default project entry failed: {e}"))?;
+    let path = entry.path();
+    if !path.is_dir() {
+      continue;
+    }
+    let canonical = canonicalize_path(&path).unwrap_or(path);
+    projects.push(to_project_item(&canonical, "default", None));
+  }
+  projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+  Ok(projects)
+}
+
+fn parse_launch_mode(mode: &str) -> Result<app_settings::LaunchMode, String> {
+  match mode.trim() {
+    "picker" => Ok(app_settings::LaunchMode::Picker),
+    "auto_last" => Ok(app_settings::LaunchMode::AutoLast),
+    _ => Err("invalid launch mode".to_string()),
+  }
+}
+
+#[tauri::command]
+pub fn get_project_picker_state(app: AppHandle) -> Result<ProjectPickerState, String> {
+  let default_root = default_projects_root()?;
+  let default_projects = list_default_projects(&default_root)?;
+  let settings = app_settings::load(&app)?;
+  let last_workspace = get_last_workspace_internal(&app)?;
+
+  let mut seen_paths: HashSet<String> = HashSet::new();
+  for item in &default_projects {
+    seen_paths.insert(item.path.to_lowercase());
+  }
+
+  let mut external_projects: Vec<ProjectItem> = Vec::new();
+  for record in load_external_projects(&app)? {
+    let path = PathBuf::from(&record.path);
+    if !path.exists() || !path.is_dir() {
+      continue;
+    }
+    let canonical = canonicalize_path(&path).unwrap_or(path);
+    let path_key = canonical.to_string_lossy().to_lowercase();
+    if seen_paths.contains(&path_key) {
+      continue;
+    }
+    seen_paths.insert(path_key);
+    external_projects.push(to_project_item(&canonical, "external", Some(record.added_at)));
+  }
+  external_projects.sort_by(|a, b| match (a.last_opened_at, b.last_opened_at) {
+    (Some(a_ts), Some(b_ts)) => b_ts.cmp(&a_ts),
+    _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+  });
+
+  Ok(ProjectPickerState {
+    default_root: default_root.to_string_lossy().to_string(),
+    default_projects,
+    external_projects,
+    last_workspace,
+    launch_mode: settings.launch_mode,
+  })
+}
+
+#[tauri::command]
+pub fn remember_external_project(app: AppHandle, path: String) -> Result<(), String> {
+  let canonical = canonicalize_path(Path::new(path.trim()))?;
+  let metadata = fs::metadata(&canonical).map_err(|e| format!("stat project path failed: {e}"))?;
+  if !metadata.is_dir() {
+    return Err("external project path must be a directory".to_string());
+  }
+  let canonical_str = canonical.to_string_lossy().to_string();
+  let now = Utc::now().timestamp();
+
+  let mut records = load_external_projects(&app)?;
+  if let Some(existing) = records
+    .iter_mut()
+    .find(|v| v.path.eq_ignore_ascii_case(&canonical_str))
+  {
+    existing.added_at = now;
+  } else {
+    records.push(ExternalProjectRecord {
+      path: canonical_str,
+      added_at: now,
+    });
+  }
+  records.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+  save_external_projects(&app, &records)
+}
+
+#[tauri::command]
+pub fn forget_external_project(app: AppHandle, path: String) -> Result<(), String> {
+  let trimmed = path.trim();
+  if trimmed.is_empty() {
+    return Ok(());
+  }
+  let canonical = canonicalize_path(Path::new(trimmed))
+    .ok()
+    .map(|v| v.to_string_lossy().to_string());
+  let mut records = load_external_projects(&app)?;
+  records.retain(|v| {
+    if let Some(canon) = &canonical {
+      !v.path.eq_ignore_ascii_case(canon)
+    } else {
+      !v.path.eq_ignore_ascii_case(trimmed)
+    }
+  });
+  save_external_projects(&app, &records)
+}
+
+#[tauri::command]
+pub fn set_launch_mode(app: AppHandle, mode: String) -> Result<(), String> {
+  let mut settings = app_settings::load(&app)?;
+  settings.launch_mode = parse_launch_mode(&mode)?;
+  app_settings::save(&app, &settings)
 }
 
 #[tauri::command]
