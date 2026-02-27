@@ -124,7 +124,7 @@ async function main() {
   }
 
   {
-    const indexHtmlPath = path.join(repoRoot, "index.html");
+    const indexHtmlPath = path.join(repoRoot, "src-react", "index.html");
     const html = await readText(indexHtmlPath);
     if (await writeTextIfChanged(indexHtmlPath, updateHtmlTitle(html, displayName))) {
       changedFiles.push(indexHtmlPath);
@@ -171,7 +171,7 @@ async function main() {
   }
 
   {
-    const frontendBrandingPath = path.join(repoRoot, "src", "branding.ts");
+    const frontendBrandingPath = path.join(repoRoot, "src-react", "src", "branding.ts");
     if (await writeTextIfChanged(frontendBrandingPath, generateFrontendBrandingSource(branding))) {
       changedFiles.push(frontendBrandingPath);
     }

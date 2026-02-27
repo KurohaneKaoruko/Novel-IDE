@@ -47,6 +47,20 @@ npm run tauri:build
 
 - `src-tauri/target/release/bundle/**`
 - `src-tauri/target/release/*.exe`
+- `src-react/dist/**`（前端静态产物）
+
+## 项目结构（前后端分离）
+
+```text
+<repo>/
+  src-react/      # 前端工程（React + TypeScript + Vite）
+    src/          # 前端源码
+    public/       # 前端静态资源
+    index.html    # 前端入口模板
+  src-tauri/      # 后端/桌面壳（Rust + Tauri）
+  scripts/        # 构建与维护脚本
+  branding.json   # 品牌与命名元配置（由 sync:branding 消费）
+```
 
 ## 工作区目录约定
 
@@ -107,9 +121,9 @@ npm run tauri:build
 
 ## 开发脚本
 
-- `npm run dev`：仅启动前端开发服务器（Vite, 1420）
+- `npm run dev`：仅启动前端开发服务器（Vite, 1420，项目根为 `src-react/`）
 - `npm run tauri:dev`：启动桌面开发模式
-- `npm run build`：构建前端
+- `npm run build`：构建前端（输出到 `src-react/dist/`）
 - `npm run tauri:build`：构建桌面发行包
 - `npm run test`：运行 Vitest 测试
 - `npm run lint`：运行 ESLint

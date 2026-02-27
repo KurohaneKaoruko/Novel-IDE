@@ -1,8 +1,16 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, type PluginOption } from 'vite'
+
+const frontendRoot = path.dirname(fileURLToPath(import.meta.url))
 
 async function loadReactPlugin(): Promise<PluginOption[]> {
   try {
-    const react = (await import('@vitejs/plugin-react')).default
+    const reactPluginId = '@vitejs/plugin-react'
+    const react = (await import(reactPluginId)).default
+    if (!react) {
+      return []
+    }
     return [
       react({
         babel: {
@@ -20,8 +28,13 @@ async function loadReactPlugin(): Promise<PluginOption[]> {
 }
 
 export default defineConfig(async () => ({
+  root: frontendRoot,
   plugins: await loadReactPlugin(),
   clearScreen: false,
+  build: {
+    outDir: path.join(frontendRoot, 'dist'),
+    emptyOutDir: true,
+  },
   server: {
     host: '127.0.0.1',
     port: 1420,
