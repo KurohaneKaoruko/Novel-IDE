@@ -43,8 +43,8 @@ import {
   type ModelProvider,
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
-import { modificationService, aiAssistanceService, editorManager, editorConfigManager } from './services'
-import type { EditorUserConfig } from './services'
+import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager } from './services'
+import type { AIAssistanceResponse, EditorUserConfig } from './services'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
@@ -102,6 +102,25 @@ type ExplorerModalState =
   | { mode: 'newFolder'; dirPath: string }
   | { mode: 'rename'; entry: FsEntry; parentDir: string }
 
+type UISettingsState = {
+  theme: 'light' | 'dark'
+  density: 'compact' | 'comfortable'
+  motion: 'full' | 'reduced'
+  sidebarCollapsed: boolean
+}
+
+type SelectionOffsets = {
+  start: number
+  end: number
+}
+
+type SelectionLineRange = {
+  startLine: number
+  endLine: number
+}
+
+type InlineAIAssistCommand = 'polish' | 'expand' | 'condense' | 'spec_kit_fix'
+
 function App() {
   // Diff Context
   const diffContext = useDiff()
@@ -111,8 +130,12 @@ function App() {
   const [activeDiffTab, setActiveDiffTab] = useState<string | null>(null)
 
   // Modern UI State
+  const initialUISettings = uiSettingsManager.getSettings() as UISettingsState
   const [showCommandPalette, setShowCommandPalette] = useState(false)
-  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [theme, setTheme] = useState<'light' | 'dark'>(initialUISettings.theme)
+  const [uiDensity, setUiDensity] = useState<'compact' | 'comfortable'>(initialUISettings.density)
+  const [uiMotion, setUiMotion] = useState<'full' | 'reduced'>(initialUISettings.motion)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(initialUISettings.sidebarCollapsed)
 
   // Activity Bar State
   const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit'>('files')
@@ -145,6 +168,7 @@ function App() {
   const editorRef = useRef<LexicalEditorType | null>(null)
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
   const graphCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const gitCommitInputRef = useRef<HTMLInputElement | null>(null)
   const autoOpenedRef = useRef(false)
 
   // Chat State
@@ -248,6 +272,33 @@ function App() {
     enabled: !!activeFile && activeFile.dirty,
     intervalMs: 30000, // 30 seconds
   })
+
+  useEffect(() => {
+    uiSettingsManager.updateSettings({
+      theme,
+      density: uiDensity,
+      motion: uiMotion,
+      sidebarCollapsed,
+    })
+  }, [theme, uiDensity, uiMotion, sidebarCollapsed])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    document.documentElement.setAttribute('data-density', uiDensity)
+    document.documentElement.setAttribute('data-motion', uiMotion)
+  }, [theme, uiDensity, uiMotion])
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))
+  }, [])
+
+  const toggleDensity = useCallback(() => {
+    setUiDensity((prev) => (prev === 'comfortable' ? 'compact' : 'comfortable'))
+  }, [])
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => !prev)
+  }, [])
 
   // --- Actions ---
 
@@ -1084,107 +1135,103 @@ function App() {
     setEditorContextMenu(null)
   }, [])
 
+  const resolveSelectionLineRange = useCallback(
+    (editor: LexicalEditorType | null | undefined, selectedText: string): SelectionLineRange => {
+      if (!activeFile) {
+        return { startLine: 1, endLine: 1 }
+      }
+
+      const content = activeFile.content
+      const withBounds = (value: number) => Math.max(0, Math.min(value, content.length))
+      const toLine = (offset: number) => content.slice(0, withBounds(offset)).split('\n').length
+
+      const extendedEditor = editor as (LexicalEditorType & { getSelectionOffsets?: () => SelectionOffsets | null }) | null | undefined
+      const offsets = extendedEditor?.getSelectionOffsets?.()
+      if (offsets) {
+        const start = withBounds(offsets.start)
+        const end = withBounds(offsets.end)
+        return {
+          startLine: toLine(start),
+          endLine: toLine(Math.max(start, end)),
+        }
+      }
+
+      const index = content.indexOf(selectedText)
+      if (index >= 0) {
+        const end = index + selectedText.length
+        return {
+          startLine: toLine(index),
+          endLine: toLine(end),
+        }
+      }
+
+      return { startLine: 1, endLine: 1 }
+    },
+    [activeFile],
+  )
+
+  const runInlineAIAssist = useCallback(
+    async (command: InlineAIAssistCommand, selection: string, editor?: LexicalEditorType | null) => {
+      if (!activeFile) return
+      const selectedText = selection.trim()
+      if (!selectedText) return
+
+      setBusy(true)
+      setError(null)
+
+      try {
+        let response: AIAssistanceResponse
+        switch (command) {
+          case 'polish':
+            response = await aiAssistanceService.polishText(selectedText, activeFile.path)
+            break
+          case 'expand':
+            response = await aiAssistanceService.expandText(selectedText, activeFile.path)
+            break
+          case 'condense':
+            response = await aiAssistanceService.condenseText(selectedText, activeFile.path)
+            break
+          case 'spec_kit_fix':
+            response = await aiAssistanceService.specKitFixText(selectedText, activeFile.path)
+            break
+          default:
+            return
+        }
+
+        const lineRange = resolveSelectionLineRange(editor ?? editorRef.current, selectedText)
+        const changeSet = aiAssistanceService.convertToChangeSet(
+          response,
+          activeFile.path,
+          activeFile.content,
+          lineRange.startLine,
+          lineRange.endLine,
+        )
+
+        diffContext.addChangeSet(changeSet)
+        onOpenDiffView(changeSet.id)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [activeFile, diffContext, onOpenDiffView, resolveSelectionLineRange],
+  )
+
   const handleAIPolish = useCallback(async () => {
-    if (!editorContextMenu || !activeFile) return
-
-    const selectedText = editorContextMenu.selectedText
-
-    setBusy(true)
-    setError(null)
-
-    try {
-      // Call AI assistance service
-      const response = await aiAssistanceService.polishText(
-        selectedText,
-        activeFile.path
-      )
-
-      // Convert to ChangeSet (without line numbers for now - will be improved in task 7)
-      const changeSet = aiAssistanceService.convertToChangeSet(
-        response,
-        activeFile.path,
-        activeFile.content,
-        1, // placeholder
-        1  // placeholder
-      )
-
-      // Add to diff context and open diff view
-      diffContext.addChangeSet(changeSet)
-      onOpenDiffView(changeSet.id)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
+    if (!editorContextMenu) return
+    await runInlineAIAssist('polish', editorContextMenu.selectedText, editorRef.current)
+  }, [editorContextMenu, runInlineAIAssist])
 
   const handleAIExpand = useCallback(async () => {
-    if (!editorContextMenu || !activeFile) return
-
-    const selectedText = editorContextMenu.selectedText
-
-    setBusy(true)
-    setError(null)
-
-    try {
-      // Call AI assistance service
-      const response = await aiAssistanceService.expandText(
-        selectedText,
-        activeFile.path
-      )
-
-      // Convert to ChangeSet (without line numbers for now - will be improved in task 7)
-      const changeSet = aiAssistanceService.convertToChangeSet(
-        response,
-        activeFile.path,
-        activeFile.content,
-        1, // placeholder
-        1  // placeholder
-      )
-
-      // Add to diff context and open diff view
-      diffContext.addChangeSet(changeSet)
-      onOpenDiffView(changeSet.id)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
+    if (!editorContextMenu) return
+    await runInlineAIAssist('expand', editorContextMenu.selectedText, editorRef.current)
+  }, [editorContextMenu, runInlineAIAssist])
 
   const handleAICondense = useCallback(async () => {
-    if (!editorContextMenu || !activeFile) return
-
-    const selectedText = editorContextMenu.selectedText
-
-    setBusy(true)
-    setError(null)
-
-    try {
-      // Call AI assistance service
-      const response = await aiAssistanceService.condenseText(
-        selectedText,
-        activeFile.path
-      )
-
-      // Convert to ChangeSet (without line numbers for now - will be improved in task 7)
-      const changeSet = aiAssistanceService.convertToChangeSet(
-        response,
-        activeFile.path,
-        activeFile.content,
-        1, // placeholder
-        1  // placeholder
-      )
-
-      // Add to diff context and open diff view
-      diffContext.addChangeSet(changeSet)
-      onOpenDiffView(changeSet.id)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }, [editorContextMenu, activeFile, diffContext, onOpenDiffView])
+    if (!editorContextMenu) return
+    await runInlineAIAssist('condense', editorContextMenu.selectedText, editorRef.current)
+  }, [editorContextMenu, runInlineAIAssist])
 
   const handleEditorChange = useCallback((content: string) => {
     if (!activePath) return
@@ -1490,6 +1537,11 @@ function App() {
         void onSaveActive()
         return
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        toggleSidebar()
+        return
+      }
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyL') {
         e.preventDefault()
         chatInputRef.current?.focus()
@@ -1502,7 +1554,7 @@ function App() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onSaveActive])
+  }, [onSaveActive, toggleSidebar])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -1602,48 +1654,66 @@ function App() {
   // --- Render ---
 
   return (
-    <div className="app-container">
+    <div className="app-container" data-theme={theme} data-density={uiDensity} data-motion={uiMotion}>
       <div className="workbench-body">
         {/* Activity Bar (Left) */}
         <div className="activity-bar">
           <div
             className={`activity-bar-item ${activeSidebarTab === 'files' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('files')}
+            onClick={() => {
+              setActiveSidebarTab('files')
+              setSidebarCollapsed(false)
+            }}
             title="资源管理器"
           >
             <span className="activity-bar-icon">📁</span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'chapters' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('chapters')}
+            onClick={() => {
+              setActiveSidebarTab('chapters')
+              setSidebarCollapsed(false)
+            }}
             title="章节管理"
           >
             <span className="activity-bar-icon">📚</span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'characters' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('characters')}
+            onClick={() => {
+              setActiveSidebarTab('characters')
+              setSidebarCollapsed(false)
+            }}
             title="人物管理"
           >
             <span className="activity-bar-icon">👤</span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'plotlines' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('plotlines')}
+            onClick={() => {
+              setActiveSidebarTab('plotlines')
+              setSidebarCollapsed(false)
+            }}
             title="情节线管理"
           >
             <span className="activity-bar-icon">📈</span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'specKit' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('specKit')}
+            onClick={() => {
+              setActiveSidebarTab('specKit')
+              setSidebarCollapsed(false)
+            }}
             title="Spec-Kit"
           >
             <span className="activity-bar-icon">🧩</span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'git' ? 'active' : ''}`}
-            onClick={() => setActiveSidebarTab('git')}
+            onClick={() => {
+              setActiveSidebarTab('git')
+              setSidebarCollapsed(false)
+            }}
             title="源代码管理"
           >
             <span className="activity-bar-icon">📦</span>
@@ -1662,7 +1732,7 @@ function App() {
         </div>
 
         {/* Sidebar Panel (Left) */}
-        <div className="sidebar">
+        <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         {activeSidebarTab === 'files' ? (
           <>
             <div className="sidebar-header">
@@ -1770,6 +1840,7 @@ function App() {
               {gitSelectedPath ? <pre className="git-diff-view">{gitDiffText}</pre> : null}
               <div className="git-commit-section">
                 <input
+                  ref={gitCommitInputRef}
                   className="git-commit-input"
                   value={gitCommitMsg}
                   onChange={(e) => setGitCommitMsg(e.target.value)}
@@ -1909,26 +1980,8 @@ function App() {
                       id: 'ai-polish',
                       label: 'AI 润色',
                       icon: '✨',
-                      action: async (_editor, selection) => {
-                        if (!selection || !activeFile) return
-                        setBusy(true)
-                        setError(null)
-                        try {
-                          const response = await aiAssistanceService.polishText(selection, activeFile.path)
-                          const changeSet = aiAssistanceService.convertToChangeSet(
-                            response,
-                            activeFile.path,
-                            activeFile.content,
-                            1,
-                            1
-                          )
-                          diffContext.addChangeSet(changeSet)
-                          onOpenDiffView(changeSet.id)
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : String(e))
-                        } finally {
-                          setBusy(false)
-                        }
+                      action: async (editor, selection) => {
+                        await runInlineAIAssist('polish', selection, editor)
                       },
                       condition: (hasSelection) => hasSelection,
                     },
@@ -1936,26 +1989,8 @@ function App() {
                       id: 'ai-expand',
                       label: 'AI 扩写',
                       icon: '📝',
-                      action: async (_editor, selection) => {
-                        if (!selection || !activeFile) return
-                        setBusy(true)
-                        setError(null)
-                        try {
-                          const response = await aiAssistanceService.expandText(selection, activeFile.path)
-                          const changeSet = aiAssistanceService.convertToChangeSet(
-                            response,
-                            activeFile.path,
-                            activeFile.content,
-                            1,
-                            1
-                          )
-                          diffContext.addChangeSet(changeSet)
-                          onOpenDiffView(changeSet.id)
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : String(e))
-                        } finally {
-                          setBusy(false)
-                        }
+                      action: async (editor, selection) => {
+                        await runInlineAIAssist('expand', selection, editor)
                       },
                       condition: (hasSelection) => hasSelection,
                     },
@@ -1963,26 +1998,8 @@ function App() {
                       id: 'ai-condense',
                       label: 'AI 缩写',
                       icon: '✂️',
-                      action: async (_editor, selection) => {
-                        if (!selection || !activeFile) return
-                        setBusy(true)
-                        setError(null)
-                        try {
-                          const response = await aiAssistanceService.condenseText(selection, activeFile.path)
-                          const changeSet = aiAssistanceService.convertToChangeSet(
-                            response,
-                            activeFile.path,
-                            activeFile.content,
-                            1,
-                            1
-                          )
-                          diffContext.addChangeSet(changeSet)
-                          onOpenDiffView(changeSet.id)
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : String(e))
-                        } finally {
-                          setBusy(false)
-                        }
+                      action: async (editor, selection) => {
+                        await runInlineAIAssist('condense', selection, editor)
                       },
                       condition: (hasSelection) => hasSelection,
                     },
@@ -1990,26 +2007,8 @@ function App() {
                       id: 'ai-spec-kit-fix',
                       label: 'Spec-Kit 修正',
                       icon: '🧩',
-                      action: async (_editor, selection) => {
-                        if (!selection || !activeFile) return
-                        setBusy(true)
-                        setError(null)
-                        try {
-                          const response = await aiAssistanceService.specKitFixText(selection, activeFile.path)
-                          const changeSet = aiAssistanceService.convertToChangeSet(
-                            response,
-                            activeFile.path,
-                            activeFile.content,
-                            1,
-                            1
-                          )
-                          diffContext.addChangeSet(changeSet)
-                          onOpenDiffView(changeSet.id)
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : String(e))
-                        } finally {
-                          setBusy(false)
-                        }
+                      action: async (editor, selection) => {
+                        await runInlineAIAssist('spec_kit_fix', selection, editor)
                       },
                       condition: (hasSelection) => hasSelection,
                     },
@@ -2397,6 +2396,76 @@ function App() {
                       onChange={(e) => setChapterWordTarget(Number(e.target.value) || 0)}
                       onBlur={() => void saveProjectSettings()}
                     />
+                  </div>
+                  <div className="form-group">
+                    <label>界面主题</label>
+                    <select
+                      value={theme}
+                      onChange={(e) => setTheme(e.target.value as 'light' | 'dark')}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="dark">暗色</option>
+                      <option value="light">亮色</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>界面密度</label>
+                    <select
+                      value={uiDensity}
+                      onChange={(e) => setUiDensity(e.target.value as 'compact' | 'comfortable')}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="comfortable">默认</option>
+                      <option value="compact">紧凑</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>动效</label>
+                    <select
+                      value={uiMotion}
+                      onChange={(e) => setUiMotion(e.target.value as 'full' | 'reduced')}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="full">完整动效</option>
+                      <option value="reduced">减少动效</option>
+                    </select>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: 12, padding: '6px 12px' }}
+                      onClick={() => {
+                        uiSettingsManager.resetSettings()
+                        const defaults = uiSettingsManager.getSettings() as UISettingsState
+                        setTheme(defaults.theme)
+                        setUiDensity(defaults.density)
+                        setUiMotion(defaults.motion)
+                        setSidebarCollapsed(defaults.sidebarCollapsed)
+                      }}
+                    >
+                      重置界面设置
+                    </button>
                   </div>
                 </div>
 
@@ -3101,8 +3170,11 @@ function App() {
           gitBranch: 'main',
           theme,
         }}
-        onThemeToggle={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
-        onGitClick={() => setActiveSidebarTab('git')}
+        onThemeToggle={toggleTheme}
+        onGitClick={() => {
+          setActiveSidebarTab('git')
+          setSidebarCollapsed(false)
+        }}
       />
 
       {chatContextMenu ? (
@@ -3309,13 +3381,49 @@ function App() {
           commands={[
             { id: 'save', label: '保存文件', category: '文件', shortcut: 'Ctrl+S', action: () => void onSaveActive() },
             { id: 'newChapter', label: '新建章节', category: '文件', action: () => void onNewChapter() },
-            { id: 'toggleTheme', label: '切换主题', category: '视图', action: () => setTheme(t => t === 'light' ? 'dark' : 'light') },
-            { id: 'toggleSidebar', label: '切换侧边栏', category: '视图', shortcut: 'Ctrl+B', action: () => {} },
+            { id: 'toggleTheme', label: '切换主题', category: '视图', action: toggleTheme },
+            { id: 'toggleDensity', label: '切换界面密度', category: '视图', action: toggleDensity },
+            { id: 'toggleSidebar', label: '切换侧边栏', category: '视图', shortcut: 'Ctrl+B', action: toggleSidebar },
             { id: 'openSettings', label: '打开设置', category: '设置', shortcut: 'Ctrl+,', action: () => setShowSettings(true) },
-            { id: 'aiChat', label: 'AI 对话', category: 'AI', shortcut: 'Ctrl+Shift+L', action: () => {} },
+            {
+              id: 'aiChat',
+              label: 'AI 对话',
+              category: 'AI',
+              shortcut: 'Ctrl+Shift+L',
+              action: () => {
+                setActiveRightTab('chat')
+                window.setTimeout(() => {
+                  chatInputRef.current?.focus()
+                }, 0)
+              },
+            },
             { id: 'smartComplete', label: '智能补全', category: 'AI', action: () => void onSmartComplete() },
-            { id: 'gitCommit', label: 'Git 提交', category: 'Git', action: () => {} },
-            { id: 'gitPush', label: 'Git 推送', category: 'Git', action: () => {} },
+            {
+              id: 'gitCommit',
+              label: 'Git 提交',
+              category: 'Git',
+              action: () => {
+                setActiveSidebarTab('git')
+                setSidebarCollapsed(false)
+                if (gitCommitMsg.trim()) {
+                  void onGitCommit()
+                  return
+                }
+                window.setTimeout(() => {
+                  gitCommitInputRef.current?.focus()
+                }, 0)
+              },
+            },
+            {
+              id: 'gitPush',
+              label: 'Git 推送',
+              category: 'Git',
+              action: async () => {
+                setActiveSidebarTab('git')
+                setSidebarCollapsed(false)
+                await showErrorDialog('当前版本暂不支持 Git Push，请在外部终端执行。')
+              },
+            },
           ]}
           onClose={() => setShowCommandPalette(false)}
         />

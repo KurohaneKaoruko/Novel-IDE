@@ -22,6 +22,16 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
+  const runCommand = useCallback((cmd: Command) => {
+    void Promise.resolve(cmd.action())
+      .catch((error) => {
+        console.error('Command execution failed:', error)
+      })
+      .finally(() => {
+        onClose()
+      })
+  }, [onClose])
+
   // Filter commands based on query
   const filteredCommands = useMemo(() => {
     if (!query.trim()) return commands
@@ -83,8 +93,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
           e.preventDefault()
           const cmd = flatCommands[selectedIndex]
           if (cmd) {
-            cmd.action()
-            onClose()
+            runCommand(cmd)
           }
           break
         case 'Escape':
@@ -93,15 +102,14 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
           break
       }
     },
-    [flatCommands, selectedIndex, onClose]
+    [flatCommands, selectedIndex, onClose, runCommand]
   )
 
   const handleItemClick = useCallback(
     (cmd: Command) => {
-      cmd.action()
-      onClose()
+      runCommand(cmd)
     },
-    [onClose]
+    [runCommand]
   )
 
   let currentIndex = 0

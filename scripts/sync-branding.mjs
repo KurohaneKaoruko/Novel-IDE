@@ -7,8 +7,20 @@ async function readText(filePath) {
   return await fs.readFile(filePath, "utf8");
 }
 
-async function writeText(filePath, content) {
+async function writeTextIfChanged(filePath, content) {
+  let previous = null;
+  try {
+    previous = await fs.readFile(filePath, "utf8");
+  } catch {
+    previous = null;
+  }
+
+  if (previous === content) {
+    return false;
+  }
+
   await fs.writeFile(filePath, content, "utf8");
+  return true;
 }
 
 function stringifyJson(obj) {
@@ -47,6 +59,10 @@ function updateTomlKeysInSections(toml, updatesBySection) {
     lines[i] = `${key} = "${updates[key]}"`;
   }
 
+  // Normalize trailing newlines to a single newline for idempotent writes.
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -91,6 +107,7 @@ function generateFrontendBrandingSource(branding) {
 async function main() {
   const brandingPath = path.join(repoRoot, "branding.json");
   const branding = JSON.parse(await readText(brandingPath));
+  const changedFiles = [];
 
   const displayName = branding.displayName;
   const npmName = branding.npmName;
@@ -101,13 +118,17 @@ async function main() {
     const packageJsonPath = path.join(repoRoot, "package.json");
     const pkg = JSON.parse(await readText(packageJsonPath));
     pkg.name = npmName;
-    await writeText(packageJsonPath, stringifyJson(pkg));
+    if (await writeTextIfChanged(packageJsonPath, stringifyJson(pkg))) {
+      changedFiles.push(packageJsonPath);
+    }
   }
 
   {
     const indexHtmlPath = path.join(repoRoot, "index.html");
     const html = await readText(indexHtmlPath);
-    await writeText(indexHtmlPath, updateHtmlTitle(html, displayName));
+    if (await writeTextIfChanged(indexHtmlPath, updateHtmlTitle(html, displayName))) {
+      changedFiles.push(indexHtmlPath);
+    }
   }
 
   {
@@ -125,7 +146,9 @@ async function main() {
       }
     }
 
-    await writeText(tauriConfPath, stringifyJson(tauriConf));
+    if (await writeTextIfChanged(tauriConfPath, stringifyJson(tauriConf))) {
+      changedFiles.push(tauriConfPath);
+    }
   }
 
   {
@@ -135,17 +158,30 @@ async function main() {
       package: { name: crateName, description: displayName },
       "package.metadata.tauri": { productName: displayName }
     });
-    await writeText(cargoTomlPath, updated);
+    if (await writeTextIfChanged(cargoTomlPath, updated)) {
+      changedFiles.push(cargoTomlPath);
+    }
   }
 
   {
     const rustBrandingPath = path.join(repoRoot, "src-tauri", "src", "branding.rs");
-    await writeText(rustBrandingPath, generateRustBrandingSource(branding));
+    if (await writeTextIfChanged(rustBrandingPath, generateRustBrandingSource(branding))) {
+      changedFiles.push(rustBrandingPath);
+    }
   }
 
   {
     const frontendBrandingPath = path.join(repoRoot, "src", "branding.ts");
-    await writeText(frontendBrandingPath, generateFrontendBrandingSource(branding));
+    if (await writeTextIfChanged(frontendBrandingPath, generateFrontendBrandingSource(branding))) {
+      changedFiles.push(frontendBrandingPath);
+    }
+  }
+
+  if (changedFiles.length > 0) {
+    const rel = changedFiles.map((p) => path.relative(repoRoot, p)).join(", ");
+    console.log(`[sync-branding] updated ${changedFiles.length} file(s): ${rel}`);
+  } else {
+    console.log("[sync-branding] no file changes");
   }
 }
 

@@ -89,3 +89,53 @@ html {
   white-space: nowrap;
   border: 0;
 }
+
+.app-error-screen {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  background: #121214;
+  color: #e7e7e8;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.app-error-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.app-error-message {
+  margin: 0;
+  color: #b4b4b8;
+}
+
+.app-error-details {
+  margin: 0;
+  max-width: 960px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: #1d1d20;
+  border: 1px solid #34343a;
+  border-radius: 8px;
+  padding: 12px;
+  color: #ffb4a8;
+}
+
+.app-error-button {
+  width: fit-content;
+  border: 1px solid #2f77d4;
+  background: #2f77d4;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.app-error-button:hover {
+  background: #2866b7;
+}

@@ -54,6 +54,16 @@
   --space-md: 12px;
   --space-lg: 16px;
   --space-xl: 24px;
+
+  /* Density/Layout */
+  --activity-bar-width: 48px;
+  --activity-item-size: 44px;
+  --sidebar-width: 280px;
+  --sidebar-header-height: 40px;
+  --right-activity-width: 48px;
+  --right-activity-item-size: 44px;
+  --right-panel-width: 380px;
+  --status-bar-height: 24px;
   
   /* Border Radius */
   --radius-sm: 3px;
@@ -89,6 +99,31 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
   --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.25);
+}
+
+[data-density="compact"] {
+  --space-xs: 2px;
+  --space-sm: 6px;
+  --space-md: 10px;
+  --space-lg: 14px;
+  --space-xl: 18px;
+  --activity-bar-width: 44px;
+  --activity-item-size: 40px;
+  --sidebar-width: 252px;
+  --sidebar-header-height: 34px;
+  --right-activity-width: 44px;
+  --right-activity-item-size: 40px;
+  --right-panel-width: 340px;
+  --status-bar-height: 22px;
+}
+
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* Global & Reset */
@@ -131,7 +166,7 @@ body {
    Activity Bar (Leftmost)
    ======================================== */
 .activity-bar {
-  width: 48px;
+  width: var(--activity-bar-width);
   background: linear-gradient(180deg, #2d2d2d 0%, #252526 100%);
   display: flex;
   flex-direction: column;
@@ -142,8 +177,8 @@ body {
 }
 
 .activity-bar-item {
-  width: 44px;
-  height: 44px;
+  width: var(--activity-item-size);
+  height: var(--activity-item-size);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -193,7 +228,7 @@ body {
    Sidebar
    ======================================== */
 .sidebar {
-  width: 280px;
+  width: var(--sidebar-width);
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
@@ -201,8 +236,19 @@ body {
   flex-shrink: 0;
 }
 
+.sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  border-right: 0;
+  overflow: hidden;
+}
+
+.sidebar.collapsed * {
+  pointer-events: none;
+}
+
 .sidebar-header {
-  height: 40px;
+  height: var(--sidebar-header-height);
   padding: 0 var(--space-lg);
   display: flex;
   align-items: center;
@@ -656,7 +702,7 @@ body {
 }
 
 .right-activity-bar {
-  width: 48px;
+  width: var(--right-activity-width);
   background: linear-gradient(180deg, #2d2d2d 0%, #252526 100%);
   display: flex;
   flex-direction: column;
@@ -667,13 +713,14 @@ body {
 }
 
 .right-activity-item {
-  width: 44px;
-  height: 44px;
+  width: var(--right-activity-item-size);
+  height: var(--right-activity-item-size);
   display: flex;
   justify-content: center;
   align-items: center;
   cursor: pointer;
   color: var(--text-muted);
+  position: relative;
   transition: all var(--transition-normal);
   font-size: 20px;
   border-radius: var(--radius-md);
@@ -702,7 +749,7 @@ body {
 }
 
 .right-panel-content {
-  width: 380px;
+  width: var(--right-panel-width);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1041,7 +1088,7 @@ body {
    Status Bar
    ======================================== */
 .status-bar {
-  height: 28px;
+  height: var(--status-bar-height);
   background: linear-gradient(90deg, var(--accent-primary) 0%, #0066a8 100%);
   color: white;
   display: flex;

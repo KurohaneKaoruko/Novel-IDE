@@ -31,6 +31,9 @@ export interface AIAssistPluginProps {
 export interface AIAssistAPI {
   // Get the currently selected text
   getSelectedText: () => string
+
+  // Get absolute selection offsets in the plain text content
+  getSelectionOffsets: () => { start: number; end: number } | null
   
   // Insert text at the current cursor position
   insertTextAtCursor: (text: string) => void
@@ -52,6 +55,50 @@ export function AIAssistPlugin({ onReady }: AIAssistPluginProps) {
   const [editor] = useLexicalComposerContext()
   
   useEffect(() => {
+    const getAbsoluteOffset = (targetNode: unknown, targetOffset: number): number | null => {
+      const root = $getRoot()
+      let position = 0
+      let resolved: number | null = null
+
+      const traverse = (node: any): boolean => {
+        if (node === targetNode) {
+          if (node instanceof TextNode) {
+            const maxOffset = node.getTextContent().length
+            const clamped = Math.max(0, Math.min(targetOffset, maxOffset))
+            resolved = position + clamped
+            return true
+          }
+
+          const children = node.getChildren?.()
+          if (Array.isArray(children)) {
+            const safeOffset = Math.max(0, Math.min(targetOffset, children.length))
+            for (let i = 0; i < safeOffset; i++) {
+              position += children[i].getTextContent().length
+            }
+          }
+          resolved = position
+          return true
+        }
+
+        if (node instanceof TextNode) {
+          position += node.getTextContent().length
+          return false
+        }
+
+        const children = node.getChildren?.()
+        if (children) {
+          for (const child of children) {
+            if (traverse(child)) return true
+          }
+        }
+
+        return false
+      }
+
+      traverse(root)
+      return resolved
+    }
+
     // Create API object with all methods
     const api: AIAssistAPI = {
       /**
@@ -67,6 +114,33 @@ export function AIAssistPlugin({ onReady }: AIAssistPluginProps) {
           }
         })
         return selectedText
+      },
+
+      /**
+       * Get selection start/end offsets in plain text content
+       */
+      getSelectionOffsets: () => {
+        let offsets: { start: number; end: number } | null = null
+        editor.getEditorState().read(() => {
+          const selection = $getSelection()
+          if (!$isRangeSelection(selection)) {
+            return
+          }
+
+          const anchor = selection.anchor
+          const focus = selection.focus
+          const anchorAbs = getAbsoluteOffset(anchor.getNode(), anchor.offset)
+          const focusAbs = getAbsoluteOffset(focus.getNode(), focus.offset)
+          if (anchorAbs === null || focusAbs === null) {
+            return
+          }
+
+          offsets = {
+            start: Math.min(anchorAbs, focusAbs),
+            end: Math.max(anchorAbs, focusAbs),
+          }
+        })
+        return offsets
       },
       
       /**
@@ -317,14 +391,23 @@ export function AIAssistPlugin({ onReady }: AIAssistPluginProps) {
       onReady(api)
     }
     
-    // Also extend the editor instance with these methods for backward compatibility
-    const extendedEditor = editor as any
-    extendedEditor.getSelectedText = api.getSelectedText
-    extendedEditor.insertTextAtCursor = api.insertTextAtCursor
-    extendedEditor.replaceSelectedText = api.replaceSelectedText
-    extendedEditor.getContextBeforeCursor = api.getContextBeforeCursor
-    extendedEditor.setCursorPosition = api.setCursorPosition
-    extendedEditor.setSelection = api.setSelection
+    // Also extend the editor instance with these methods for backward compatibility.
+    // In some environments the editor object can be non-extensible; never let this crash rendering.
+    const extendedEditor = editor as unknown as Record<string, unknown>
+    const bindMethod = (name: string, method: unknown): void => {
+      try {
+        Reflect.set(extendedEditor, name, method)
+      } catch (error) {
+        console.warn(`Failed to attach AI assist method "${name}"`, error)
+      }
+    }
+    bindMethod('getSelectedText', api.getSelectedText)
+    bindMethod('getSelectionOffsets', api.getSelectionOffsets)
+    bindMethod('insertTextAtCursor', api.insertTextAtCursor)
+    bindMethod('replaceSelectedText', api.replaceSelectedText)
+    bindMethod('getContextBeforeCursor', api.getContextBeforeCursor)
+    bindMethod('setCursorPosition', api.setCursorPosition)
+    bindMethod('setSelection', api.setSelection)
   }, [editor, onReady])
   
   return null

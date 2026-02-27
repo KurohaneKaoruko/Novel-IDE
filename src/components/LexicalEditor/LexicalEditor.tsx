@@ -43,6 +43,7 @@ import './LexicalEditor.css'
 export interface ExtendedLexicalEditor extends LexicalEditorType {
   getSelection: () => any
   getSelectedText: () => string
+  getSelectionOffsets: () => { start: number; end: number } | null
   getContent: () => string
   setContent: (content: string) => void
   exportToMarkdown: () => string
@@ -156,18 +157,23 @@ function EditorRefPlugin({
   useEffect(() => {
     // Extend editor with custom methods
     const extendedEditor = editor as ExtendedLexicalEditor
-    
-    // Add getSelection method
-    extendedEditor.getSelection = () => {
+    const assignEditorMethod = (name: string, method: unknown): void => {
+      try {
+        Reflect.set(extendedEditor as object, name, method)
+      } catch (error) {
+        console.warn(`Failed to attach editor method "${name}"`, error)
+      }
+    }
+
+    const getSelection = () => {
       let selection = null
       editor.getEditorState().read(() => {
         selection = $getSelection()
       })
       return selection
     }
-    
-    // Add getSelectedText method
-    extendedEditor.getSelectedText = () => {
+
+    const getSelectedText = () => {
       let selectedText = ''
       editor.getEditorState().read(() => {
         const selection = $getSelection()
@@ -177,9 +183,8 @@ function EditorRefPlugin({
       })
       return selectedText
     }
-    
-    // Add getContent method - returns complete editor content
-    extendedEditor.getContent = () => {
+
+    const getContent = () => {
       let content = ''
       editor.getEditorState().read(() => {
         const root = $getRoot()
@@ -187,9 +192,8 @@ function EditorRefPlugin({
       })
       return content
     }
-    
-    // Add setContent method - sets editor content (handles both plain text and rich text)
-    extendedEditor.setContent = (content: string) => {
+
+    const setContent = (content: string) => {
       editor.update(() => {
         const root = $getRoot()
         root.clear()
@@ -205,22 +209,27 @@ function EditorRefPlugin({
         })
       })
     }
-    
-    // Add exportToMarkdown method - exports editor content as Markdown
-    extendedEditor.exportToMarkdown = () => {
+
+    const exportToMarkdown = () => {
       let markdown = ''
       editor.getEditorState().read(() => {
         markdown = $convertToMarkdownString(TRANSFORMERS)
       })
       return markdown
     }
-    
-    // Add exportToHTML method - exports editor content as HTML (via Markdown)
-    extendedEditor.exportToHTML = () => {
-      const markdown = extendedEditor.exportToMarkdown()
+
+    const exportToHTML = () => {
+      const markdown = exportToMarkdown()
       const html = marked.parse(markdown) as string
       return html
     }
+
+    assignEditorMethod('getSelection', getSelection)
+    assignEditorMethod('getSelectedText', getSelectedText)
+    assignEditorMethod('getContent', getContent)
+    assignEditorMethod('setContent', setContent)
+    assignEditorMethod('exportToMarkdown', exportToMarkdown)
+    assignEditorMethod('exportToHTML', exportToHTML)
     
     if (editorRef) {
       editorRef.current = extendedEditor

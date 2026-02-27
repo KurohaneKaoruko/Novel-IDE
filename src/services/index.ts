@@ -43,3 +43,6 @@ export type { EditorInstance } from '../types/editor';
 
 export { editorConfigManager } from './EditorConfigManager';
 export type { EditorUserConfig } from './EditorConfigManager';
+
+export { uiSettingsManager } from './UISettingsManager';
+export type { UISettings, UITheme, UIDensity, UIMotion } from './UISettingsManager';
