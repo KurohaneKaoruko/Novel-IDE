@@ -13,9 +13,11 @@ export type AppSettings = {
   active_provider_id: string
   active_agent_id: string
   launch_mode: LaunchMode
+  ai_edit_apply_mode: AiEditApplyMode
 }
 
 export type LaunchMode = 'picker' | 'auto_last'
+export type AiEditApplyMode = 'auto_apply' | 'review'
 
 export type ProjectSource = 'default' | 'external'
 

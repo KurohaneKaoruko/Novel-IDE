@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bubble" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2d8cff" />
+      <stop offset="100%" stop-color="#1456d8" />
+    </linearGradient>
+  </defs>
+  <path d="M50 34h156c20 0 36 16 36 36v56c0 20-16 36-36 36H132l-40 36c-5 4-12 0-11-6l7-30H50c-20 0-36-16-36-36V70c0-20 16-36 36-36z" fill="url(#bubble)"/>
+  <path d="M80 88c0-6 4-10 10-10h38c7 0 13 3 18 8l2 2 2-2c5-5 11-8 18-8h38c6 0 10 4 10 10v84c0 6-4 10-10 10h-38c-7 0-13 3-18 8l-2 2-2-2c-5-5-11-8-18-8H90c-6 0-10-4-10-10V88z" fill="#ffffff"/>
+  <path d="M128 86v100" stroke="#d6e1ff" stroke-width="6" stroke-linecap="round"/>
+  <path d="M96 106h22M96 124h22M96 142h22M138 106h22M138 124h22M138 142h22" stroke="#aac0ff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="86" cy="60" r="8" fill="#ffffff"/>
+  <circle cx="108" cy="60" r="8" fill="#ffffff"/>
+  <circle cx="130" cy="60" r="8" fill="#ffffff"/>
+</svg>

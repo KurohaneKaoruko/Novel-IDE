@@ -796,7 +796,7 @@ pub fn chat_generate_stream(
     let agent = agents_list.iter().find(|a| a.id == effective_agent_id);
     let agent_system = agent.map(|a| a.system_prompt.clone()).unwrap_or_default();
     let agent_temp = agent.map(|a| a.temperature);
-    let agent_max = agent.map(|a| a.max_tokens);
+    let ai_edit_apply_mode = settings.ai_edit_apply_mode.clone();
     let client = reqwest::Client::new();
 
     let active_provider_id = settings.active_provider_id.clone();
@@ -824,12 +824,11 @@ pub fn chat_generate_stream(
     let mut runtime = agent_system::AgentRuntime::new(workspace_root);
     let start = Instant::now();
     let (mut response, perf) = match runtime
-      .run_react(messages, agent_system.clone(), |msgs| {
+      .run_react(messages, agent_system.clone(), ai_edit_apply_mode, |msgs| {
         let provider_cfg = current_provider.clone();
         let client = client.clone();
         let app = app.clone();
         let agent_temp = agent_temp;
-        let agent_max = agent_max;
         async move {
           let mut system = String::new();
           for m in msgs.iter().filter(|m| m.role == "system") {
@@ -842,24 +841,22 @@ pub fn chat_generate_stream(
           
           match provider_cfg.kind {
             app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
-              call_openai_compatible(
+              call_openai_unbounded(
                 &app,
                 &client,
                 &provider_cfg, // pass full provider config
                 &filtered,
                 system.as_str(),
-                agent_temp,
-                agent_max
+                agent_temp
               ).await
             },
             app_settings::ProviderKind::Anthropic => {
-              call_anthropic(
+              call_anthropic_unbounded(
                 &app,
                 &client,
                 &provider_cfg,
                 &filtered,
-                system.as_str(),
-                agent_max
+                system.as_str()
               ).await
             },
           }
@@ -1083,6 +1080,195 @@ async fn call_anthropic(
     .ok_or_else(|| "missing content[0].text".to_string())
 }
 
+async fn call_openai_unbounded(
+  app: &AppHandle,
+  client: &reqwest::Client,
+  cfg: &app_settings::ModelProvider,
+  messages: &[ChatMessage],
+  system_prompt: &str,
+  temperature_override: Option<f32>,
+) -> Result<String, String> {
+  let api_key = match secrets::get_api_key(app, &cfg.id) {
+    Ok(Some(v)) => v,
+    Ok(None) => cfg.api_key.trim().to_string(),
+    Err(e) => return Err(format!("keyring read failed: {e}")),
+  };
+  if api_key.trim().is_empty() {
+    return Err(format!("api key not found for provider={}", cfg.id));
+  }
+
+  let base = cfg.base_url.trim_end_matches('/');
+  let url = format!("{base}/chat/completions");
+  let temperature = temperature_override.unwrap_or(0.7);
+  let mut out_messages: Vec<serde_json::Value> = Vec::new();
+  if !system_prompt.trim().is_empty() {
+    out_messages.push(serde_json::json!({
+      "role": "system",
+      "content": system_prompt
+    }));
+  }
+  out_messages.extend(
+    messages
+      .iter()
+      .map(|m| serde_json::json!({"role": m.role, "content": m.content})),
+  );
+
+  const MAX_CONTINUATIONS: usize = 8;
+  const FALLBACK_CHUNK_MAX_TOKENS: u32 = 32000;
+  const CONTINUE_PROMPT: &str =
+    "Continue from exactly where you stopped. Do not repeat prior text.";
+
+  let mut full_text = String::new();
+  for round in 0..=MAX_CONTINUATIONS {
+    let mut use_fallback_chunk_limit = false;
+    let value: serde_json::Value = loop {
+      let mut body = serde_json::json!({
+        "model": cfg.model_name,
+        "messages": out_messages,
+        "temperature": temperature,
+        "stream": false
+      });
+      if use_fallback_chunk_limit {
+        body["max_tokens"] = serde_json::json!(FALLBACK_CHUNK_MAX_TOKENS);
+      }
+
+      let resp = client
+        .post(url.as_str())
+        .bearer_auth(api_key.trim())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+      let status = resp.status();
+      let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
+      if status.is_success() {
+        break value;
+      }
+
+      let looks_like_missing_max_tokens = status.is_client_error()
+        && !use_fallback_chunk_limit
+        && value.to_string().to_lowercase().contains("max_tokens");
+      if looks_like_missing_max_tokens {
+        use_fallback_chunk_limit = true;
+        continue;
+      }
+      return Err(format!("http {status}: {value}"));
+    };
+
+    let chunk = value["choices"][0]["message"]["content"]
+      .as_str()
+      .map(|s| s.to_string())
+      .ok_or_else(|| "missing choices[0].message.content".to_string())?;
+    let finish_reason = value["choices"][0]["finish_reason"].as_str();
+
+    full_text.push_str(chunk.as_str());
+    if finish_reason != Some("length") {
+      return Ok(full_text);
+    }
+    if round == MAX_CONTINUATIONS {
+      full_text.push_str("\n\n[output may be truncated after repeated continuations]");
+      return Ok(full_text);
+    }
+
+    out_messages.push(serde_json::json!({
+      "role": "assistant",
+      "content": chunk
+    }));
+    out_messages.push(serde_json::json!({
+      "role": "user",
+      "content": CONTINUE_PROMPT
+    }));
+  }
+
+  Ok(full_text)
+}
+
+async fn call_anthropic_unbounded(
+  app: &AppHandle,
+  client: &reqwest::Client,
+  cfg: &app_settings::ModelProvider,
+  messages: &[ChatMessage],
+  system_prompt: &str,
+) -> Result<String, String> {
+  let api_key = match secrets::get_api_key(app, &cfg.id) {
+    Ok(Some(v)) => v,
+    Ok(None) => cfg.api_key.trim().to_string(),
+    Err(e) => return Err(format!("keyring read failed: {e}")),
+  };
+  if api_key.trim().is_empty() {
+    return Err(format!("api key not found for provider={}", cfg.id));
+  }
+
+  let mut out_messages: Vec<serde_json::Value> = messages
+    .iter()
+    .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
+    .collect();
+
+  const MAX_CONTINUATIONS: usize = 8;
+  const CHUNK_MAX_TOKENS: u32 = 32000;
+  const CONTINUE_PROMPT: &str =
+    "Continue from exactly where you stopped. Do not repeat prior text.";
+
+  let mut full_text = String::new();
+  for round in 0..=MAX_CONTINUATIONS {
+    let body = serde_json::json!({
+      "model": cfg.model_name,
+      "max_tokens": CHUNK_MAX_TOKENS,
+      "system": system_prompt,
+      "messages": out_messages
+    });
+
+    let resp = client
+      .post("https://api.anthropic.com/v1/messages")
+      .header("x-api-key", api_key.trim())
+      .header("anthropic-version", "2023-06-01")
+      .json(&body)
+      .send()
+      .await
+      .map_err(|e| format!("request failed: {e}"))?;
+
+    let status = resp.status();
+    let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
+    if !status.is_success() {
+      return Err(format!("http {status}: {value}"));
+    }
+
+    let chunk = value["content"]
+      .as_array()
+      .map(|arr| {
+        arr
+          .iter()
+          .filter_map(|part| part["text"].as_str())
+          .collect::<Vec<_>>()
+          .join("")
+      })
+      .filter(|s| !s.is_empty())
+      .ok_or_else(|| "missing content[].text".to_string())?;
+    let stop_reason = value["stop_reason"].as_str();
+
+    full_text.push_str(chunk.as_str());
+    if stop_reason != Some("max_tokens") {
+      return Ok(full_text);
+    }
+    if round == MAX_CONTINUATIONS {
+      full_text.push_str("\n\n[output may be truncated after repeated continuations]");
+      return Ok(full_text);
+    }
+
+    out_messages.push(serde_json::json!({
+      "role": "assistant",
+      "content": chunk
+    }));
+    out_messages.push(serde_json::json!({
+      "role": "user",
+      "content": CONTINUE_PROMPT
+    }));
+  }
+
+  Ok(full_text)
+}
+
 #[tauri::command]
 pub async fn ai_assistance_generate(
   app: AppHandle,
@@ -1108,24 +1294,22 @@ pub async fn ai_assistance_generate(
   // Call the appropriate AI provider
   match current_provider.kind {
     app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
-      call_openai_compatible(
+      call_openai_unbounded(
         &app,
         &client,
         current_provider,
         &messages,
         "",
-        None,
         None
       ).await
     },
     app_settings::ProviderKind::Anthropic => {
-      call_anthropic(
+      call_anthropic_unbounded(
         &app,
         &client,
         current_provider,
         &messages,
-        "",
-        None
+        ""
       ).await
     }
   }

@@ -57,6 +57,23 @@ export class ModificationService {
   private fileBackups: Map<string, Map<string, string>> = new Map(); // changeSetId -> filePath -> backup content
 
   /**
+   * Register a change set created outside this service (e.g. backend-generated edits).
+   * This enables the existing accept/reject workflow to operate on imported changes.
+   */
+  registerImportedChangeSet(changeSet: ChangeSet, originalContent: string): void {
+    const normalized: ChangeSet = {
+      ...changeSet,
+      stats: { ...changeSet.stats },
+      modifications: changeSet.modifications.map(mod => ({ ...mod })),
+    };
+
+    this.changeSets.set(normalized.id, normalized);
+    const backupMap = new Map<string, string>();
+    backupMap.set(normalized.filePath, originalContent);
+    this.fileBackups.set(normalized.id, backupMap);
+  }
+
+  /**
    * Create a new change set from file modifications
    * @param files - Array of file modifications
    * @returns The created ChangeSet

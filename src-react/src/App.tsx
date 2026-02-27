@@ -39,6 +39,7 @@ import {
   setWorkspace,
   writeText,
   type Agent,
+  type AiEditApplyMode,
   type AppSettings,
   type FsEntry,
   type GitCommitInfo,
@@ -50,7 +51,7 @@ import {
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
 import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager } from './services'
-import type { AIAssistanceResponse, EditorUserConfig } from './services'
+import type { AIAssistanceResponse, ChangeSet, EditorUserConfig } from './services'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
@@ -81,8 +82,109 @@ type ChatItem = {
   content: string
   streaming?: boolean
   streamId?: string
-  changeSet?: import('./services/ModificationService').ChangeSet
+  changeSet?: ChangeSet
   timestamp?: number
+}
+
+type BackendChangeSet = {
+  id: string
+  timestamp: number
+  files: Array<{
+    filePath: string
+    originalContent: string
+    modifications: Array<{
+      id: string
+      type: 'add' | 'delete' | 'modify'
+      lineStart: number
+      lineEnd: number
+      originalText?: string
+      modifiedText?: string
+      status: 'pending' | 'accepted' | 'rejected'
+    }>
+    status: 'pending' | 'partial' | 'accepted' | 'rejected'
+  }>
+}
+
+type ImportedChangeSet = {
+  changeSet: ChangeSet
+  originalContent: string
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
+function normalizeStatus(v: unknown): 'pending' | 'partial' | 'accepted' | 'rejected' {
+  return v === 'accepted' || v === 'rejected' || v === 'partial' ? v : 'pending'
+}
+
+function normalizeModStatus(v: unknown): 'pending' | 'accepted' | 'rejected' {
+  return v === 'accepted' || v === 'rejected' ? v : 'pending'
+}
+
+function normalizeModType(v: unknown): 'add' | 'delete' | 'modify' {
+  return v === 'add' || v === 'delete' ? v : 'modify'
+}
+
+function parseBackendChangeSets(raw: unknown): ImportedChangeSet[] {
+  if (!isRecord(raw) || !Array.isArray(raw.files)) return []
+
+  const parsed = raw as BackendChangeSet
+  const baseId = typeof parsed.id === 'string' && parsed.id ? parsed.id : `changeset-${Date.now()}`
+  const timestamp = typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now()
+  const totalFiles = parsed.files.length
+  const imported: ImportedChangeSet[] = []
+
+  parsed.files.forEach((file, fileIdx) => {
+    if (!isRecord(file)) return
+    const filePath = typeof file.filePath === 'string' ? file.filePath : ''
+    if (!filePath) return
+    const originalContent = typeof file.originalContent === 'string' ? file.originalContent : ''
+    const modsRaw = Array.isArray(file.modifications) ? file.modifications : []
+
+    const modifications = modsRaw.flatMap((mod, modIdx) => {
+      if (!isRecord(mod)) return []
+      const lineStartRaw = typeof mod.lineStart === 'number' ? mod.lineStart : Number(mod.lineStart ?? 1)
+      const lineEndRaw = typeof mod.lineEnd === 'number' ? mod.lineEnd : Number(mod.lineEnd ?? lineStartRaw)
+      const lineStart = Number.isFinite(lineStartRaw) ? Math.max(1, Math.floor(lineStartRaw)) : 1
+      const lineEnd = Number.isFinite(lineEndRaw) ? Math.max(lineStart, Math.floor(lineEndRaw)) : lineStart
+      return [
+        {
+          id: typeof mod.id === 'string' && mod.id ? mod.id : `${baseId}-mod-${fileIdx}-${modIdx}`,
+          type: normalizeModType(mod.type),
+          lineStart,
+          lineEnd,
+          originalText: typeof mod.originalText === 'string' ? mod.originalText : undefined,
+          modifiedText: typeof mod.modifiedText === 'string' ? mod.modifiedText : undefined,
+          status: normalizeModStatus(mod.status),
+        },
+      ]
+    })
+
+    let additions = 0
+    let deletions = 0
+    for (const mod of modifications) {
+      if (mod.type === 'add') additions += 1
+      if (mod.type === 'delete') deletions += 1
+      if (mod.type === 'modify') {
+        additions += 1
+        deletions += 1
+      }
+    }
+
+    const changeSet: ChangeSet = {
+      id: totalFiles > 1 ? `${baseId}:${fileIdx + 1}` : baseId,
+      timestamp,
+      filePath,
+      modifications,
+      stats: { additions, deletions },
+      status: normalizeStatus(file.status),
+    }
+
+    imported.push({ changeSet, originalContent })
+  })
+
+  return imported
 }
 
 type ChatContextMenuState = {
@@ -1296,15 +1398,26 @@ function App() {
           lineRange.endLine,
         )
 
+        modificationService.registerImportedChangeSet(changeSet, activeFile.content)
         diffContext.addChangeSet(changeSet)
-        onOpenDiffView(changeSet.id)
+        const applyMode: AiEditApplyMode = appSettings?.ai_edit_apply_mode ?? 'auto_apply'
+        if (applyMode === 'auto_apply') {
+          await modificationService.acceptAll(changeSet.id)
+          const updatedChangeSet = modificationService.getChangeSet(changeSet.id)
+          if (updatedChangeSet) {
+            diffContext.updateChangeSet(updatedChangeSet)
+          }
+          await refreshTree()
+        } else {
+          onOpenDiffView(changeSet.id)
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setBusy(false)
       }
     },
-    [activeFile, diffContext, onOpenDiffView, resolveSelectionLineRange],
+    [activeFile, appSettings, diffContext, onOpenDiffView, refreshTree, resolveSelectionLineRange],
   )
 
   const handleAIPolish = useCallback(async () => {
@@ -1588,23 +1701,44 @@ function App() {
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
-      const changeSet = p.changeSet as import('./services/ModificationService').ChangeSet | undefined
-      if (!changeSet) return
+      const imported = parseBackendChangeSets(p.changeSet)
+      if (imported.length === 0) return
 
-      // Add the ChangeSet to the DiffContext
-      diffContext.addChangeSet(changeSet)
+      for (const item of imported) {
+        modificationService.registerImportedChangeSet(item.changeSet, item.originalContent)
+        diffContext.addChangeSet(item.changeSet)
+      }
 
-      // Update the chat message with the ChangeSet
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.role === 'assistant' && m.streamId === streamId
-            ? { ...m, changeSet }
-            : m
+      const primaryChangeSet = imported[0]?.changeSet
+      if (primaryChangeSet) {
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.role === 'assistant' && m.streamId === streamId
+              ? { ...m, changeSet: primaryChangeSet }
+              : m
+          )
         )
-      )
+      }
 
-      // Open the DiffView panel
-      onOpenDiffView(changeSet.id)
+      const applyMode: AiEditApplyMode = appSettings?.ai_edit_apply_mode ?? 'auto_apply'
+      if (applyMode === 'auto_apply') {
+        void (async () => {
+          try {
+            for (const item of imported) {
+              await modificationService.acceptAll(item.changeSet.id)
+              const updated = modificationService.getChangeSet(item.changeSet.id)
+              if (updated) {
+                diffContext.updateChangeSet(updated)
+              }
+            }
+            await refreshTree()
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e))
+          }
+        })()
+      } else if (primaryChangeSet) {
+        onOpenDiffView(primaryChangeSet.id)
+      }
     }).then((u) => unlistenFns.push(u))
 
     void listen('ai_error', (event) => {
@@ -1628,7 +1762,7 @@ function App() {
     return () => {
       for (const u of unlistenFns) u()
     }
-  }, [])
+  }, [appSettings, diffContext, onOpenDiffView, refreshTree])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -2596,6 +2730,30 @@ function App() {
                     </button>
                   </div>
                   <div className="form-group">
+                    <label>AI 文件修改</label>
+                    <select
+                      value={appSettings.ai_edit_apply_mode}
+                      onChange={(e) => {
+                        const mode = e.target.value as AiEditApplyMode
+                        const prev = appSettings
+                        const next = { ...appSettings, ai_edit_apply_mode: mode }
+                        setAppSettingsState(next)
+                        void persistAppSettings(next, prev)
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: '#333',
+                        border: '1px solid #555',
+                        borderRadius: 4,
+                        color: '#fff',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="auto_apply">自动应用（推荐）</option>
+                      <option value="review">审阅后应用</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
                     <label>章节目标字数</label>
                     <input
                       type="number"
@@ -3088,7 +3246,7 @@ function App() {
                             category: '自定义',
                             system_prompt: '',
                             temperature: 0.7,
-                            max_tokens: 1024,
+                            max_tokens: 32000,
                           }
                           setAgentsList((prev) => [...prev, next])
                           setAgentEditorId(id)
@@ -3187,22 +3345,6 @@ function App() {
                             }
                           />
                           <span style={{ fontSize: 11, color: '#888' }}>字/章 (0=不分章)</span>
-                        </div>
-                        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                          <label style={{ flex: '0 0 100px' }}>Max Tokens</label>
-                          <input
-                            type="number"
-                            className="ai-textarea"
-                            style={{ width: 100, height: 32 }}
-                            min={1024}
-                            max={128000}
-                            step={1024}
-                            value={agentsList.find((a) => a.id === agentEditorId)?.max_tokens ?? 32000}
-                            onChange={(e) =>
-                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, max_tokens: parseInt(e.target.value) || 32000 } : a)))
-                            }
-                          />
-                          <span style={{ fontSize: 11, color: '#888' }}>输出长度限制</span>
                         </div>
                       </div>
                     </div>

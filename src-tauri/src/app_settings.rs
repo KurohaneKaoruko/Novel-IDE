@@ -13,6 +13,7 @@ pub struct AppSettings {
   pub active_provider_id: String,
   pub active_agent_id: String,
   pub launch_mode: LaunchMode,
+  pub ai_edit_apply_mode: AiEditApplyMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,7 +63,21 @@ impl Default for AppSettings {
       active_provider_id: "openai".to_string(),
       active_agent_id: "fantasy".to_string(),
       launch_mode: LaunchMode::default(),
+      ai_edit_apply_mode: AiEditApplyMode::default(),
     }
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiEditApplyMode {
+  AutoApply,
+  Review,
+}
+
+impl Default for AiEditApplyMode {
+  fn default() -> Self {
+    Self::AutoApply
   }
 }
 
@@ -236,6 +251,7 @@ pub fn load(app: &tauri::AppHandle) -> Result<AppSettings, String> {
           active_provider_id: legacy.providers.active,
           active_agent_id: legacy.active_agent_id,
           launch_mode: LaunchMode::default(),
+          ai_edit_apply_mode: AiEditApplyMode::default(),
         };
         migrated = ensure_sane(migrated);
 
@@ -263,5 +279,5 @@ pub fn save(app: &tauri::AppHandle, settings: &AppSettings) -> Result<(), String
 }
 
 fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-  app_data::data_file_path(app, "settings.json")
+  app_data::config_file_path(app, "settings.json")
 }
