@@ -1,5 +1,19 @@
+@font-face {
+  font-family: 'Space Grotesk';
+  src: local('Space Grotesk'), local('SpaceGrotesk-Regular');
+  font-style: normal;
+  font-weight: 400 700;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: local('JetBrains Mono'), local('JetBrainsMono-Regular');
+  font-style: normal;
+  font-weight: 400 700;
+}
+
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Space Grotesk', 'Segoe UI Variable', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -9,7 +23,7 @@
   -moz-osx-font-smoothing: grayscale;
   
   /* Color Scheme */
-  color-scheme: dark;
+  color-scheme: dark light;
 }
 
 body {
@@ -100,7 +114,7 @@ html {
   padding: 24px;
   background: #121214;
   color: #e7e7e8;
-  font-family: 'Segoe UI', sans-serif;
+  font-family: 'Space Grotesk', 'Segoe UI Variable', sans-serif;
 }
 
 .app-error-title {

@@ -68,6 +68,7 @@ import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks
 import { logError } from './utils/errorLogger'
 import { RecoveryDialog } from './components/RecoveryDialog'
 import { ProjectPickerPage } from './components/ProjectPickerPage'
+import { AppIcon } from './components/icons/AppIcon'
 
 type OpenFile = {
   path: string
@@ -1947,7 +1948,7 @@ function App() {
             }}
             title="资源管理器"
           >
-            <span className="activity-bar-icon">📁</span>
+            <span className="activity-bar-icon"><AppIcon name="files" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'chapters' ? 'active' : ''}`}
@@ -1957,7 +1958,7 @@ function App() {
             }}
             title="章节管理"
           >
-            <span className="activity-bar-icon">📚</span>
+            <span className="activity-bar-icon"><AppIcon name="chapters" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'characters' ? 'active' : ''}`}
@@ -1967,7 +1968,7 @@ function App() {
             }}
             title="人物管理"
           >
-            <span className="activity-bar-icon">👤</span>
+            <span className="activity-bar-icon"><AppIcon name="characters" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'plotlines' ? 'active' : ''}`}
@@ -1977,7 +1978,7 @@ function App() {
             }}
             title="情节线管理"
           >
-            <span className="activity-bar-icon">📈</span>
+            <span className="activity-bar-icon"><AppIcon name="plotlines" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'specKit' ? 'active' : ''}`}
@@ -1987,7 +1988,7 @@ function App() {
             }}
             title="Spec-Kit"
           >
-            <span className="activity-bar-icon">🧩</span>
+            <span className="activity-bar-icon"><AppIcon name="specKit" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'git' ? 'active' : ''}`}
@@ -1997,7 +1998,7 @@ function App() {
             }}
             title="源代码管理"
           >
-            <span className="activity-bar-icon">📦</span>
+            <span className="activity-bar-icon"><AppIcon name="git" /></span>
           </div>
           <div className="spacer" />
           <div
@@ -2008,7 +2009,7 @@ function App() {
             }}
             title="切换项目"
           >
-            <span className="activity-bar-icon">🗂️</span>
+            <span className="activity-bar-icon"><AppIcon name="projectSwitch" /></span>
           </div>
           <div
             className="activity-bar-item"
@@ -2018,7 +2019,7 @@ function App() {
             }}
             title="设置"
           >
-            <span className="activity-bar-icon">⚙️</span>
+            <span className="activity-bar-icon"><AppIcon name="settings" /></span>
           </div>
         </div>
 
@@ -2031,7 +2032,7 @@ function App() {
               <div style={{ flex: 1 }} />
               {workspaceRoot ? (
                 <button className="icon-button" onClick={() => void refreshTree()} title="刷新">
-                  ↻
+                  <AppIcon name="refresh" size={14} />
                 </button>
               ) : null}
             </div>
@@ -2243,10 +2244,10 @@ function App() {
         />
         <div className="editor-tabs-actions">
           <button className="icon-button" disabled={!workspaceRoot} onClick={() => void onNewChapter()} title="新建章节">
-            +
+            <AppIcon name="add" size={14} />
           </button>
           <button className="icon-button" disabled={!activeFile || !activeFile.dirty} onClick={() => void onSaveActive()} title="保存">
-            💾
+            <AppIcon name="save" size={15} />
           </button>
           <button
             className="icon-button"
@@ -2254,7 +2255,7 @@ function App() {
             onClick={() => setShowPreview((v) => !v)}
             title="预览"
           >
-            👁
+            <AppIcon name="preview" size={15} />
           </button>
         </div>
         <div className="editor-content">
@@ -2545,7 +2546,7 @@ function App() {
             onClick={() => setActiveRightTab(activeRightTab === 'chat' ? null : 'chat')}
             title="对话"
           >
-            💬
+            <span className="right-activity-icon"><AppIcon name="chat" /></span>
           </div>
           <div
             className={`right-activity-item ${activeRightTab === 'graph' ? 'active' : ''}`}
@@ -2555,21 +2556,21 @@ function App() {
             }}
             title="图谱"
           >
-            🕸️
+            <span className="right-activity-icon"><AppIcon name="graph" /></span>
           </div>
           <div
             className={`right-activity-item ${activeRightTab === 'writing-goal' ? 'active' : ''}`}
             onClick={() => setActiveRightTab(activeRightTab === 'writing-goal' ? null : 'writing-goal')}
             title="写作目标"
           >
-            🎯
+            <span className="right-activity-icon"><AppIcon name="target" /></span>
           </div>
           <div
             className={`right-activity-item ${activeRightTab === 'spec-kit' ? 'active' : ''}`}
             onClick={() => setActiveRightTab(activeRightTab === 'spec-kit' ? null : 'spec-kit')}
             title="Spec-Kit 检查"
           >
-            🧩
+            <span className="right-activity-icon"><AppIcon name="specKit" /></span>
           </div>
         </div>
       </div>
