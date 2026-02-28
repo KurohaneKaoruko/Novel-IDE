@@ -329,10 +329,8 @@ pub fn init_novel(state: State<'_, AppState>) -> Result<(), String> {
 
   let project_settings = novel_dir.join(".settings").join("project.json");
   if !project_settings.exists() {
-    let raw = serde_json::json!({
-      "chapter_word_target": 2000
-    })
-    .to_string();
+    let raw = serde_json::to_string_pretty(&ProjectWritingSettings::default())
+      .map_err(|e| format!("serialize default project settings failed: {e}"))?;
     fs::write(project_settings, raw).map_err(|e| format!("write project settings failed: {e}"))?;
   }
 
@@ -369,6 +367,295 @@ pub struct FsEntry {
   pub path: String,
   pub kind: String,
   pub children: Vec<FsEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProjectWritingSettings {
+  pub chapter_word_target: u32,
+  pub auto_min_chars: u32,
+  pub auto_max_chars: u32,
+  pub auto_max_rounds: u32,
+  pub auto_max_chapter_advances: u32,
+}
+
+impl Default for ProjectWritingSettings {
+  fn default() -> Self {
+    Self {
+      chapter_word_target: 2000,
+      auto_min_chars: 500,
+      auto_max_chars: 2400,
+      auto_max_rounds: 120,
+      auto_max_chapter_advances: 24,
+    }
+  }
+}
+
+#[derive(Deserialize, Default)]
+struct PartialProjectWritingSettings {
+  chapter_word_target: Option<u32>,
+  auto_min_chars: Option<u32>,
+  auto_max_chars: Option<u32>,
+  auto_max_rounds: Option<u32>,
+  auto_max_chapter_advances: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub struct NovelTaskQualityTask {
+  pub id: String,
+  pub target_words: u32,
+  pub scope: String,
+  #[serde(default)]
+  pub depends_on: Vec<String>,
+  #[serde(default)]
+  pub acceptance_checks: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NovelTaskQualityRequest {
+  pub task: NovelTaskQualityTask,
+  pub assistant_text: String,
+  #[serde(default)]
+  pub task_pool: Vec<NovelTaskQualityTask>,
+}
+
+#[derive(Serialize)]
+pub struct NovelTaskQualityResult {
+  pub ok: bool,
+  pub reason: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ComposerDirectiveParseResult {
+  pub requested_mode: Option<String>,
+  pub auto_action: Option<String>,
+  pub content: String,
+  pub matched: bool,
+}
+
+fn normalize_project_writing_settings(mut v: ProjectWritingSettings) -> ProjectWritingSettings {
+  v.chapter_word_target = v.chapter_word_target.clamp(0, 200_000);
+  v.auto_min_chars = v.auto_min_chars.clamp(120, 20_000);
+  v.auto_max_chars = v.auto_max_chars.clamp(180, 60_000);
+  if v.auto_max_chars < v.auto_min_chars {
+    v.auto_max_chars = v.auto_min_chars;
+  }
+  v.auto_max_rounds = v.auto_max_rounds.clamp(1, 1_000);
+  v.auto_max_chapter_advances = v.auto_max_chapter_advances.clamp(0, 200);
+  v
+}
+
+fn project_settings_path(root: &Path) -> PathBuf {
+  root.join(".novel").join(".settings").join("project.json")
+}
+
+fn load_project_writing_settings_internal(root: &Path) -> Result<ProjectWritingSettings, String> {
+  let path = project_settings_path(root);
+  let mut settings = ProjectWritingSettings::default();
+  if path.exists() {
+    let raw = fs::read_to_string(&path).map_err(|e| format!("read project settings failed: {e}"))?;
+    let parsed = serde_json::from_str::<PartialProjectWritingSettings>(&raw)
+      .map_err(|e| format!("parse project settings failed: {e}"))?;
+    if let Some(v) = parsed.chapter_word_target {
+      settings.chapter_word_target = v;
+    }
+    if let Some(v) = parsed.auto_min_chars {
+      settings.auto_min_chars = v;
+    }
+    if let Some(v) = parsed.auto_max_chars {
+      settings.auto_max_chars = v;
+    }
+    if let Some(v) = parsed.auto_max_rounds {
+      settings.auto_max_rounds = v;
+    }
+    if let Some(v) = parsed.auto_max_chapter_advances {
+      settings.auto_max_chapter_advances = v;
+    }
+  }
+  Ok(normalize_project_writing_settings(settings))
+}
+
+fn save_project_writing_settings_internal(root: &Path, settings: &ProjectWritingSettings) -> Result<(), String> {
+  let path = project_settings_path(root);
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|e| format!("create project settings dir failed: {e}"))?;
+  }
+  let normalized = normalize_project_writing_settings(settings.clone());
+  let raw = serde_json::to_string_pretty(&normalized).map_err(|e| format!("serialize project settings failed: {e}"))?;
+  fs::write(path, raw).map_err(|e| format!("write project settings failed: {e}"))
+}
+
+fn normalize_no_whitespace(input: &str) -> String {
+  input.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn normalize_rel_path_for_read(path: &str) -> Result<PathBuf, String> {
+  validate_relative_path(path)
+}
+
+fn parse_writer_mode_alias(token: &str) -> Option<&'static str> {
+  let lower = token.trim().to_lowercase();
+  match lower.as_str() {
+    "normal" | "普通" => Some("normal"),
+    "plan" | "大纲" => Some("plan"),
+    "spec" | "细纲" => Some("spec"),
+    _ => None,
+  }
+}
+
+#[tauri::command]
+pub fn parse_composer_directive(input: String) -> ComposerDirectiveParseResult {
+  let trimmed = input.trim();
+  if !trimmed.starts_with('/') {
+    return ComposerDirectiveParseResult {
+      requested_mode: None,
+      auto_action: None,
+      content: trimmed.to_string(),
+      matched: false,
+    };
+  }
+
+  let mut chars = trimmed.chars();
+  let _slash = chars.next();
+  let after_slash = chars.as_str();
+  let mut parts = after_slash.splitn(2, char::is_whitespace);
+  let command = parts.next().unwrap_or("").trim();
+  let rest = parts.next().unwrap_or("").trim();
+
+  if command.eq_ignore_ascii_case("auto") {
+    let arg = rest
+      .split_whitespace()
+      .next()
+      .unwrap_or("")
+      .trim()
+      .to_lowercase();
+    let auto_action = match arg.as_str() {
+      "on" => Some("on".to_string()),
+      "off" => Some("off".to_string()),
+      _ => Some("toggle".to_string()),
+    };
+    return ComposerDirectiveParseResult {
+      requested_mode: None,
+      auto_action,
+      content: String::new(),
+      matched: true,
+    };
+  }
+
+  if let Some(mode) = parse_writer_mode_alias(command) {
+    return ComposerDirectiveParseResult {
+      requested_mode: Some(mode.to_string()),
+      auto_action: None,
+      content: rest.to_string(),
+      matched: true,
+    };
+  }
+
+  ComposerDirectiveParseResult {
+    requested_mode: None,
+    auto_action: None,
+    content: trimmed.to_string(),
+    matched: false,
+  }
+}
+
+#[tauri::command]
+pub fn validate_novel_task_quality(
+  state: State<'_, AppState>,
+  payload: NovelTaskQualityRequest,
+) -> Result<NovelTaskQualityResult, String> {
+  let root = get_workspace_root(&state)?;
+  let task = payload.task;
+  let text = payload.assistant_text.trim();
+  if text.is_empty() {
+    return Ok(NovelTaskQualityResult {
+      ok: false,
+      reason: Some("AI returned empty content".to_string()),
+    });
+  }
+  if !text.contains(&format!("TASK_DONE: {}", task.id)) {
+    return Ok(NovelTaskQualityResult {
+      ok: false,
+      reason: Some(format!("Missing completion tag TASK_DONE: {}", task.id)),
+    });
+  }
+
+  let scope_rel = normalize_rel_path_for_read(task.scope.as_str())?;
+  let scope_path = root.join(scope_rel);
+  let content = fs::read_to_string(&scope_path)
+    .map_err(|_| format!("target file is missing or unreadable: {}", task.scope))?;
+  let compact = normalize_no_whitespace(content.as_str());
+  let min_length = std::cmp::max(600usize, ((task.target_words as f32) * 0.42_f32) as usize);
+  if compact.len() < min_length {
+    return Ok(NovelTaskQualityResult {
+      ok: false,
+      reason: Some(format!("file content is too short ({}/{})", compact.len(), min_length)),
+    });
+  }
+
+  let lowered = content.to_lowercase();
+  let placeholder_tokens = ["todo", "lorem", "xxx", "[待写]", "待补全", "待完善", "待续"];
+  if placeholder_tokens.iter().any(|token| lowered.contains(token)) {
+    return Ok(NovelTaskQualityResult {
+      ok: false,
+      reason: Some("chapter contains placeholder text".to_string()),
+    });
+  }
+
+  if !content.trim().is_empty()
+    && task.acceptance_checks.iter().any(|check| check.contains("钩子"))
+  {
+    let tail: String = content.chars().rev().take(80).collect::<String>().chars().rev().collect();
+    let has_hook_end = tail.chars().any(|ch| ['?', '!', '.', '？', '！', '。', '…'].contains(&ch));
+    if !has_hook_end {
+      return Ok(NovelTaskQualityResult {
+        ok: false,
+        reason: Some("chapter ending lacks a valid hook/closure sentence".to_string()),
+      });
+    }
+  }
+
+  if let Some(dep_id) = task.depends_on.first() {
+    if let Some(dep_task) = payload.task_pool.iter().find(|item| item.id == *dep_id) {
+      if dep_task.scope != task.scope {
+        if let Ok(dep_rel) = normalize_rel_path_for_read(dep_task.scope.as_str()) {
+          if let Ok(dep_content) = fs::read_to_string(root.join(dep_rel)) {
+            let current_head: String = normalize_no_whitespace(content.as_str()).chars().take(140).collect();
+            let dep_head: String = normalize_no_whitespace(dep_content.as_str()).chars().take(140).collect();
+            if current_head.len() > 80 && dep_head.len() > 80 && current_head == dep_head {
+              return Ok(NovelTaskQualityResult {
+                ok: false,
+                reason: Some("chapter opening is highly duplicated from dependency task".to_string()),
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  Ok(NovelTaskQualityResult {
+    ok: true,
+    reason: None,
+  })
+}
+
+#[tauri::command]
+pub fn get_project_writing_settings(state: State<'_, AppState>) -> Result<ProjectWritingSettings, String> {
+  let root = get_workspace_root(&state)?;
+  let settings = load_project_writing_settings_internal(&root)?;
+  save_project_writing_settings_internal(&root, &settings)?;
+  Ok(settings)
+}
+
+#[tauri::command]
+pub fn set_project_writing_settings(
+  state: State<'_, AppState>,
+  settings: ProjectWritingSettings,
+) -> Result<ProjectWritingSettings, String> {
+  let root = get_workspace_root(&state)?;
+  let normalized = normalize_project_writing_settings(settings);
+  save_project_writing_settings_internal(&root, &normalized)?;
+  Ok(normalized)
 }
 
 #[tauri::command]

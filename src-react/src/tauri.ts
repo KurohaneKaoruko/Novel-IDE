@@ -53,6 +53,34 @@ export type FsEntry = {
   children: FsEntry[]
 }
 
+export type ProjectWritingSettings = {
+  chapter_word_target: number
+  auto_min_chars: number
+  auto_max_chars: number
+  auto_max_rounds: number
+  auto_max_chapter_advances: number
+}
+
+export type ComposerDirectiveParseResult = {
+  requested_mode: 'normal' | 'plan' | 'spec' | null
+  auto_action: 'on' | 'off' | 'toggle' | null
+  content: string
+  matched: boolean
+}
+
+export type NovelTaskQualityTask = {
+  id: string
+  target_words: number
+  scope: string
+  depends_on: string[]
+  acceptance_checks: string[]
+}
+
+export type NovelTaskQualityResult = {
+  ok: boolean
+  reason: string | null
+}
+
 export function isTauriApp(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
@@ -97,6 +125,32 @@ export async function initNovel(): Promise<void> {
 
 export async function listWorkspaceTree(maxDepth = 6): Promise<FsEntry> {
   return invoke<FsEntry>('list_workspace_tree', { maxDepth })
+}
+
+export async function getProjectWritingSettings(): Promise<ProjectWritingSettings> {
+  return invoke<ProjectWritingSettings>('get_project_writing_settings')
+}
+
+export async function setProjectWritingSettings(settings: ProjectWritingSettings): Promise<ProjectWritingSettings> {
+  return invoke<ProjectWritingSettings>('set_project_writing_settings', { settings })
+}
+
+export async function parseComposerDirective(input: string): Promise<ComposerDirectiveParseResult> {
+  return invoke<ComposerDirectiveParseResult>('parse_composer_directive', { input })
+}
+
+export async function validateNovelTaskQuality(
+  task: NovelTaskQualityTask,
+  assistantText: string,
+  taskPool: NovelTaskQualityTask[],
+): Promise<NovelTaskQualityResult> {
+  return invoke<NovelTaskQualityResult>('validate_novel_task_quality', {
+    payload: {
+      task,
+      assistant_text: assistantText,
+      task_pool: taskPool,
+    },
+  })
 }
 
 export async function readText(path: string): Promise<string> {

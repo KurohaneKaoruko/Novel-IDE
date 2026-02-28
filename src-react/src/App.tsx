@@ -51,6 +51,11 @@ import {
 import { useDiff } from './contexts/DiffContext'
 import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager, novelPlannerService } from './services'
 import type { AIAssistanceResponse, ChangeSet, EditorUserConfig, NovelTask, SessionPlannerState, WriterMode } from './services'
+import { runAutoLongWriteWorkflow } from './services/autoLongWriteWorkflow'
+import { runPlannerQueueWorkflow } from './services/plannerQueueWorkflow'
+import { cleanupStreamRefs, type StreamMapRefs } from './services/streamRefs'
+import { parseComposerInput } from './services/chatComposer'
+import { appendStreamTextWithOverlap, formatElapsedLabel } from './services/chatStreamText'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
@@ -63,10 +68,22 @@ import { CommandPalette } from './components/CommandPalette'
 import { TabBar } from './components/TabBar'
 import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
 import { useAutoSave, clearAutoSavedContent, getAutoSavedContent } from './hooks/useAutoSave'
+import { useProjectWritingSettings } from './hooks/useProjectWritingSettings'
+import { useAutoStoryNavigation } from './hooks/useAutoStoryNavigation'
+import { useTaskQualityValidator } from './hooks/useTaskQualityValidator'
 import { logError } from './utils/errorLogger'
 import { RecoveryDialog } from './components/RecoveryDialog'
 import { ProjectPickerPage } from './components/ProjectPickerPage'
 import { AppIcon } from './components/icons/AppIcon'
+import {
+  COMMON_PROVIDER_PRESETS,
+  CUSTOM_PROVIDER_PRESET_KEY,
+  defaultBaseUrlByCustomProviderApiFormat,
+  inferProviderPresetKey,
+  kindFromCustomProviderApiFormat,
+  providerKindLabel,
+  type CustomProviderApiFormat,
+} from './config/providerPresets'
 
 type OpenFile = {
   path: string
@@ -197,29 +214,6 @@ function parseBackendChangeSets(raw: unknown): ImportedChangeSet[] {
   return imported
 }
 
-function appendStreamTextWithOverlap(existing: string, incoming: string): { next: string; appended: string } {
-  if (!incoming) return { next: existing, appended: '' }
-  if (!existing) return { next: incoming, appended: incoming }
-  if (existing.endsWith(incoming)) return { next: existing, appended: '' }
-
-  const maxOverlap = Math.min(existing.length, incoming.length, 4096)
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (existing.slice(existing.length - overlap) === incoming.slice(0, overlap)) {
-      const appended = incoming.slice(overlap)
-      return appended ? { next: `${existing}${appended}`, appended } : { next: existing, appended: '' }
-    }
-  }
-  return { next: `${existing}${incoming}`, appended: incoming }
-}
-
-function formatElapsedLabel(totalSeconds: number): string {
-  const safe = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0
-  if (safe < 60) return `${safe}s`
-  const mins = Math.floor(safe / 60)
-  const secs = safe % 60
-  return `${mins}m ${secs}s`
-}
-
 type ChatContextMenuState = {
   x: number
   y: number
@@ -272,11 +266,6 @@ type StreamWaiter = {
   reject: (error: Error) => void
 }
 
-type TaskQualityResult = {
-  ok: boolean
-  reason: string | null
-}
-
 type SendChatOptions = {
   skipModeWrap?: boolean
   sourceMessages?: ChatItem[]
@@ -292,70 +281,8 @@ type AssistantReplayContext = {
 }
 
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
-const CUSTOM_PROVIDER_PRESET_KEY = 'custom'
-const MODE_SLASH_COMMAND_REGEX = /^\/(normal|plan|spec|普通|大纲|细纲)\b/i
-const AUTO_SLASH_COMMAND_REGEX = /^\/auto(?:\s+(on|off))?\b/i
 const FIRST_TOKEN_RETRY_TIMEOUT_MS = 35_000
 const AUTO_RETRY_MAX_PER_GROUP = 1
-const AUTO_LONG_WRITE_MAX_ROUNDS = 120
-const AUTO_LONG_WRITE_MIN_CHARS = 500
-const AUTO_LONG_WRITE_MAX_CHARS = 2400
-const AUTO_LONG_WRITE_MAX_CHAPTER_ADVANCES = 24
-
-type CustomProviderApiFormat = 'openai' | 'claude'
-
-type ProviderPreset = {
-  key: string
-  name: string
-  kind: ModelProvider['kind']
-  base_url: string
-  model_name: string
-}
-
-const COMMON_PROVIDER_PRESETS: ProviderPreset[] = [
-  { key: 'openai', name: 'OpenAI', kind: 'OpenAI', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4o-mini' },
-  { key: 'claude', name: 'Claude (Anthropic)', kind: 'Anthropic', base_url: 'https://api.anthropic.com', model_name: 'claude-3-5-sonnet-20241022' },
-  { key: 'deepseek', name: 'DeepSeek', kind: 'OpenAICompatible', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat' },
-  { key: 'openrouter', name: 'OpenRouter', kind: 'OpenAICompatible', base_url: 'https://openrouter.ai/api/v1', model_name: 'openai/gpt-4o-mini' },
-  { key: 'moonshot', name: 'Moonshot (Kimi)', kind: 'OpenAICompatible', base_url: 'https://api.moonshot.cn/v1', model_name: 'moonshot-v1-8k' },
-  { key: 'qwen', name: 'Qwen (DashScope)', kind: 'OpenAICompatible', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model_name: 'qwen-plus' },
-  { key: 'zhipu', name: 'Zhipu AI (GLM)', kind: 'OpenAICompatible', base_url: 'https://open.bigmodel.cn/api/paas/v4', model_name: 'glm-4-flash' },
-  { key: 'minimax', name: 'MiniMax', kind: 'OpenAICompatible', base_url: 'https://api.minimax.chat/v1', model_name: 'MiniMax-Text-01' },
-  { key: 'siliconflow', name: 'SiliconFlow', kind: 'OpenAICompatible', base_url: 'https://api.siliconflow.cn/v1', model_name: 'deepseek-ai/DeepSeek-V3' },
-  { key: 'groq', name: 'Groq', kind: 'OpenAICompatible', base_url: 'https://api.groq.com/openai/v1', model_name: 'llama-3.3-70b-versatile' },
-  { key: 'ollama', name: 'Ollama (Local)', kind: 'OpenAICompatible', base_url: 'http://localhost:11434/v1', model_name: 'qwen2.5:14b' },
-]
-
-function normalizeProviderBaseUrl(url?: string): string {
-  return (url ?? '').trim().replace(/\/+$/, '')
-}
-
-function inferProviderPresetKey(provider: Partial<ModelProvider>): string {
-  const kind = provider.kind
-  const base = normalizeProviderBaseUrl(provider.base_url)
-  if (!kind || !base) return CUSTOM_PROVIDER_PRESET_KEY
-  const matched = COMMON_PROVIDER_PRESETS.find((preset) => preset.kind === kind && normalizeProviderBaseUrl(preset.base_url) === base)
-  return matched?.key ?? CUSTOM_PROVIDER_PRESET_KEY
-}
-
-function providerKindLabel(kind: ModelProvider['kind']): string {
-  switch (kind) {
-    case 'OpenAI':
-      return 'OpenAI API'
-    case 'Anthropic':
-      return 'Claude API'
-    default:
-      return 'OpenAI API'
-  }
-}
-
-function kindFromCustomProviderApiFormat(format: CustomProviderApiFormat): ModelProvider['kind'] {
-  return format === 'claude' ? 'Anthropic' : 'OpenAICompatible'
-}
-
-function defaultBaseUrlByCustomProviderApiFormat(format: CustomProviderApiFormat): string {
-  return format === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
-}
 
 function App() {
   // Diff Context
@@ -466,6 +393,17 @@ function App() {
   const streamStartedAtRef = useRef<Map<string, number>>(new Map())
   const streamLastTokenAtRef = useRef<Map<string, number>>(new Map())
   const assistantVersionsRef = useRef<Map<string, AssistantVersion[]>>(new Map())
+  const streamRefs = useMemo<StreamMapRefs>(
+    () => ({
+      streamOutputRef,
+      streamAssistantGroupRef,
+      streamAssistantIdRef,
+      manualCancelledStreamsRef,
+      streamStartedAtRef,
+      streamLastTokenAtRef,
+    }),
+    [],
+  )
   const [streamPhaseById, setStreamPhaseById] = useState<Record<string, string>>({})
   const [streamUiTick, setStreamUiTick] = useState(0)
 
@@ -494,9 +432,20 @@ function App() {
   const [gitError, setGitError] = useState<string | null>(null)
 
   // Stats & Visuals
-  const [chapterWordTarget, setChapterWordTarget] = useState<number>(2000)
+  const {
+    settings: projectWritingSettings,
+    updateSettings: updateProjectWritingSettings,
+    loadSettings: loadProjectWritingSettings,
+    saveSettings: saveProjectWritingSettings,
+  } = useProjectWritingSettings(workspaceRoot)
+  const chapterWordTarget = projectWritingSettings.chapterWordTarget
+  const autoLongWriteMaxRounds = projectWritingSettings.autoMaxRounds
+  const autoLongWriteMinChars = projectWritingSettings.autoMinChars
+  const autoLongWriteMaxChars = projectWritingSettings.autoMaxChars
+  const autoLongWriteMaxChapterAdvances = projectWritingSettings.autoMaxChapterAdvances
   const [graphNodes, setGraphNodes] = useState<Array<{ id: string; name: string }>>([])
   const [graphEdges, setGraphEdges] = useState<Array<{ from: string; to: string; type?: string }>>([])
+  const { validateTaskQuality } = useTaskQualityValidator()
 
   const activeFile = useMemo(() => openFiles.find((f) => f.path === activePath) ?? null, [openFiles, activePath])
   const isMarkdownFile = useMemo(() => !!activeFile && activeFile.path.toLowerCase().endsWith('.md'), [activeFile])
@@ -783,36 +732,6 @@ function App() {
     [],
   )
 
-  const loadProjectSettings = useCallback(async () => {
-    if (!workspaceRoot) return
-    try {
-      const raw = await readText('.novel/.settings/project.json')
-      const v: unknown = JSON.parse(raw)
-      const n =
-        typeof v === 'object' && v && 'chapter_word_target' in v
-          ? Number((v as { chapter_word_target?: unknown }).chapter_word_target)
-          : NaN
-      if (Number.isFinite(n) && n > 0) {
-        setChapterWordTarget(n)
-      }
-    } catch {
-      return
-    }
-  }, [workspaceRoot])
-
-  const saveProjectSettings = useCallback(async () => {
-    if (!workspaceRoot) return
-    if (isTauriApp()) {
-      try {
-        await initNovel()
-      } catch {
-        return
-      }
-    }
-    const raw = JSON.stringify({ chapter_word_target: chapterWordTarget }, null, 2)
-    await writeText('.novel/.settings/project.json', raw)
-  }, [workspaceRoot, chapterWordTarget])
-
   const extractTaskSummaryFromMessage = useCallback((text: string): string => {
     const normalized = text.trim()
     if (!normalized) return ''
@@ -825,74 +744,6 @@ function App() {
       .trim()
     return useful.slice(0, 360)
   }, [])
-
-  const validateTaskQuality = useCallback(
-    async (task: NovelTask, assistantText: string, taskPool: NovelTask[]): Promise<TaskQualityResult> => {
-      const text = assistantText.trim()
-      if (!text) return { ok: false, reason: 'AI 未输出内容' }
-      const doneTag = text.includes(`TASK_DONE: ${task.id}`)
-      if (!doneTag) return { ok: false, reason: `缺少任务完成标记 TASK_DONE: ${task.id}` }
-
-      let content = ''
-      try {
-        content = await readText(task.scope)
-      } catch {
-        return { ok: false, reason: `目标文件未写入：${task.scope}` }
-      }
-      const normalized = content.replace(/\s+/g, '')
-      const minLength = Math.max(600, Math.floor(task.target_words * 0.42))
-      if (normalized.length < minLength) {
-        return { ok: false, reason: `文件内容偏短（${normalized.length}/${minLength}）` }
-      }
-
-      const placeholderPattern = /\bTODO\b|待补充|待完善|\[待写\]|lorem|xxx|待续/i
-      if (placeholderPattern.test(content)) {
-        return { ok: false, reason: '章节包含占位文本，未完成正式创作' }
-      }
-
-      const endText = content.trim()
-      if (endText.length > 0 && task.acceptance_checks.some((check) => check.includes('钩子'))) {
-        const endSlice = endText.slice(-80)
-        const hookPattern = /[？?！!。…]/
-        if (!hookPattern.test(endSlice)) {
-          return { ok: false, reason: '章节结尾缺少有效钩子或收束句' }
-        }
-      }
-
-      if (task.depends_on.length > 0) {
-        const depId = task.depends_on[0]
-        const depTask = taskPool.find((item) => item.id === depId)
-        if (depTask && depTask.scope !== task.scope) {
-          try {
-            const depContent = await readText(depTask.scope)
-            const currentHead = content.replace(/\s+/g, '').slice(0, 140)
-            const depHead = depContent.replace(/\s+/g, '').slice(0, 140)
-            if (currentHead.length > 80 && depHead.length > 80 && currentHead === depHead) {
-              return { ok: false, reason: '章节开头与上一任务高度重复' }
-            }
-          } catch {
-            // Ignore dependency read failure; not a hard error for balanced gate.
-          }
-        }
-      }
-
-      const chapterMatch = task.scope.match(/chapter-(\d+)\.md$/i)
-      if (chapterMatch && task.depends_on.length > 0) {
-        const depTask = taskPool.find((item) => item.id === task.depends_on[0])
-        const depMatch = depTask?.scope.match(/chapter-(\d+)\.md$/i)
-        if (depMatch) {
-          const currentNum = Number(chapterMatch[1])
-          const depNum = Number(depMatch[1])
-          if (Number.isFinite(currentNum) && Number.isFinite(depNum) && currentNum <= depNum) {
-            return { ok: false, reason: '章节时间顺序异常（章节编号未前进）' }
-          }
-        }
-      }
-
-      return { ok: true, reason: null }
-    },
-    [],
-  )
 
   const refreshPlannerQueue = useCallback(async () => {
     if (!workspaceRoot || !isTauriApp()) return
@@ -1197,6 +1048,12 @@ function App() {
     },
     [openFiles],
   )
+
+  const { ensureAutoNextChapter, ensureAutoStoryFile } = useAutoStoryNavigation({
+    tree,
+    onOpenByPath,
+    refreshTree,
+  })
 
   const onSaveActive = useCallback(async () => {
     if (!activeFile) return
@@ -1748,10 +1605,10 @@ function App() {
       if (!rawInput) return null
       if (chatMessagesRef.current.some((m) => m.streaming)) return null
 
-      const autoMatch = rawInput.match(AUTO_SLASH_COMMAND_REGEX)
-      if (autoMatch) {
-        const directive = (autoMatch[1] ?? '').toLowerCase()
-        const nextEnabled = directive === 'on' ? true : directive === 'off' ? false : !autoLongWriteEnabled
+      const parsedDirective = await parseComposerInput(rawInput)
+      if (parsedDirective.autoAction) {
+        const nextEnabled =
+          parsedDirective.autoAction === 'on' ? true : parsedDirective.autoAction === 'off' ? false : !autoLongWriteEnabled
         if (!activeFile) {
           setError('Auto requires an active file.')
           return null
@@ -1771,17 +1628,8 @@ function App() {
         return null
       }
 
-      const slashMatch = rawInput.match(MODE_SLASH_COMMAND_REGEX)
-      const slashModeRaw = (slashMatch?.[1] ?? '').toLowerCase()
-      const requestedMode: WriterMode | null =
-        slashModeRaw === 'plan' || slashModeRaw === '大纲'
-          ? 'plan'
-          : slashModeRaw === 'spec' || slashModeRaw === '细纲'
-            ? 'spec'
-            : slashModeRaw === 'normal' || slashModeRaw === '普通'
-              ? 'normal'
-              : null
-      const content = requestedMode ? rawInput.replace(MODE_SLASH_COMMAND_REGEX, '').trim() : rawInput
+      const requestedMode: WriterMode | null = parsedDirective.requestedMode
+      const content = requestedMode ? parsedDirective.content : rawInput
       const applyRequestedMode = async (mode: WriterMode) => {
         if (mode === writerMode) return
         if (!workspaceRoot || !isTauriApp()) {
@@ -1871,12 +1719,7 @@ function App() {
       }
 
       if (!isTauriApp()) {
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
+        cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, content: '当前未运行在 Tauri 环境，无法调用 AI。', streaming: false } : m)),
         )
@@ -1884,12 +1727,7 @@ function App() {
       }
 
       if (!workspaceRoot) {
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
+        cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, content: '请先打开一个工作区（Workspace）。', streaming: false } : m)),
         )
@@ -1899,12 +1737,7 @@ function App() {
       try {
         await initNovel()
       } catch (e) {
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
+        cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
@@ -1939,12 +1772,7 @@ function App() {
         })
         return streamId
       } catch (e) {
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
+        cleanupStreamRefs(streamRefs, streamId)
         setStreamPhaseById((prev) => {
           const next = { ...prev }
           delete next[streamId]
@@ -2224,355 +2052,46 @@ function App() {
     [workspaceRoot],
   )
 
-  const collectWorkspaceFiles = useCallback((root: FsEntry | null): Set<string> => {
-    const out = new Set<string>()
-    if (!root) return out
-    const stack: FsEntry[] = [root]
-    while (stack.length > 0) {
-      const node = stack.pop()!
-      if (node.kind === 'file') {
-        out.add(node.path.replace(/\\/g, '/'))
-      } else {
-        for (const child of node.children ?? []) {
-          stack.push(child)
-        }
-      }
-    }
-    return out
-  }, [])
-
-  const buildNextChapterPath = useCallback((currentPath: string, files: Set<string>): string | null => {
-    const normalized = (currentPath ?? '').replace(/\\/g, '/')
-    const slash = normalized.lastIndexOf('/')
-    const dir = slash >= 0 ? normalized.slice(0, slash) : ''
-    const file = slash >= 0 ? normalized.slice(slash + 1) : normalized
-    const match = file.match(/^chapter-(\d+)([^.]*)\.(md|txt)$/i)
-    if (!match) return null
-    const digits = match[1] ?? ''
-    const suffix = match[2] ?? ''
-    const ext = match[3] ?? 'md'
-    const nextNum = String(Number(digits) + 1).padStart(digits.length, '0')
-    const nextFile = `chapter-${nextNum}${suffix}.${ext}`
-    const sameDirCandidate = dir ? `${dir}/${nextFile}` : nextFile
-    if (files.has(sameDirCandidate)) return sameDirCandidate
-
-    const globalMatches = [...files].filter((path) => path.endsWith(`/${nextFile}`) || path === nextFile).sort()
-    if (globalMatches.length > 0) {
-      const preferred = globalMatches.find((path) => path.startsWith('stories/vol-')) ?? globalMatches[0]
-      return preferred
-    }
-
-    const volMatch = dir.match(/^(.*\/)?vol-(\d+)$/i)
-    if (volMatch) {
-      const volPrefix = volMatch[1] ?? ''
-      const nextVol = String(Number(volMatch[2]) + 1).padStart(volMatch[2].length, '0')
-      return `${volPrefix}vol-${nextVol}/${nextFile}`
-    }
-
-    return sameDirCandidate
-  }, [])
-
-  const ensureAutoNextChapter = useCallback(
-    async (currentPath: string): Promise<string | null> => {
-      const files = collectWorkspaceFiles(tree)
-      const candidate = buildNextChapterPath(currentPath, files)
-      if (!candidate) return null
-      if (!candidate.startsWith('stories/')) return null
-      if (!files.has(candidate)) {
-        try {
-          await createFile(candidate)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          if (msg.includes('parent directory does not exist')) {
-            const slash = candidate.lastIndexOf('/')
-            if (slash > 0) {
-              await createDir(candidate.slice(0, slash))
-            }
-            await createFile(candidate)
-          } else {
-            throw e
-          }
-        }
-      }
-      await onOpenByPath(candidate)
-      await refreshTree()
-      return candidate
-    },
-    [buildNextChapterPath, collectWorkspaceFiles, onOpenByPath, refreshTree, tree],
-  )
-
-  const ensureAutoStoryFile = useCallback(
-    async (path: string): Promise<string | null> => {
-      const normalized = (path ?? '').replace(/\\/g, '/')
-      if (!normalized || !normalized.startsWith('stories/')) return null
-      const files = collectWorkspaceFiles(tree)
-      if (!files.has(normalized)) {
-        try {
-          await createFile(normalized)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          if (msg.includes('parent directory does not exist')) {
-            const slash = normalized.lastIndexOf('/')
-            if (slash > 0) {
-              await createDir(normalized.slice(0, slash))
-            }
-            await createFile(normalized)
-          } else {
-            throw e
-          }
-        }
-      }
-      await onOpenByPath(normalized)
-      await refreshTree()
-      return normalized
-    },
-    [collectWorkspaceFiles, onOpenByPath, refreshTree, tree],
-  )
-
   const runAutoLongWrite = useCallback(async () => {
-    if (!workspaceRoot || !isTauriApp()) return
-    if (!activeFile) return
-    if (autoLongWriteRunning) return
-    if (chatMessagesRef.current.some((m) => m.streaming)) return
-
-    let targetPath = activeFile.path
-    let chapterAdvances = 0
-    let reachedTarget = false
-    let stalledRounds = 0
-    let autoTaskCursor: NovelTask | null = null
-    let lastAssistantText = ''
-    autoLongWriteStopRef.current = false
-    setAutoLongWriteRunning(true)
-    setAutoLongWriteStatus('Auto running...')
-
-    try {
-      for (let round = 1; round <= AUTO_LONG_WRITE_MAX_ROUNDS; round += 1) {
-        if (autoLongWriteStopRef.current) break
-        if (activePath !== targetPath) {
-          setAutoLongWriteStatus('Auto stopped: active file changed.')
-          break
-        }
-
-        const fallbackContent = openFiles.find((f) => f.path === targetPath)?.content ?? ''
-        if (writerMode !== 'normal') {
-          await ensurePlanningArtifacts(writerMode)
-          let queue = await novelPlannerService.loadRunQueue()
-          setPlannerTasks(queue)
-          const runningOnPath = queue.find(
-            (task) => task.scope === targetPath && (task.status === 'running' || task.status === 'todo' || task.status === 'retry'),
-          )
-          const nextExecutable = novelPlannerService.getNextExecutableTask(queue)
-          const selectedTask = runningOnPath ?? nextExecutable
-          if (!selectedTask) {
-            reachedTarget = true
-            break
-          }
-
-          if (selectedTask.scope !== targetPath) {
-            const switched = await ensureAutoStoryFile(selectedTask.scope)
-            if (!switched) {
-              reachedTarget = true
-              break
-            }
-            chapterAdvances += 1
-            targetPath = switched
-            setAutoLongWriteStatus(`Auto task switch -> ${selectedTask.id} @ ${switched}`)
-            await new Promise<void>((resolve) => window.setTimeout(resolve, 220))
-            continue
-          }
-
-          autoTaskCursor = selectedTask
-          if (selectedTask.status !== 'running') {
-            queue = await novelPlannerService.updateTask(writerMode, selectedTask.id, (task) => ({
-              ...task,
-              status: 'running',
-              last_error: undefined,
-            }))
-            setPlannerTasks(queue)
-          }
-          await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, selectedTask.id, null)
-        } else {
-          autoTaskCursor = null
-        }
-        const currentCount = await getLatestFileCharCount(targetPath, fallbackContent)
-        const targetCount = Math.max(0, autoTaskCursor?.target_words ?? chapterWordTarget)
-        if (targetCount > 0 && currentCount >= targetCount) {
-          if (autoTaskCursor) {
-            setAutoLongWriteStatus(`Auto validating ${autoTaskCursor.id}...`)
-            const finalPrompt =
-              `Task completion check.\n` +
-              `Task: ${autoTaskCursor.id} ${autoTaskCursor.title}\n` +
-              `Target file: #file:${targetPath}\n` +
-              `Target words: ${targetCount}\n` +
-              `If task is complete, output exactly: TASK_DONE: ${autoTaskCursor.id}\n` +
-              `Then provide a 2-3 sentence summary.\n` +
-              `If not complete, first apply missing edits to file, then output TASK_DONE tag and summary.`
-            const finalStreamId = await onSendChat(finalPrompt, { hideUserEcho: true, skipModeWrap: true })
-            if (!finalStreamId) {
-              throw new Error(`ä»»åŠ¡ ${autoTaskCursor.id} å®Œæˆç¡®è®¤å¯åŠ¨å¤±è´¥`)
-            }
-            try {
-              await waitForStreamCompletion(finalStreamId)
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e)
-              if (/cancel/i.test(msg)) break
-              throw e
-            }
-            const finalAssistantText = (streamOutputRef.current.get(finalStreamId) ?? lastAssistantText).trim()
-            streamOutputRef.current.delete(finalStreamId)
-            streamAssistantGroupRef.current.delete(finalStreamId)
-            streamAssistantIdRef.current.delete(finalStreamId)
-            manualCancelledStreamsRef.current.delete(finalStreamId)
-            streamStartedAtRef.current.delete(finalStreamId)
-            streamLastTokenAtRef.current.delete(finalStreamId)
-
-            let queue = await novelPlannerService.loadRunQueue()
-            const quality = await validateTaskQuality(autoTaskCursor, finalAssistantText, queue)
-            if (!quality.ok) {
-              queue = await novelPlannerService.updateTask(writerMode, autoTaskCursor.id, (task) => ({
-                ...task,
-                status: task.retries >= 1 ? 'blocked' : 'retry',
-                retries: task.retries + 1,
-                last_error: quality.reason ?? '质量校验失败',
-              }))
-              setPlannerTasks(queue)
-              await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, autoTaskCursor.id, quality.reason ?? null)
-              const nowStatus = queue.find((task) => task.id === autoTaskCursor?.id)?.status
-              if (nowStatus === 'blocked') {
-                setAutoLongWriteStatus(`Auto blocked: ${autoTaskCursor.id} ${quality.reason ?? ''}`.trim())
-                break
-              }
-              setAutoLongWriteStatus(`Auto retry: ${autoTaskCursor.id} ${quality.reason ?? ''}`.trim())
-              continue
-            }
-
-            const summary = extractTaskSummaryFromMessage(finalAssistantText) || `Auto reached target words (${currentCount}/${targetCount})`
-            queue = await novelPlannerService.updateTask(writerMode, autoTaskCursor.id, (task) => ({
-              ...task,
-              status: 'done',
-              completed_at: new Date().toISOString(),
-              last_error: undefined,
-            }))
-            await novelPlannerService.appendContinuityEntry(autoTaskCursor, summary)
-            await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, null, null)
-            setPlannerTasks(queue)
-            const nextTask = novelPlannerService.getNextExecutableTask(queue)
-            if (!nextTask) {
-              reachedTarget = true
-              break
-            }
-            const switched = await ensureAutoStoryFile(nextTask.scope)
-            if (!switched) {
-              reachedTarget = true
-              break
-            }
-            chapterAdvances += 1
-            targetPath = switched
-            autoTaskCursor = null
-            setAutoLongWriteStatus(`Auto task done ${nextTask.id} -> ${switched}`)
-            await new Promise<void>((resolve) => window.setTimeout(resolve, 220))
-            continue
-          }
-          if (chapterAdvances >= AUTO_LONG_WRITE_MAX_CHAPTER_ADVANCES) {
-            setAutoLongWriteStatus('Auto paused: chapter auto-advance limit reached.')
-            break
-          }
-          const nextPath = await ensureAutoNextChapter(targetPath)
-          if (!nextPath) {
-            reachedTarget = true
-            break
-          }
-          chapterAdvances += 1
-          targetPath = nextPath
-          setAutoLongWriteStatus(`Auto advanced to ${nextPath} (chapter ${chapterAdvances + 1})`)
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 220))
-          continue
-        }
-
-        const gap = targetCount > 0 ? Math.max(0, targetCount - currentCount) : 1200
-        const chunkChars = Math.max(AUTO_LONG_WRITE_MIN_CHARS, Math.min(AUTO_LONG_WRITE_MAX_CHARS, gap > 0 ? gap : 1200))
-        const progressLabel = targetCount > 0 ? `${currentCount}/${targetCount}` : `${currentCount}`
-        setAutoLongWriteStatus(`Auto round ${round} - ${progressLabel}`)
-
-        const modeGuard =
-          writerMode === 'normal'
-            ? 'Use current chapter context and referenced files only.'
-            : writerMode === 'plan'
-              ? 'Follow the major outline and chapter pacing strictly.'
-              : 'Follow the detailed outline tasks and beat continuity strictly.'
-
-        const prompt =
-          `Auto long-form writing task.\n` +
-          `Current chapter file: #file:${targetPath}\n` +
-          `Current length: ${currentCount} chars.\n` +
-          `Mode: ${writerMode}.\n` +
-          (targetCount > 0 ? `Target length: ${targetCount} chars.\n` : '') +
-          (autoTaskCursor ? `Task: ${autoTaskCursor.id} ${autoTaskCursor.title}\n` : '') +
-          `Write and apply about ${chunkChars} new chars directly into the file.\n` +
-          `Requirements:\n` +
-          `1) Must use file-edit tool to modify project files directly (no insert button flow).\n` +
-          `2) Keep plot logic consistent with existing chapters and avoid contradictions.\n` +
-          `3) ${modeGuard}\n` +
-          `4) No duplicate paragraphs; continue exactly from the current ending.\n` +
-          `5) Return a one-line progress summary after applying edits.`
-
-        const streamId = await onSendChat(prompt, { hideUserEcho: true })
-        if (!streamId) {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 160))
-          continue
-        }
-
-        try {
-          await waitForStreamCompletion(streamId)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          if (/cancel/i.test(msg)) {
-            break
-          }
-          throw e
-        }
-        lastAssistantText = (streamOutputRef.current.get(streamId) ?? '').trim()
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
-
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 280))
-        const nextCount = await getLatestFileCharCount(targetPath, fallbackContent)
-        if (nextCount <= currentCount + 20) {
-          stalledRounds += 1
-          if (stalledRounds >= 3) {
-            setAutoLongWriteStatus('Auto paused: no measurable file growth.')
-            break
-          }
-        } else {
-          stalledRounds = 0
-        }
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setAutoLongWriteStatus('Auto failed.')
-    } finally {
-      const stoppedByUser = autoLongWriteStopRef.current
-      if (reachedTarget) {
-        setAutoLongWriteStatus(
-          writerMode === 'normal' ? 'Auto completed: chapter target reached.' : 'Auto completed: planner queue reached target.',
-        )
-      } else if (stoppedByUser) {
-        setAutoLongWriteStatus('Auto stopped.')
-      }
-      autoLongWriteStopRef.current = false
-      setAutoLongWriteRunning(false)
-      setAutoLongWriteEnabled(false)
-      window.setTimeout(() => {
-        setAutoLongWriteStatus('')
-      }, 3500)
-    }
+    await runAutoLongWriteWorkflow({
+      workspaceRoot,
+      isTauriRuntime: isTauriApp(),
+      activeFile: activeFile ? { path: activeFile.path } : null,
+      activePath,
+      autoLongWriteRunning,
+      openFiles,
+      writerMode,
+      chapterWordTarget,
+      autoLongWriteMaxRounds,
+      autoLongWriteMinChars,
+      autoLongWriteMaxChars,
+      autoLongWriteMaxChapterAdvances,
+      chatSessionId: chatSessionIdRef.current,
+      autoLongWriteStopRef,
+      chatMessagesRef,
+      streamRefs,
+      plannerService: novelPlannerService,
+      setPlannerTasks,
+      setAutoLongWriteRunning,
+      setAutoLongWriteStatus,
+      setAutoLongWriteEnabled,
+      setError,
+      ensurePlanningArtifacts,
+      ensureAutoStoryFile,
+      ensureAutoNextChapter,
+      getLatestFileCharCount,
+      onSendChat,
+      waitForStreamCompletion,
+      validateTaskQuality,
+      extractTaskSummaryFromMessage,
+    })
   }, [
     activeFile,
     activePath,
+    autoLongWriteMaxChapterAdvances,
+    autoLongWriteMaxChars,
+    autoLongWriteMaxRounds,
+    autoLongWriteMinChars,
     autoLongWriteRunning,
     chapterWordTarget,
     ensureAutoNextChapter,
@@ -2587,6 +2106,7 @@ function App() {
     workspaceRoot,
     writerMode,
   ])
+
 
   useEffect(() => {
     if (!autoLongWriteEnabled) return
@@ -2655,104 +2175,44 @@ function App() {
       setPlannerBusy(false)
     }
   }, [activePath, chapterWordTarget, chatInput, onOpenByPath, workspaceRoot, writerMode])
-
   const runPlannerQueue = useCallback(
     async (userInstruction = '') => {
-      if (!workspaceRoot || !isTauriApp()) return
-      if (writerMode === 'normal') {
-        setPlannerLastRunError('\u666e\u901a\u6a21\u5f0f\u4e0d\u6267\u884c\u7ec6\u7eb2\u961f\u5217')
-        return
-      }
-      if (plannerQueueRunning) return
-      setPlannerQueueRunning(true)
-      setPlannerLastRunError(null)
-      plannerStopRef.current = false
-      setPlannerBusy(true)
-
-      try {
-        await ensurePlanningArtifacts(writerMode, userInstruction)
-        let tasks = await novelPlannerService.loadRunQueue()
-        setPlannerTasks(tasks)
-        let guard = 0
-        while (!plannerStopRef.current) {
-          guard += 1
-          if (guard > 400) break
-          const next = novelPlannerService.getNextExecutableTask(tasks)
-          if (!next) break
-
-          await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, next.id, null)
-          tasks = await novelPlannerService.updateTask(writerMode, next.id, (task) => ({
-            ...task,
-            status: 'running',
-            last_error: undefined,
-          }))
-          setPlannerTasks(tasks)
-
-          const context = await novelPlannerService.buildModeContext(writerMode, tree, next.scope || activePath)
-          const taskPrompt = novelPlannerService.buildTaskExecutionPrompt(writerMode, next, context, userInstruction)
-          const streamId = await onSendChat(taskPrompt, { skipModeWrap: true })
-          if (!streamId) {
-            throw new Error(`任务 ${next.id} 无法启动`)
-          }
-          await waitForStreamCompletion(streamId)
-          const latestAssistant = streamOutputRef.current.get(streamId) ?? ''
-          streamOutputRef.current.delete(streamId)
-          streamAssistantGroupRef.current.delete(streamId)
-          streamAssistantIdRef.current.delete(streamId)
-          manualCancelledStreamsRef.current.delete(streamId)
-          streamStartedAtRef.current.delete(streamId)
-          streamLastTokenAtRef.current.delete(streamId)
-
-          const quality = await validateTaskQuality(next, latestAssistant, tasks)
-          if (!quality.ok) {
-            tasks = await novelPlannerService.updateTask(writerMode, next.id, (task) => ({
-              ...task,
-              status: task.retries >= 1 ? 'blocked' : 'retry',
-              retries: task.retries + 1,
-              last_error: quality.reason ?? '质量校验失败',
-            }))
-            setPlannerTasks(tasks)
-            if ((tasks.find((task) => task.id === next.id)?.status ?? '') === 'blocked') {
-              throw new Error(`任务 ${next.id} 已阻塞：${quality.reason ?? '未知错误'}`)
-            }
-            continue
-          }
-
-          const summary = extractTaskSummaryFromMessage(latestAssistant)
-          tasks = await novelPlannerService.updateTask(writerMode, next.id, (task) => ({
-            ...task,
-            status: 'done',
-            completed_at: new Date().toISOString(),
-            last_error: undefined,
-          }))
-          await novelPlannerService.appendContinuityEntry(next, summary || '任务完成')
-          await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, null, null)
-          setPlannerTasks(tasks)
-          await refreshTree()
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        setPlannerLastRunError(msg)
-        await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, null, msg)
-      } finally {
-        plannerStopRef.current = false
-        setPlannerQueueRunning(false)
-        setPlannerBusy(false)
-      }
+      await runPlannerQueueWorkflow({
+        workspaceRoot,
+        isTauriRuntime: isTauriApp(),
+        writerMode,
+        plannerQueueRunning,
+        plannerStopRef,
+        chatSessionId: chatSessionIdRef.current,
+        tree,
+        activePath,
+        userInstruction,
+        streamRefs,
+        plannerService: novelPlannerService,
+        setPlannerQueueRunning,
+        setPlannerLastRunError,
+        setPlannerBusy,
+        setPlannerTasks,
+        ensurePlanningArtifacts,
+        onSendChat,
+        waitForStreamCompletion,
+        validateTaskQuality,
+        extractTaskSummaryFromMessage,
+        refreshTree,
+      })
     },
     [
+      activePath,
       ensurePlanningArtifacts,
-      validateTaskQuality,
       extractTaskSummaryFromMessage,
-      isTauriApp,
       onSendChat,
       plannerQueueRunning,
       refreshTree,
+      validateTaskQuality,
       waitForStreamCompletion,
       workspaceRoot,
       writerMode,
       tree,
-      activePath,
     ],
   )
 
@@ -3146,10 +2606,10 @@ function App() {
       }
     })()
     void refreshGit()
-    void loadProjectSettings()
+    void loadProjectWritingSettings()
     void refreshProjectPickerState()
     setAppView((prev) => (prev === 'workspace' ? prev : 'workspace'))
-  }, [loadProjectSettings, refreshGit, refreshProjectPickerState, workspaceRoot])
+  }, [loadProjectWritingSettings, refreshGit, refreshProjectPickerState, workspaceRoot])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -3335,12 +2795,7 @@ function App() {
         versionGroupAutoRetryCountRef.current.delete(finishedGroupId)
       }
       window.setTimeout(() => {
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
+        cleanupStreamRefs(streamRefs, streamId)
       }, 30000)
     })
 
@@ -3425,12 +2880,7 @@ function App() {
         waiter.reject(new Error(extra ? `${message} (${extra})` : message))
       }
       window.setTimeout(() => {
-        streamOutputRef.current.delete(streamId)
-        streamAssistantGroupRef.current.delete(streamId)
-        streamAssistantIdRef.current.delete(streamId)
-        manualCancelledStreamsRef.current.delete(streamId)
-        streamStartedAtRef.current.delete(streamId)
-        streamLastTokenAtRef.current.delete(streamId)
+        cleanupStreamRefs(streamRefs, streamId)
       }, 1000)
     })
 
@@ -4528,8 +3978,64 @@ function App() {
                     <input
                       type="number"
                       value={chapterWordTarget}
-                      onChange={(e) => setChapterWordTarget(Number(e.target.value) || 0)}
-                      onBlur={() => void saveProjectSettings()}
+                      onChange={(e) =>
+                        updateProjectWritingSettings({
+                          chapterWordTarget: Number(e.target.value) || 0,
+                        })
+                      }
+                      onBlur={() => void saveProjectWritingSettings()}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Auto 每轮最小字数</label>
+                    <input
+                      type="number"
+                      value={autoLongWriteMinChars}
+                      onChange={(e) =>
+                        updateProjectWritingSettings({
+                          autoMinChars: Number(e.target.value) || 0,
+                        })
+                      }
+                      onBlur={() => void saveProjectWritingSettings()}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Auto 每轮最大字数</label>
+                    <input
+                      type="number"
+                      value={autoLongWriteMaxChars}
+                      onChange={(e) =>
+                        updateProjectWritingSettings({
+                          autoMaxChars: Number(e.target.value) || 0,
+                        })
+                      }
+                      onBlur={() => void saveProjectWritingSettings()}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Auto 最大轮次</label>
+                    <input
+                      type="number"
+                      value={autoLongWriteMaxRounds}
+                      onChange={(e) =>
+                        updateProjectWritingSettings({
+                          autoMaxRounds: Number(e.target.value) || 0,
+                        })
+                      }
+                      onBlur={() => void saveProjectWritingSettings()}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Auto 最大章节推进</label>
+                    <input
+                      type="number"
+                      value={autoLongWriteMaxChapterAdvances}
+                      onChange={(e) =>
+                        updateProjectWritingSettings({
+                          autoMaxChapterAdvances: Number(e.target.value) || 0,
+                        })
+                      }
+                      onBlur={() => void saveProjectWritingSettings()}
                     />
                   </div>
                   <div className="form-group">
@@ -5438,6 +4944,15 @@ function App() {
 }
 
 export default App
+
+
+
+
+
+
+
+
+
 
 
 

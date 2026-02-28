@@ -26,6 +26,8 @@ dist-ssr
 .*/
 target/
 output/
+gen/
+data/
 
 # Tests
 __tests__/
