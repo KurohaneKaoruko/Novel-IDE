@@ -18,5 +18,13 @@
         "resizable": true
       }
     ]
+  },
+  "bundle": {
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "installer-hooks.nsh"
+      }
+    }
   }
 }

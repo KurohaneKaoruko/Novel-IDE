@@ -58,8 +58,7 @@ import { ChapterManager } from './components/ChapterManager'
 import { CharacterManager } from './components/CharacterManager'
 import { PlotLineManager } from './components/PlotLineManager'
 import { WritingGoalPanel } from './components/WritingGoalPanel'
-import { SpecKitPanel } from './components/SpecKitPanel'
-import { SpecKitLintPanel } from './components/SpecKitLintPanel'
+import { RiskPanel } from './components/RiskPanel'
 import { StatusBar } from './components/StatusBar'
 import { CommandPalette } from './components/CommandPalette'
 import { TabBar } from './components/TabBar'
@@ -231,7 +230,7 @@ type SelectionLineRange = {
   endLine: number
 }
 
-type InlineAIAssistCommand = 'polish' | 'expand' | 'condense' | 'spec_kit_fix'
+type InlineAIAssistCommand = 'polish' | 'expand' | 'condense'
 
 type StreamWaiter = {
   resolve: () => void
@@ -248,6 +247,62 @@ type SendChatOptions = {
 }
 
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
+const CUSTOM_PROVIDER_PRESET_KEY = 'custom'
+
+type CustomProviderApiFormat = 'openai' | 'claude'
+
+type ProviderPreset = {
+  key: string
+  name: string
+  kind: ModelProvider['kind']
+  base_url: string
+  model_name: string
+}
+
+const COMMON_PROVIDER_PRESETS: ProviderPreset[] = [
+  { key: 'openai', name: 'OpenAI', kind: 'OpenAI', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4o-mini' },
+  { key: 'claude', name: 'Claude (Anthropic)', kind: 'Anthropic', base_url: 'https://api.anthropic.com', model_name: 'claude-3-5-sonnet-20241022' },
+  { key: 'deepseek', name: 'DeepSeek', kind: 'OpenAICompatible', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat' },
+  { key: 'openrouter', name: 'OpenRouter', kind: 'OpenAICompatible', base_url: 'https://openrouter.ai/api/v1', model_name: 'openai/gpt-4o-mini' },
+  { key: 'moonshot', name: 'Moonshot (Kimi)', kind: 'OpenAICompatible', base_url: 'https://api.moonshot.cn/v1', model_name: 'moonshot-v1-8k' },
+  { key: 'qwen', name: 'Qwen (DashScope)', kind: 'OpenAICompatible', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model_name: 'qwen-plus' },
+  { key: 'zhipu', name: 'Zhipu AI (GLM)', kind: 'OpenAICompatible', base_url: 'https://open.bigmodel.cn/api/paas/v4', model_name: 'glm-4-flash' },
+  { key: 'minimax', name: 'MiniMax', kind: 'OpenAICompatible', base_url: 'https://api.minimax.chat/v1', model_name: 'MiniMax-Text-01' },
+  { key: 'siliconflow', name: 'SiliconFlow', kind: 'OpenAICompatible', base_url: 'https://api.siliconflow.cn/v1', model_name: 'deepseek-ai/DeepSeek-V3' },
+  { key: 'groq', name: 'Groq', kind: 'OpenAICompatible', base_url: 'https://api.groq.com/openai/v1', model_name: 'llama-3.3-70b-versatile' },
+  { key: 'ollama', name: 'Ollama (Local)', kind: 'OpenAICompatible', base_url: 'http://localhost:11434/v1', model_name: 'qwen2.5:14b' },
+]
+
+function normalizeProviderBaseUrl(url?: string): string {
+  return (url ?? '').trim().replace(/\/+$/, '')
+}
+
+function inferProviderPresetKey(provider: Partial<ModelProvider>): string {
+  const kind = provider.kind
+  const base = normalizeProviderBaseUrl(provider.base_url)
+  if (!kind || !base) return CUSTOM_PROVIDER_PRESET_KEY
+  const matched = COMMON_PROVIDER_PRESETS.find((preset) => preset.kind === kind && normalizeProviderBaseUrl(preset.base_url) === base)
+  return matched?.key ?? CUSTOM_PROVIDER_PRESET_KEY
+}
+
+function providerKindLabel(kind: ModelProvider['kind']): string {
+  switch (kind) {
+    case 'OpenAI':
+      return 'OpenAI API'
+    case 'Anthropic':
+      return 'Claude API'
+    default:
+      return 'OpenAI API'
+  }
+}
+
+function kindFromCustomProviderApiFormat(format: CustomProviderApiFormat): ModelProvider['kind'] {
+  return format === 'claude' ? 'Anthropic' : 'OpenAICompatible'
+}
+
+function defaultBaseUrlByCustomProviderApiFormat(format: CustomProviderApiFormat): string {
+  return format === 'claude' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'
+}
 
 function App() {
   // Diff Context
@@ -276,8 +331,8 @@ function App() {
   >(null)
 
   // Activity Bar State
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit'>('files')
-  const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | 'spec-kit' | null>('chat')
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'risk'>('files')
+  const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | null>('chat')
 
   // Workspace & Files
   const [appView, setAppView] = useState<'project-picker' | 'workspace'>('project-picker')
@@ -299,6 +354,8 @@ function App() {
   // New state for model modal
   const [showModelModal, setShowModelModal] = useState(false)
   const [editingProvider, setEditingProvider] = useState<Partial<ModelProvider>>({})
+  const [editingProviderPreset, setEditingProviderPreset] = useState<string>(COMMON_PROVIDER_PRESETS[0]?.key ?? CUSTOM_PROVIDER_PRESET_KEY)
+  const [editingCustomProviderApiFormat, setEditingCustomProviderApiFormat] = useState<CustomProviderApiFormat>('openai')
   const [isNewProvider, setIsNewProvider] = useState(true)
 
   // ... (rest of App component)
@@ -364,25 +421,8 @@ function App() {
   const [gitSelectedPath, setGitSelectedPath] = useState<string | null>(null)
   const [gitDiffText, setGitDiffText] = useState('')
 
-  // Sensitive Word Detection State
-  const [sensitiveWordEnabled, setSensitiveWordEnabled] = useState(true)
-  const [sensitiveWordDictionary, setSensitiveWordDictionary] = useState<string[]>([
-    // Default sensitive words (example - should be loaded from config)
-    '暴力', '血腥', '色情', '政治', '敏感',
-  ])
-  const [newSensitiveWord, setNewSensitiveWord] = useState('')
-
   // Editor Configuration State
   const [editorUserConfig, setEditorUserConfig] = useState<EditorUserConfig>(editorConfigManager.getConfig())
-
-  // Sensitive Word Detection Hook
-  // TODO: Re-implement for Lexical in task 9
-  // const { sensitiveWordCount, isDetecting: isSensitiveWordDetecting } = useSensitiveWordDetection({
-  //   editor: editorRef.current,
-  //   enabled: sensitiveWordEnabled && activePath !== null,
-  //   dictionary: sensitiveWordDictionary,
-  //   debounceMs: 500,
-  // })
   const [gitError, setGitError] = useState<string | null>(null)
 
   // Stats & Visuals
@@ -636,46 +676,6 @@ function App() {
     await writeText('.novel/.settings/project.json', raw)
   }, [workspaceRoot, chapterWordTarget])
 
-  const loadSensitiveWordSettings = useCallback(async () => {
-    if (!workspaceRoot) return
-    try {
-      const raw = await readText('.novel/.settings/sensitive-words.json')
-      const v: unknown = JSON.parse(raw)
-      if (typeof v === 'object' && v) {
-        const data = v as { enabled?: boolean; dictionary?: string[] }
-        if (typeof data.enabled === 'boolean') {
-          setSensitiveWordEnabled(data.enabled)
-        }
-        if (Array.isArray(data.dictionary)) {
-          setSensitiveWordDictionary(data.dictionary)
-        }
-      }
-    } catch {
-      // File doesn't exist or is invalid, use defaults
-      return
-    }
-  }, [workspaceRoot])
-
-  const saveSensitiveWordSettings = useCallback(async () => {
-    if (!workspaceRoot) return
-    if (isTauriApp()) {
-      try {
-        await initNovel()
-      } catch {
-        return
-      }
-    }
-    const raw = JSON.stringify(
-      {
-        enabled: sensitiveWordEnabled,
-        dictionary: sensitiveWordDictionary,
-      },
-      null,
-      2
-    )
-    await writeText('.novel/.settings/sensitive-words.json', raw)
-  }, [workspaceRoot, sensitiveWordEnabled, sensitiveWordDictionary])
-
   const extractTaskSummaryFromMessage = useCallback((text: string): string => {
     const normalized = text.trim()
     if (!normalized) return ''
@@ -868,7 +868,7 @@ function App() {
   }, [workspaceRoot])
 
   const openSidebarTab = useCallback(
-    (tab: 'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit') => {
+    (tab: 'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'risk') => {
       setActiveSidebarTab(tab)
       setSidebarCollapsed(false)
       if (isMobileLayout) {
@@ -879,7 +879,7 @@ function App() {
   )
 
   const openRightTab = useCallback(
-    (tab: 'chat' | 'graph' | 'writing-goal' | 'spec-kit') => {
+    (tab: 'chat' | 'graph' | 'writing-goal') => {
       setActiveRightTab(tab)
       if (tab === 'graph') {
         void loadGraph()
@@ -892,7 +892,7 @@ function App() {
   )
 
   const toggleRightTab = useCallback(
-    (tab: 'chat' | 'graph' | 'writing-goal' | 'spec-kit') => {
+    (tab: 'chat' | 'graph' | 'writing-goal') => {
       setActiveRightTab((prev) => {
         const next = prev === tab ? null : tab
         if (next === 'graph') {
@@ -1184,22 +1184,6 @@ function App() {
     }
   }, [workspaceRoot, gitCommitMsg, refreshGit])
 
-  // Sensitive Word Handlers
-  const onAddSensitiveWord = useCallback(() => {
-    const word = newSensitiveWord.trim()
-    if (!word) return
-    if (sensitiveWordDictionary.includes(word)) {
-      setNewSensitiveWord('')
-      return
-    }
-    setSensitiveWordDictionary((prev) => [...prev, word])
-    setNewSensitiveWord('')
-  }, [newSensitiveWord, sensitiveWordDictionary])
-
-  const onRemoveSensitiveWord = useCallback((word: string) => {
-    setSensitiveWordDictionary((prev) => prev.filter((w) => w !== word))
-  }, [])
-
   const nameCollator = useMemo(() => new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' }), [])
 
   const visibleTree = useMemo(() => {
@@ -1271,6 +1255,84 @@ function App() {
     }
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`
   }, [])
+
+  const openCreateProviderModal = useCallback(() => {
+    const preset = COMMON_PROVIDER_PRESETS[0]
+    if (preset) {
+      setEditingProvider({
+        id: newId(),
+        name: preset.name,
+        kind: preset.kind,
+        base_url: preset.base_url,
+        model_name: preset.model_name,
+      })
+      setEditingProviderPreset(preset.key)
+      setEditingCustomProviderApiFormat(preset.kind === 'Anthropic' ? 'claude' : 'openai')
+    } else {
+      setEditingProvider({
+        id: newId(),
+        name: '自定义提供商',
+        kind: 'OpenAICompatible',
+        base_url: 'https://api.openai.com/v1',
+        model_name: '',
+      })
+      setEditingProviderPreset(CUSTOM_PROVIDER_PRESET_KEY)
+      setEditingCustomProviderApiFormat('openai')
+    }
+    setIsNewProvider(true)
+    setShowModelModal(true)
+  }, [newId])
+
+  const openEditProviderModal = useCallback((provider: ModelProvider) => {
+    const presetKey = inferProviderPresetKey(provider)
+    setEditingProvider({ ...provider })
+    setEditingProviderPreset(presetKey)
+    setEditingCustomProviderApiFormat(provider.kind === 'Anthropic' ? 'claude' : 'openai')
+    setIsNewProvider(false)
+    setShowModelModal(true)
+  }, [])
+
+  const onSelectProviderPreset = useCallback(
+    (presetKey: string) => {
+      setEditingProviderPreset(presetKey)
+      if (presetKey === CUSTOM_PROVIDER_PRESET_KEY) {
+        const nextKind = kindFromCustomProviderApiFormat(editingCustomProviderApiFormat)
+        const nextBase = defaultBaseUrlByCustomProviderApiFormat(editingCustomProviderApiFormat)
+        setEditingProvider((prev) => ({
+          ...prev,
+          kind: nextKind,
+          name: prev.name?.trim() ? prev.name : '自定义提供商',
+          base_url: prev.base_url?.trim() ? prev.base_url : nextBase,
+        }))
+        return
+      }
+
+      const preset = COMMON_PROVIDER_PRESETS.find((item) => item.key === presetKey)
+      if (!preset) return
+      setEditingProvider((prev) => ({
+        ...prev,
+        name: preset.name,
+        kind: preset.kind,
+        base_url: preset.base_url,
+        model_name: preset.model_name,
+      }))
+      setEditingCustomProviderApiFormat(preset.kind === 'Anthropic' ? 'claude' : 'openai')
+    },
+    [editingCustomProviderApiFormat],
+  )
+
+  const onChangeCustomProviderApiFormat = useCallback(
+    (format: CustomProviderApiFormat) => {
+      setEditingCustomProviderApiFormat(format)
+      if (editingProviderPreset !== CUSTOM_PROVIDER_PRESET_KEY) return
+      setEditingProvider((prev) => ({
+        ...prev,
+        kind: kindFromCustomProviderApiFormat(format),
+        base_url: defaultBaseUrlByCustomProviderApiFormat(format),
+      }))
+    },
+    [editingProviderPreset],
+  )
 
   const getSelectionText = useCallback((): string => {
     const editor = editorRef.current
@@ -1903,9 +1965,6 @@ function App() {
           case 'condense':
             response = await aiAssistanceService.condenseText(selectedText, activeFile.path)
             break
-          case 'spec_kit_fix':
-            response = await aiAssistanceService.specKitFixText(selectedText, activeFile.path)
-            break
           default:
             return
         }
@@ -2147,10 +2206,9 @@ function App() {
     })()
     void refreshGit()
     void loadProjectSettings()
-    void loadSensitiveWordSettings()
     void refreshProjectPickerState()
     setAppView((prev) => (prev === 'workspace' ? prev : 'workspace'))
-  }, [loadProjectSettings, loadSensitiveWordSettings, refreshGit, refreshProjectPickerState, workspaceRoot])
+  }, [loadProjectSettings, refreshGit, refreshProjectPickerState, workspaceRoot])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -2178,16 +2236,6 @@ function App() {
     }, 1000)
     return () => window.clearTimeout(timer)
   }, [workspaceRoot])
-
-  // Auto-save sensitive word settings when they change
-  useEffect(() => {
-    if (!workspaceRoot) return
-    // Debounce the save to avoid too many writes
-    const timer = setTimeout(() => {
-      void saveSensitiveWordSettings()
-    }, 500)
-    return () => clearTimeout(timer)
-  }, [sensitiveWordEnabled, sensitiveWordDictionary, saveSensitiveWordSettings, workspaceRoot])
 
   // Subscribe to editor config changes and apply CSS variables
   useEffect(() => {
@@ -2554,11 +2602,11 @@ function App() {
             <span className="activity-bar-icon"><AppIcon name="plotlines" /></span>
           </div>
           <div
-            className={`activity-bar-item ${activeSidebarTab === 'specKit' ? 'active' : ''}`}
-            onClick={() => openSidebarTab('specKit')}
-            title="Spec-Kit"
+            className={`activity-bar-item ${activeSidebarTab === 'risk' ? 'active' : ''}`}
+            onClick={() => openSidebarTab('risk')}
+            title="风险检测"
           >
-            <span className="activity-bar-icon"><AppIcon name="specKit" /></span>
+            <span className="activity-bar-icon"><AppIcon name="risk" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'git' ? 'active' : ''}`}
@@ -2770,7 +2818,7 @@ function App() {
           />
         ) : null}
 
-        {activeSidebarTab === 'specKit' ? <SpecKitPanel /> : null}
+        {activeSidebarTab === 'risk' ? <RiskPanel activeFile={activeFile ? { path: activeFile.path, content: activeFile.content } : null} /> : null}
       </div>
       {!isMobileLayout && !sidebarCollapsed ? (
         <div
@@ -2871,15 +2919,6 @@ function App() {
                       icon: '-',
                       action: async (editor, selection) => {
                         await runInlineAIAssist('condense', selection, editor)
-                      },
-                      condition: (hasSelection) => hasSelection,
-                    },
-                    {
-                      id: 'ai-spec-kit-fix',
-                      label: 'Spec-Kit 修正',
-                      icon: 'S',
-                      action: async (editor, selection) => {
-                        await runInlineAIAssist('spec_kit_fix', selection, editor)
                       },
                       condition: (hasSelection) => hasSelection,
                     },
@@ -3214,10 +3253,6 @@ function App() {
                 }}
               />
             ) : null}
-
-            {activeRightTab === 'spec-kit' ? (
-              <SpecKitLintPanel text={activeFile?.content ?? ''} enabled={!!activeFile} />
-            ) : null}
           </aside>
         ) : null}
 
@@ -3242,13 +3277,6 @@ function App() {
             title="写作目标"
           >
             <span className="right-activity-icon"><AppIcon name="target" /></span>
-          </div>
-          <div
-            className={`right-activity-item ${activeRightTab === 'spec-kit' ? 'active' : ''}`}
-            onClick={() => toggleRightTab('spec-kit')}
-            title="Spec-Kit 检查"
-          >
-            <span className="right-activity-icon"><AppIcon name="specKit" /></span>
           </div>
         </div>
       </div>
@@ -3601,99 +3629,12 @@ function App() {
                     </button>
                   </div>
                 </div>
-
-                {/* Sensitive Word Configuration Section */}
-                <div className="settings-section">
-                  <h3 className="settings-section-title">敏感词检测</h3>
-
-                  {/* Enable/Disable Toggle */}
-                  <div className="form-group settings-inline-row settings-inline-row-spaced">
-                    <label className="settings-inline-label">启用敏感词检测</label>
-                    <input
-                      type="checkbox"
-                      checked={sensitiveWordEnabled}
-                      onChange={(e) => setSensitiveWordEnabled(e.target.checked)}
-                    />
-                  </div>
-
-                  {/* Custom Words Management */}
-                  <div className="settings-subsection">
-                    <label className="settings-subtitle">
-                      自定义敏感词词库
-                    </label>
-
-                    {/* Add Word Input */}
-                    <div className="settings-inline-actions">
-                      <input
-                        className="settings-inline-input"
-                        type="text"
-                        value={newSensitiveWord}
-                        onChange={(e) => setNewSensitiveWord(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            onAddSensitiveWord()
-                          }
-                        }}
-                        placeholder="输入敏感词..."
-                      />
-                      <button
-                        className="primary-button settings-small-btn"
-                        onClick={onAddSensitiveWord}
-                        disabled={!newSensitiveWord.trim()}
-                      >
-                        添加
-                      </button>
-                    </div>
-
-                    {/* Word List */}
-                    <div className="settings-word-list">
-                      {sensitiveWordDictionary.length === 0 ? (
-                        <div className="settings-empty-note">
-                          暂无自定义敏感词
-                        </div>
-                      ) : (
-                        <div className="settings-word-tags">
-                          {sensitiveWordDictionary.map((word) => (
-                            <div
-                              key={word}
-                              className="settings-word-tag"
-                            >
-                              <span>{word}</span>
-                              <button
-                                onClick={() => onRemoveSensitiveWord(word)}
-                                className="settings-word-tag-remove"
-                                title="删除"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="settings-hint">
-                      共 {sensitiveWordDictionary.length} 个敏感词
-                    </div>
-                  </div>
-                </div>
-
                 <div className="settings-section">
                   <div className="settings-section-head">
                     <h3 className="settings-section-title settings-section-title-inline">模型配置</h3>
                     <button
                       className="primary-button settings-tiny-btn"
-                      onClick={() => {
-                        setEditingProvider({
-                          id: newId(),
-                          kind: 'OpenAICompatible',
-                          base_url: 'https://api.openai.com/v1',
-                          model_name: 'gpt-4o-mini',
-                        })
-                        setIsNewProvider(true)
-                        setShowModelModal(true)
-                      }}
+                      onClick={openCreateProviderModal}
                     >
                       + 添加模型
                     </button>
@@ -3716,7 +3657,7 @@ function App() {
                         <div className="settings-provider-meta">
                           <div className="settings-provider-name">{p.name}</div>
                           <div className="settings-provider-detail">
-                            {p.kind} • {p.model_name}
+                            {providerKindLabel(p.kind)} • {p.model_name}
                           </div>
                           <div className={`settings-provider-key${apiKeyStatus[p.id] ? ' is-set' : ''}`}>
                             API Key：{apiKeyStatus[p.id] ? '已设置' : '未设置'}
@@ -3743,9 +3684,7 @@ function App() {
                             title="编辑"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setEditingProvider(p)
-                              setIsNewProvider(false)
-                              setShowModelModal(true)
+                              openEditProviderModal(p)
                             }}
                           >
                             ✎
@@ -3949,28 +3888,31 @@ function App() {
                   />
                 </div>
                 <div className="form-group">
-                  <label>类型</label>
+                  <label>提供商</label>
                   <select
-                    value={editingProvider.kind ?? 'OpenAICompatible'}
-                    onChange={(e) => {
-                      const k = e.target.value as ModelProvider['kind']
-                      let base = editingProvider.base_url
-                      if (k === 'OpenAI') base = 'https://api.openai.com/v1'
-                      else if (k === 'Anthropic') base = 'https://api.anthropic.com'
-                      else if (k === 'Minimax') base = 'https://api.minimaxi.com/v1'
-                      else if (k === 'ZAI') base = 'https://open.bigmodel.cn/api/paas/v4'
-                      else if (k === 'Custom') base = ''
-                      setEditingProvider((p) => ({ ...p, kind: k, base_url: base }))
-                    }}
+                    value={editingProviderPreset}
+                    onChange={(e) => onSelectProviderPreset(e.target.value)}
                   >
-                    <option value="OpenAICompatible">OpenAI 兼容 (通用)</option>
-                    <option value="OpenAI">OpenAI 官方</option>
-                    <option value="Anthropic">Anthropic (Claude)</option>
-                    <option value="Minimax">Minimax</option>
-                    <option value="ZAI">智谱 (ZAI)</option>
-                    <option value="Custom">自定义</option>
+                    {COMMON_PROVIDER_PRESETS.map((preset) => (
+                      <option key={preset.key} value={preset.key}>
+                        {preset.name}
+                      </option>
+                    ))}
+                    <option value={CUSTOM_PROVIDER_PRESET_KEY}>自定义提供商</option>
                   </select>
                 </div>
+                {editingProviderPreset === CUSTOM_PROVIDER_PRESET_KEY ? (
+                  <div className="form-group">
+                    <label>API 格式</label>
+                    <select
+                      value={editingCustomProviderApiFormat}
+                      onChange={(e) => onChangeCustomProviderApiFormat(e.target.value as CustomProviderApiFormat)}
+                    >
+                      <option value="openai">OpenAI API 格式</option>
+                      <option value="claude">Claude API 格式</option>
+                    </select>
+                  </div>
+                ) : null}
                 <div className="form-group">
                   <label>Base URL</label>
                   <input
@@ -3984,7 +3926,7 @@ function App() {
                   <input
                     value={editingProvider.model_name ?? ''}
                     onChange={(e) => setEditingProvider((p) => ({ ...p, model_name: e.target.value }))}
-                    placeholder={editingProvider.kind === 'Minimax' ? '例如：MiniMax-M2.1, MiniMax-M2.5' : editingProvider.kind === 'ZAI' ? '例如：glm-4' : '例如：gpt-4o, deepseek-chat'}
+                    placeholder="例如：gpt-4o, claude-sonnet-4-5, deepseek-chat"
                   />
                 </div>
                 <div className="form-group">
@@ -4003,13 +3945,21 @@ function App() {
             <div className="modal-footer">
               <button
                 className="primary-button"
-                disabled={!editingProvider.name || !editingProvider.model_name}
+                disabled={!editingProvider.name?.trim() || !editingProvider.base_url?.trim() || !editingProvider.model_name?.trim()}
                 onClick={() => {
                   if (!appSettings) return
                   void (async () => {
                     const prev = appSettings
+                    const normalizedProvider: ModelProvider = {
+                      id: editingProvider.id?.trim() || newId(),
+                      name: editingProvider.name?.trim() ?? '',
+                      kind: editingProvider.kind ?? 'OpenAICompatible',
+                      api_key: '',
+                      base_url: editingProvider.base_url?.trim() ?? '',
+                      model_name: editingProvider.model_name?.trim() ?? '',
+                    }
                     const rawKey = (editingProvider.api_key ?? '').trim()
-                    const pid = editingProvider.id ?? ''
+                    const pid = normalizedProvider.id
                     if (isNewProvider && pid && !rawKey) {
                       const ok = await showConfirm('未填写 API Key，仍要保存该模型配置吗？')
                       if (!ok) return
@@ -4026,10 +3976,10 @@ function App() {
                     }
                     let nextProviders = [...appSettings.providers]
                     if (isNewProvider) {
-                      nextProviders.push({ ...(editingProvider as ModelProvider), api_key: '' })
+                      nextProviders.push(normalizedProvider)
                     } else {
                       nextProviders = nextProviders.map((p) =>
-                        p.id === editingProvider.id ? ({ ...(editingProvider as ModelProvider), api_key: '' } as ModelProvider) : p,
+                        p.id === normalizedProvider.id ? normalizedProvider : p,
                       )
                     }
                     const next = { ...appSettings, providers: nextProviders }

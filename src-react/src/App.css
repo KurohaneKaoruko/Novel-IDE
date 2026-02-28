@@ -6,28 +6,33 @@
 /* CSS Variables for Theme */
 :root {
   /* Base Colors */
-  --bg-primary: #000000;
-  --bg-secondary: #0a0a0a;
-  --bg-tertiary: #111111;
-  --bg-hover: #1a1a1a;
-  --bg-active: #232323;
-  --surface-1: #050505;
-  --surface-2: #0a0a0a;
-  --surface-3: #101010;
-  --surface-glass: #060606;
+  --bg-primary: #111111;
+  --bg-secondary: #161616;
+  --bg-tertiary: #1c1c1c;
+  --bg-hover: #252525;
+  --bg-active: #2e2e2e;
+  --bg-selected: #2a2a2a;
+  --surface-1: #141414;
+  --surface-2: #1a1a1a;
+  --surface-3: #202020;
+  --surface-glass: #151515;
   
   /* Text Colors */
-  --text-primary: #f1f1f1;
-  --text-secondary: #b0b0b0;
-  --text-muted: #767676;
+  --text-primary: #f2f2f2;
+  --text-secondary: #c5c5c5;
+  --text-muted: #8d8d8d;
+  --text-tertiary: #737373;
   --text-accent: #ffffff;
   
   /* Accent Colors */
-  --accent-primary: #f2f2f2;
+  --accent-primary: #f4f4f4;
   --accent-hover: #ffffff;
-  --accent-active: #d8d8d8;
-  --accent-glow: #3a3a3a;
-  --accent-contrast: #000000;
+  --accent-active: #dfdfdf;
+  --accent-glow: #8c8c8c66;
+  --accent-contrast: #111111;
+  --accent-light: #262626;
+  --accent-secondary: #e3e3e3;
+  --accent-tertiary: #c9c9c9;
   --accent-color: var(--accent-primary);
   --accent-color-hover: var(--accent-hover);
   --accent-dark: var(--accent-active);
@@ -36,32 +41,54 @@
   
   /* Status Colors */
   --status-blue: #d0d0d0;
-  --status-green: #d0d0d0;
-  --status-yellow: #c4c4c4;
+  --status-green: #c8c8c8;
+  --status-yellow: #c2c2c2;
   --status-orange: #b8b8b8;
-  --status-red: #9a9a9a;
-  --status-purple: #c8c8c8;
+  --status-red: #aaaaaa;
+  --status-purple: #cecece;
   
   /* Git Colors */
-  --git-added: #d0d0d0;
-  --git-modified: #c2c2c2;
-  --git-deleted: #9f9f9f;
-  --git-new: #d0d0d0;
+  --git-added: #cfcfcf;
+  --git-modified: #bfbfbf;
+  --git-deleted: #a8a8a8;
+  --git-new: #d5d5d5;
   
   /* Borders */
-  --border-subtle: #262626;
+  --border-subtle: #333333;
+  --border-color: #333333;
+  --border-hover: #535353;
   --border-focus: #ffffff;
-  --border-strong: #3a3a3a;
+  --border-strong: #4a4a4a;
   
   /* Shadows */
   --shadow-sm: 0 2px 8px #00000044;
   --shadow-md: 0 6px 18px #00000055;
   --shadow-lg: 0 12px 28px #00000066;
   --shadow-modal: 0 14px 36px #00000077;
-  --ring: 0 0 0 1px var(--accent-glow);
+  --ring: 0 0 0 1px var(--accent-glow), 0 0 0 3px #ffffff22;
   --panel-backdrop: none;
   --content-max-width: 1200px;
-  --status-bar-bg: var(--bg-secondary);
+  --status-bar-bg: var(--surface-2);
+  --panel-bg: var(--surface-1);
+  --tab-header-bg: var(--surface-2);
+  --input-bg: var(--surface-2);
+  --hover-bg: var(--bg-hover);
+  --active-bg: var(--bg-active);
+
+  /* Semantic */
+  --error-bg: #332121;
+  --error-border: #7e5555;
+  --error-text: #f1c7c7;
+  --error-hover: #422a2a;
+  --success-bg: #203126;
+  --success-border: #4b6a54;
+  --success-text: #bed8c5;
+  --success-hover: #294231;
+  --warning-bg: #342c1c;
+  --warning-border: #7d6a42;
+  --warning-text: #ebd7a8;
+  --scrollbar-thumb: #4b4b4b;
+  --scrollbar-thumb-hover: #5a5a5a;
   
   /* Spacing */
   --space-xs: 4px;
@@ -98,29 +125,69 @@
 /* Light Theme */
 [data-theme="light"] {
   --bg-primary: #ffffff;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f5f5f5;
-  --bg-hover: #ececec;
-  --bg-active: #e1e1e1;
+  --bg-secondary: #f7f7f7;
+  --bg-tertiary: #efefef;
+  --bg-hover: #e7e7e7;
+  --bg-active: #dddddd;
+  --bg-selected: #e2e2e2;
   --surface-1: #ffffff;
-  --surface-2: #fafafa;
-  --surface-3: #f4f4f4;
+  --surface-2: #f9f9f9;
+  --surface-3: #f2f2f2;
   --surface-glass: #ffffff;
   
-  --text-primary: #111111;
-  --text-secondary: #454545;
-  --text-muted: #777777;
+  --text-primary: #141414;
+  --text-secondary: #3a3a3a;
+  --text-muted: #6f6f6f;
+  --text-tertiary: #8a8a8a;
   --text-accent: #000000;
   
   --accent-primary: #111111;
   --accent-hover: #000000;
-  --accent-active: #222222;
-  --accent-glow: #9a9a9a;
+  --accent-active: #202020;
+  --accent-glow: #9a9a9a66;
   --accent-contrast: #ffffff;
+  --accent-light: #efefef;
+  --accent-secondary: #2a2a2a;
+  --accent-tertiary: #4f4f4f;
+  --accent-color: var(--accent-primary);
+  --accent-color-hover: var(--accent-hover);
+  --accent-dark: var(--accent-active);
+  --primary-color: var(--accent-primary);
+  --primary-hover: var(--accent-hover);
   --status-blue: #2f2f2f;
+  --status-green: #3a3a3a;
+  --status-yellow: #555555;
+  --status-orange: #5e5e5e;
+  --status-red: #4a4a4a;
+  --status-purple: #505050;
+  --git-added: #2d2d2d;
+  --git-modified: #3d3d3d;
+  --git-deleted: #535353;
+  --git-new: #252525;
   --border-subtle: #d8d8d8;
+  --border-color: #d8d8d8;
+  --border-hover: #b8b8b8;
   --border-focus: #111111;
   --border-strong: #bdbdbd;
+  --status-bar-bg: var(--surface-2);
+  --panel-bg: var(--surface-1);
+  --tab-header-bg: var(--surface-2);
+  --input-bg: var(--surface-1);
+  --hover-bg: var(--bg-hover);
+  --active-bg: var(--bg-active);
+  --error-bg: #fff1f1;
+  --error-border: #d3a2a2;
+  --error-text: #8f2d2d;
+  --error-hover: #ffe6e6;
+  --success-bg: #eef8f0;
+  --success-border: #9fc1a6;
+  --success-text: #2f6b3f;
+  --success-hover: #e0f1e4;
+  --warning-bg: #fff7e8;
+  --warning-border: #d2bc8f;
+  --warning-text: #8a6420;
+  --scrollbar-thumb: #b7b7b7;
+  --scrollbar-thumb-hover: #9f9f9f;
   
   --shadow-sm: 0 4px 12px #0000001a;
   --shadow-md: 0 10px 22px #00000024;

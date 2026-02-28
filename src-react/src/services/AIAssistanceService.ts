@@ -1,12 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ChangeSet } from './ModificationService';
 import { diffService } from './DiffService';
-import type { SpecKitConfig } from './SpecKitService';
 
 /**
  * Type of AI assistance command
  */
-export type AICommandType = 'polish' | 'expand' | 'condense' | 'spec_kit_fix';
+export type AICommandType = 'polish' | 'expand' | 'condense';
 
 /**
  * Request for AI assistance
@@ -94,22 +93,6 @@ export class AIAssistanceService {
       originalText: selectedText,
       modifiedText,
       commandType: 'condense',
-    };
-  }
-
-  async specKitFixText(
-    selectedText: string,
-    _filePath: string,
-    context?: string
-  ): Promise<AIAssistanceResponse> {
-    const cfg = await this.loadSpecKitConfig();
-    const prompt = this.buildSpecKitFixPrompt(selectedText, cfg, context);
-    const modifiedText = await this.callAI(prompt);
-
-    return {
-      originalText: selectedText,
-      modifiedText,
-      commandType: 'spec_kit_fix',
     };
   }
 
@@ -219,51 +202,6 @@ export class AIAssistanceService {
     return prompt;
   }
 
-  private buildSpecKitFixPrompt(text: string, cfg: SpecKitConfig, context?: string): string {
-    const ratios = cfg.ratios;
-    const themeKeywords = cfg.theme.keywords.filter(Boolean);
-
-    let prompt = '你是一名严格遵循 Spec-Kit 规范的小说编辑。请在不改变人物关系与事实的前提下，按以下要求重写文本：\n';
-    prompt += `- 叙述视角: ${cfg.style.pov}\n`;
-    prompt += `- 语调: ${cfg.style.tone}\n`;
-    prompt += `- 对白/动作/描写比例目标: ${(ratios.dialogue * 100).toFixed(0)}% / ${(ratios.action * 100).toFixed(0)}% / ${(ratios.description * 100).toFixed(0)}%\n`;
-    if (cfg.theme.statement.trim()) prompt += `- 主题: ${cfg.theme.statement.trim()}\n`;
-    if (themeKeywords.length > 0) prompt += `- 主题关键词: ${themeKeywords.join('、')}\n`;
-    prompt += '- 强化场景的 Goal/Conflict/Stakes/Turn（可隐含表达，但要让读者感受到目标、阻力、代价与转折）。\n';
-    prompt += '- 保持语言自然，不要出现“根据要求/比例/关键词”等元话语。\n\n';
-
-    if (context) {
-      prompt += `上下文：\n${context}\n\n`;
-    }
-    prompt += `需要修正的文本：\n${text}\n\n`;
-    prompt += '请直接返回修正后的文本，不要添加任何解释或说明。';
-    return prompt;
-  }
-
-  private async loadSpecKitConfig(): Promise<SpecKitConfig> {
-    try {
-      const raw = await invoke<string>('read_text', { relativePath: '.novel/.spec-kit/config.json' });
-      return JSON.parse(raw) as SpecKitConfig;
-    } catch {
-      return {
-        spec_kit_version: '1.0.0',
-        story_type: 'coming_of_age',
-        target_words: 100000,
-        chapter_count: 30,
-        chapter_word_target: 3500,
-        style: { pov: 'third_limited', tense: 'past', tone: 'serious' },
-        rhythm: { act1_ratio: 0.25, act2_ratio: 0.5, act3_ratio: 0.25, tension_baseline: 20, tension_peak: 95 },
-        ratios: { dialogue: 0.35, action: 0.25, description: 0.4 },
-        theme: { statement: '', keywords: [] },
-      };
-    }
-  }
-
-  /**
-   * Call AI with a prompt and get the response
-   * @param prompt - The prompt to send to AI
-   * @returns The AI response text
-   */
   private async callAI(prompt: string): Promise<string> {
     try {
       // Call the Tauri backend to generate AI response

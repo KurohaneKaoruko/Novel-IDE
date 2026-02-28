@@ -22,22 +22,6 @@ export type { WritingGoal, DailyStats, WritingHistory } from './WritingGoalServi
 export { SensitiveWordService, sensitiveWordService } from './SensitiveWordService';
 export type { SensitiveWordMatch } from './SensitiveWordService';
 
-export { SpecKitService, specKitService } from './SpecKitService';
-export type {
-  StorySpec,
-  StorySpecAct,
-  StorySpecBeat,
-  StorySpecChapter,
-  StorySpecCharacter,
-  StorySpecScene,
-  StorySpecStory,
-  SpecKitArcMap,
-  SpecKitArcCharacterMap,
-  SpecKitConfig,
-  SpecKitValidationIssue,
-  SpecKitValidationReport,
-} from './SpecKitService';
-
 export { editorManager } from './EditorManager';
 export type { EditorInstance } from '../types/editor';
 

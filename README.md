@@ -114,10 +114,11 @@ npm run tauri:build
 
 ### 配置与密钥保存策略
 
-- 应用设置：`AppData/Novel-IDE/settings.json`
-- 智能体库：`AppData/Novel-IDE/agents.json`
-- 会话历史：`AppData/Novel-IDE/chat_history.json`
-- API Key：写入系统 Keyring（Windows 为 Credential Manager），不明文落盘到 `settings.json`
+- App settings: `<install-dir>/config/settings.json`
+- Agents: `<install-dir>/data/agents.json`
+- Chat history: `<install-dir>/data/chat_history.json`
+- Project picker state: `<install-dir>/state/last_workspace.json`, `<install-dir>/state/external_projects.json`
+- API keys: `<install-dir>/secrets/secrets.json` (encrypted with DPAPI on Windows)
 
 ## 开发脚本
 

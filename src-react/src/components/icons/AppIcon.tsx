@@ -8,7 +8,7 @@ export type AppIconName =
   | 'chapters'
   | 'characters'
   | 'plotlines'
-  | 'specKit'
+  | 'risk'
   | 'git'
   | 'projectSwitch'
   | 'settings'
@@ -80,11 +80,12 @@ function IconPath({ name }: { name: AppIconName }) {
           <circle cx="18" cy="7" r="1" />
         </>
       )
-    case 'specKit':
+    case 'risk':
       return (
         <>
-          <path d="M9 3h6v4h4v6h-4v4H9v-4H5V7h4V3z" />
-          <path d="M9 7h6v10H9z" />
+          <path d="M12 2l8 3v6c0 5.2-3.3 9.3-8 11-4.7-1.7-8-5.8-8-11V5l8-3z" />
+          <path d="M12 8v5" />
+          <circle cx="12" cy="16.5" r="1" />
         </>
       )
     case 'git':

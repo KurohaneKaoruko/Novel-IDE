@@ -1,0 +1,143 @@
+.risk-panel {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.risk-panel-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.risk-panel-run {
+  width: 100%;
+}
+
+.risk-panel-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.risk-panel-error {
+  margin-top: -2px;
+}
+
+.risk-panel-empty {
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.risk-panel-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.risk-panel-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.risk-summary-text {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.risk-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.risk-findings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.risk-finding-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.risk-finding-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.risk-category {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+}
+
+.risk-excerpt {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.risk-reason {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.risk-suggestion {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.risk-line {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.risk-level-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.risk-level-badge.level-high {
+  border-color: var(--error-border);
+  color: var(--error-text);
+  background: var(--error-bg);
+}
+
+.risk-level-badge.level-medium {
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  background: var(--warning-bg);
+}
+
+.risk-level-badge.level-low {
+  border-color: var(--success-border);
+  color: var(--success-text);
+  background: var(--success-bg);
+}

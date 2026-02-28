@@ -30,8 +30,8 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: #000000;
-  color: #f0f0f0;
+  background: var(--bg-primary, #111111);
+  color: var(--text-primary, #f0f0f0);
   overflow: hidden;
 }
 
@@ -61,7 +61,7 @@ html {
 }
 
 :focus-visible {
-  outline: 2px solid #8a8a8a;
+  outline: 2px solid var(--border-focus, #8a8a8a);
   outline-offset: 2px;
 }
 
@@ -112,8 +112,8 @@ html {
   justify-content: center;
   gap: 12px;
   padding: 24px;
-  background: #131313;
-  color: #e7e7e7;
+  background: var(--surface-1, #131313);
+  color: var(--text-primary, #e7e7e7);
   font-family: 'Space Grotesk', 'Segoe UI Variable', sans-serif;
 }
 
@@ -125,7 +125,7 @@ html {
 
 .app-error-message {
   margin: 0;
-  color: #b5b5b5;
+  color: var(--text-secondary, #b5b5b5);
 }
 
 .app-error-details {
@@ -133,23 +133,23 @@ html {
   max-width: 960px;
   overflow: auto;
   white-space: pre-wrap;
-  background: #1e1e1e;
-  border: 1px solid #363636;
+  background: var(--surface-2, #1e1e1e);
+  border: 1px solid var(--border-subtle, #363636);
   border-radius: 8px;
   padding: 12px;
-  color: #c9c9c9;
+  color: var(--text-secondary, #c9c9c9);
 }
 
 .app-error-button {
   width: fit-content;
-  border: 1px solid #f0f0f0;
-  background: #f0f0f0;
-  color: #111111;
+  border: 1px solid var(--accent-primary, #f0f0f0);
+  background: var(--accent-primary, #f0f0f0);
+  color: var(--accent-contrast, #111111);
   border-radius: 6px;
   padding: 8px 14px;
   cursor: pointer;
 }
 
 .app-error-button:hover {
-  background: #ffffff;
+  background: var(--accent-hover, #ffffff);
 }

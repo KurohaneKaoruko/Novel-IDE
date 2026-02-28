@@ -40,7 +40,7 @@ export type ProjectPickerState = {
 export type ModelProvider = {
   id: string
   name: string
-  kind: 'OpenAI' | 'Anthropic' | 'OpenAICompatible' | 'Minimax' | 'ZAI' | 'Custom'
+  kind: 'OpenAI' | 'Anthropic' | 'OpenAICompatible'
   api_key: string
   base_url: string
   model_name: string
@@ -217,6 +217,23 @@ export type ChatSessionSummary = {
   message_count: number
 }
 
+export type RiskFinding = {
+  level: 'low' | 'medium' | 'high' | string
+  category: string
+  excerpt: string
+  reason: string
+  suggestion: string
+  line_start: number | null
+  line_end: number | null
+}
+
+export type RiskScanResult = {
+  summary: string
+  overall_level: 'low' | 'medium' | 'high' | string
+  findings: RiskFinding[]
+  scanned_chars: number
+}
+
 export async function saveChatSession(session: ChatSession): Promise<void> {
   return invoke<void>('save_chat_session', { session })
 }
@@ -227,6 +244,10 @@ export async function listChatSessions(workspace_root?: string | null): Promise<
 
 export async function getChatSession(id: string): Promise<ChatSession> {
   return invoke<ChatSession>('get_chat_session', { id })
+}
+
+export async function riskScanContent(filePath: string | null, content: string): Promise<RiskScanResult> {
+  return invoke<RiskScanResult>('risk_scan_content', { filePath: filePath ?? null, content })
 }
 
 // ============ Skills ============

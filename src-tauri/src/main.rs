@@ -12,8 +12,6 @@ mod secrets;
 mod state;
 mod modification_types;
 mod ai_response_parser;
-mod spec_kit;
-mod spec_kit_export;
 mod skills;
 mod mcp;
 mod book_split;
@@ -56,12 +54,7 @@ fn main() {
       commands::git_log,
       commands::chat_generate_stream,
       commands::ai_assistance_generate,
-      commands::spec_kit_generate_outline,
-      commands::spec_kit_validate_story_spec,
-      commands::spec_kit_match_character_arcs,
-      commands::spec_kit_export_markdown,
-      commands::spec_kit_export_epub,
-      commands::spec_kit_export_pdf,
+      commands::risk_scan_content,
       commands::get_skills,
       commands::get_skill_categories,
       commands::get_skills_by_category,

@@ -7,8 +7,6 @@ use crate::branding;
 use crate::chat_history;
 use crate::secrets;
 use crate::skills::{Skill, SkillManager};
-use crate::spec_kit;
-use crate::spec_kit_export;
 use crate::state::AppState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -107,7 +105,7 @@ fn get_last_workspace_internal(app: &AppHandle) -> Result<Option<String>, String
 }
 
 fn last_workspace_path(app: &AppHandle) -> Result<PathBuf, String> {
-  app_data::data_file_path(app, "last_workspace.json")
+  app_data::state_file_path(app, "last_workspace.json")
 }
 
 fn save_last_workspace(app: &AppHandle, root: &Path) -> Result<(), String> {
@@ -120,7 +118,7 @@ fn save_last_workspace(app: &AppHandle, root: &Path) -> Result<(), String> {
 }
 
 fn external_projects_path(app: &AppHandle) -> Result<PathBuf, String> {
-  app_data::data_file_path(app, "external_projects.json")
+  app_data::state_file_path(app, "external_projects.json")
 }
 
 fn load_external_projects(app: &AppHandle) -> Result<Vec<ExternalProjectRecord>, String> {
@@ -357,8 +355,6 @@ pub fn init_novel(state: State<'_, AppState>) -> Result<(), String> {
     let raw = "# Continuity Index\n\n用于记录角色、时间线、伏笔回收等连续性信息。";
     fs::write(continuity_index, raw).map_err(|e| format!("write continuity index failed: {e}"))?;
   }
-
-  spec_kit::ensure_spec_kit_defaults(&novel_dir)?;
 
   Ok(())
 }
@@ -963,138 +959,6 @@ pub fn chat_generate_stream(
   Ok(())
 }
 
-async fn call_openai_compatible(
-  app: &AppHandle,
-  client: &reqwest::Client,
-  cfg: &app_settings::ModelProvider,
-  messages: &[ChatMessage],
-  system_prompt: &str,
-  temperature_override: Option<f32>,
-  max_tokens_override: Option<u32>,
-) -> Result<String, String> {
-  let api_key = match secrets::get_api_key(app, &cfg.id) {
-    Ok(Some(v)) => v,
-    Ok(None) => cfg.api_key.trim().to_string(),
-    Err(e) => return Err(format!("keyring read failed: {e}")),
-  };
-
-  if api_key.trim().is_empty() {
-    return Err(format!(
-      "api key not found for provider={}; 请在“设置 > 模型配置”中填写 API Key",
-      cfg.id
-    ));
-  }
-  let base = cfg.base_url.trim_end_matches('/');
-  let url = format!("{base}/chat/completions");
-  let model = cfg.model_name.clone();
-  let api_key = api_key.trim().to_string();
-
-  let mut out_messages: Vec<serde_json::Value> = Vec::new();
-  if !system_prompt.trim().is_empty() {
-    out_messages.push(serde_json::json!({"role": "system", "content": system_prompt}));
-  }
-  out_messages.extend(messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})));
-
-  let max_tokens = max_tokens_override.unwrap_or(32000);
-  let temperature = temperature_override.unwrap_or(0.7);
-
-  let send_once = |msgs: Vec<serde_json::Value>| {
-    let url = url.clone();
-    let model = model.clone();
-    let api_key = api_key.clone();
-    let client = client.clone();
-    async move {
-    let body = serde_json::json!({
-      "model": model,
-      "messages": msgs,
-      "temperature": temperature,
-      "max_tokens": max_tokens,
-      "stream": false
-    });
-    let resp = client
-      .post(url)
-      .bearer_auth(api_key.as_str())
-      .json(&body)
-      .send()
-      .await
-      .map_err(|e| format!("request failed: {e}"))?;
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
-    if !status.is_success() {
-      return Err(format!("http {status}: {value}"));
-    }
-    let text = value["choices"][0]["message"]["content"]
-      .as_str()
-      .map(|s| s.to_string())
-      .ok_or_else(|| "missing choices[0].message.content".to_string())?;
-    let finish = value["choices"][0]["finish_reason"].as_str().map(|s| s.to_string());
-    Ok::<(String, Option<String>), String>((text, finish))
-    }
-  };
-
-  let (mut text, finish) = send_once(out_messages.clone()).await?;
-  if finish.as_deref() == Some("length") {
-    let mut cont = out_messages;
-    cont.push(serde_json::json!({"role": "assistant", "content": text.clone()}));
-    cont.push(serde_json::json!({"role": "user", "content": "继续（从上文末尾继续，不要重复已输出内容）"}));
-    let (more, finish2) = send_once(cont).await?;
-    if !more.trim().is_empty() {
-      text.push_str(more.as_str());
-    }
-    if finish2.as_deref() == Some("length") {
-      text.push_str("\n\n[输出可能因长度限制被截断，可回复“继续”]");
-    }
-  }
-  Ok(text)
-}
-
-async fn call_anthropic(
-  app: &AppHandle,
-  client: &reqwest::Client,
-  cfg: &app_settings::ModelProvider,
-  messages: &[ChatMessage],
-  system_prompt: &str,
-  max_tokens_override: Option<u32>,
-) -> Result<String, String> {
-  let api_key = match secrets::get_api_key(app, &cfg.id) {
-    Ok(Some(v)) => v,
-    Ok(None) => cfg.api_key.trim().to_string(),
-    Err(e) => return Err(format!("keyring read failed: {e}")),
-  };
-  if api_key.trim().is_empty() {
-    return Err(format!(
-      "api key not found for provider={}; 请在“设置 > 模型配置”中填写 API Key",
-      cfg.id
-    ));
-  }
-  let url = "https://api.anthropic.com/v1/messages";
-  let body = serde_json::json!({
-    "model": cfg.model_name,
-    "max_tokens": max_tokens_override.unwrap_or(32000),
-    "system": system_prompt,
-    "messages": messages.iter().map(|m| serde_json::json!({"role": m.role, "content": m.content})).collect::<Vec<_>>()
-  });
-
-  let resp = client
-    .post(url)
-    .header("x-api-key", api_key.trim())
-    .header("anthropic-version", "2023-06-01")
-    .json(&body)
-    .send()
-    .await
-    .map_err(|e| format!("request failed: {e}"))?;
-
-  let status = resp.status();
-  let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
-  if !status.is_success() {
-    return Err(format!("http {status}: {value}"));
-  }
-  value["content"][0]["text"]
-    .as_str()
-    .map(|s| s.to_string())
-    .ok_or_else(|| "missing content[0].text".to_string())
-}
-
 async fn call_openai_unbounded(
   app: &AppHandle,
   client: &reqwest::Client,
@@ -1330,156 +1194,236 @@ pub async fn ai_assistance_generate(
   }
 }
 
-#[tauri::command]
-pub fn spec_kit_generate_outline(state: State<'_, AppState>) -> Result<spec_kit::StorySpec, String> {
-  let root = get_workspace_root(&state)?;
-  let novel_dir = root.join(".novel");
-  spec_kit::ensure_spec_kit_defaults(&novel_dir)?;
-
-  let config = spec_kit::load_config(&novel_dir)?;
-  let template = spec_kit::load_story_template(&novel_dir, &config.story_type)?;
-  let spec = spec_kit::generate_story_spec_from_config(&config, &template);
-
-  let spec_path = novel_dir.join(".spec-kit").join("story_spec.json");
-  let raw = serde_json::to_string_pretty(&spec).map_err(|e| format!("serialize story spec failed: {e}"))?;
-  fs::write(spec_path, raw).map_err(|e| format!("write story spec failed: {e}"))?;
-
-  let _ = append_spec_kit_log(
-    &root,
-    serde_json::json!({
-      "ts": Utc::now().to_rfc3339(),
-      "event": "generate_outline",
-      "story_type": config.story_type,
-      "chapter_count": spec.chapters.len()
-    }),
-  );
-
-  Ok(spec)
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct RiskFinding {
+  pub level: String,
+  pub category: String,
+  pub excerpt: String,
+  pub reason: String,
+  pub suggestion: String,
+  pub line_start: Option<usize>,
+  pub line_end: Option<usize>,
 }
 
-#[tauri::command]
-pub fn spec_kit_validate_story_spec(state: State<'_, AppState>) -> Result<spec_kit::ValidationReport, String> {
-  let root = get_workspace_root(&state)?;
-  let novel_dir = root.join(".novel");
-  let config = spec_kit::load_config(&novel_dir).ok();
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RiskScanResult {
+  pub summary: String,
+  pub overall_level: String,
+  pub findings: Vec<RiskFinding>,
+  pub scanned_chars: usize,
+}
 
-  let spec_path = novel_dir.join(".spec-kit").join("story_spec.json");
-  let raw = fs::read_to_string(&spec_path).map_err(|e| format!("read story spec failed: {e}"))?;
-  let spec: spec_kit::StorySpec = serde_json::from_str(&raw).map_err(|e| format!("parse story spec failed: {e}"))?;
+#[derive(Deserialize, Default)]
+struct RiskFindingRaw {
+  #[serde(default)]
+  level: String,
+  #[serde(default)]
+  category: String,
+  #[serde(default)]
+  excerpt: String,
+  #[serde(default)]
+  reason: String,
+  #[serde(default)]
+  suggestion: String,
+  #[serde(default)]
+  line_start: Option<usize>,
+  #[serde(default)]
+  line_end: Option<usize>,
+}
 
-  let mut report = spec_kit::validate_story_spec(&spec, config.as_ref());
+#[derive(Deserialize, Default)]
+struct RiskScanResultRaw {
+  #[serde(default)]
+  summary: String,
+  #[serde(default)]
+  overall_level: String,
+  #[serde(default)]
+  findings: Vec<RiskFindingRaw>,
+}
 
-  let outline_path = novel_dir.join(".cache").join("outline.json");
-  if outline_path.exists() {
-    if let Ok(outline_raw) = fs::read_to_string(&outline_path) {
-      if let Err(msg) = validate_outline("", &outline_raw) {
-        report.issues.push(spec_kit::ValidationIssue {
-          severity: "error".to_string(),
-          code: "timeline.conflict".to_string(),
-          message: msg,
-          path: ".novel/.cache/outline.json".to_string(),
-        });
+fn normalize_risk_level(level: &str) -> String {
+  match level.trim().to_ascii_lowercase().as_str() {
+    "high" | "critical" | "严重" | "高" => "high".to_string(),
+    "medium" | "moderate" | "中" | "中等" => "medium".to_string(),
+    _ => "low".to_string(),
+  }
+}
+
+fn risk_level_rank(level: &str) -> u8 {
+  match level {
+    "high" => 3,
+    "medium" => 2,
+    _ => 1,
+  }
+}
+
+fn clamp_text(text: &str, max_chars: usize) -> String {
+  if max_chars == 0 {
+    return String::new();
+  }
+  let mut out = String::new();
+  for (idx, ch) in text.chars().enumerate() {
+    if idx >= max_chars {
+      out.push_str("...");
+      break;
+    }
+    out.push(ch);
+  }
+  out
+}
+
+fn extract_json_block(raw: &str) -> Option<&str> {
+  let start = raw.find('{')?;
+  let end = raw.rfind('}')?;
+  if end <= start {
+    return None;
+  }
+  Some(&raw[start..=end])
+}
+
+fn trim_for_risk_scan(content: &str, max_chars: usize) -> String {
+  let total = content.chars().count();
+  if total <= max_chars {
+    return content.to_string();
+  }
+  let half = max_chars / 2;
+  let head = content.chars().take(half).collect::<String>();
+  let tail = content
+    .chars()
+    .rev()
+    .take(max_chars.saturating_sub(half))
+    .collect::<Vec<_>>()
+    .into_iter()
+    .rev()
+    .collect::<String>();
+  format!(
+    "{head}\n\n...[中间内容已省略，约 {} 字符]...\n\n{tail}",
+    total.saturating_sub(max_chars)
+  )
+}
+
+fn collect_related_chapter_snippets(root: &Path, current_file: Option<&str>) -> Vec<(String, String)> {
+  let stories_dir = root.join("stories");
+  if !stories_dir.is_dir() {
+    return Vec::new();
+  }
+
+  let current_norm = current_file.map(|p| p.replace('\\', "/"));
+  let mut files: Vec<(String, PathBuf)> = Vec::new();
+
+  if let Ok(entries) = fs::read_dir(&stories_dir) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if !path.is_file() {
+        continue;
       }
+      let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+      if ext != "md" && ext != "txt" {
+        continue;
+      }
+      let rel = path
+        .strip_prefix(root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .to_string()
+        .replace('\\', "/");
+      if current_norm.as_deref() == Some(rel.as_str()) {
+        continue;
+      }
+      files.push((rel, path));
     }
   }
 
-  let err_count = report.issues.iter().filter(|i| i.severity == "error").count();
-  let warn_count = report.issues.iter().filter(|i| i.severity == "warning").count();
-  let _ = append_spec_kit_log(
-    &root,
-    serde_json::json!({
-      "ts": Utc::now().to_rfc3339(),
-      "event": "validate_story_spec",
-      "errors": err_count,
-      "warnings": warn_count
-    }),
-  );
-
-  Ok(report)
+  files.sort_by(|a, b| a.0.cmp(&b.0));
+  files
+    .into_iter()
+    .take(3)
+    .filter_map(|(rel, path)| {
+      fs::read_to_string(path)
+        .ok()
+        .map(|raw| (rel, trim_for_risk_scan(raw.trim(), 1200)))
+    })
+    .collect()
 }
 
-#[tauri::command]
-pub fn spec_kit_match_character_arcs(state: State<'_, AppState>) -> Result<spec_kit::ArcMap, String> {
-  let root = get_workspace_root(&state)?;
-  let novel_dir = root.join(".novel");
+fn parse_risk_scan_result(raw: &str, scanned_chars: usize) -> RiskScanResult {
+  let parsed = extract_json_block(raw)
+    .and_then(|json| serde_json::from_str::<RiskScanResultRaw>(json).ok())
+    .or_else(|| serde_json::from_str::<RiskScanResultRaw>(raw).ok());
 
-  let spec_path = novel_dir.join(".spec-kit").join("story_spec.json");
-  let raw = fs::read_to_string(&spec_path).map_err(|e| format!("read story spec failed: {e}"))?;
-  let mut spec: spec_kit::StorySpec = serde_json::from_str(&raw).map_err(|e| format!("parse story spec failed: {e}"))?;
+  if let Some(parsed) = parsed {
+    let findings = parsed
+      .findings
+      .into_iter()
+      .map(|it| RiskFinding {
+        level: normalize_risk_level(it.level.as_str()),
+        category: {
+          let v = it.category.trim();
+          if v.is_empty() {
+            "other".to_string()
+          } else {
+            clamp_text(v, 48)
+          }
+        },
+        excerpt: clamp_text(it.excerpt.trim(), 200),
+        reason: clamp_text(it.reason.trim(), 240),
+        suggestion: clamp_text(it.suggestion.trim(), 240),
+        line_start: it.line_start.filter(|v| *v > 0),
+        line_end: it.line_end.filter(|v| *v > 0),
+      })
+      .filter(|it| !(it.excerpt.is_empty() && it.reason.is_empty()))
+      .take(24)
+      .collect::<Vec<_>>();
 
-  let arc_map = spec_kit::generate_arc_map_and_fill_defaults(&mut spec);
+    let overall_level = {
+      let explicit = normalize_risk_level(parsed.overall_level.as_str());
+      if parsed.overall_level.trim().is_empty() {
+        findings
+          .iter()
+          .map(|it| it.level.as_str())
+          .max_by_key(|lvl| risk_level_rank(lvl))
+          .unwrap_or("low")
+          .to_string()
+      } else {
+        explicit
+      }
+    };
 
-  let spec_raw = serde_json::to_string_pretty(&spec).map_err(|e| format!("serialize story spec failed: {e}"))?;
-  fs::write(&spec_path, spec_raw).map_err(|e| format!("write story spec failed: {e}"))?;
+    let summary = {
+      let value = parsed.summary.trim();
+      if !value.is_empty() {
+        clamp_text(value, 280)
+      } else if findings.is_empty() {
+        "未发现明显高风险片段，建议人工复核。".to_string()
+      } else {
+        format!("检测到 {} 条潜在风险，请优先处理高风险项。", findings.len())
+      }
+    };
 
-  let arc_map_path = novel_dir.join(".spec-kit").join("arc_map.json");
-  let arc_raw = serde_json::to_string_pretty(&arc_map).map_err(|e| format!("serialize arc map failed: {e}"))?;
-  fs::write(arc_map_path, arc_raw).map_err(|e| format!("write arc map failed: {e}"))?;
+    return RiskScanResult {
+      summary,
+      overall_level,
+      findings,
+      scanned_chars,
+    };
+  }
 
-  let _ = append_spec_kit_log(
-    &root,
-    serde_json::json!({
-      "ts": Utc::now().to_rfc3339(),
-      "event": "match_character_arcs",
-      "characters": spec.characters.len()
-    }),
-  );
-
-  Ok(arc_map)
+  RiskScanResult {
+    summary: clamp_text(raw.trim(), 280),
+    overall_level: "medium".to_string(),
+    findings: Vec::new(),
+    scanned_chars,
+  }
 }
 
-#[tauri::command]
-pub fn spec_kit_export_markdown(state: State<'_, AppState>) -> Result<String, String> {
-  let root = get_workspace_root(&state)?;
-  let (path, bytes) = spec_kit_export::export_markdown(&root)?;
-  append_spec_kit_log(
-    &root,
-    serde_json::json!({
-      "ts": Utc::now().to_rfc3339(),
-      "event": "export_markdown",
-      "path": path,
-      "bytes": bytes
-    }),
-  )?;
-  Ok(path)
-}
-
-#[tauri::command]
-pub fn spec_kit_export_epub(state: State<'_, AppState>) -> Result<String, String> {
-  let root = get_workspace_root(&state)?;
-  let (path, bytes) = spec_kit_export::export_epub(&root)?;
-  append_spec_kit_log(
-    &root,
-    serde_json::json!({
-      "ts": Utc::now().to_rfc3339(),
-      "event": "export_epub",
-      "path": path,
-      "bytes": bytes
-    }),
-  )?;
-  Ok(path)
-}
-
-#[tauri::command]
-pub fn spec_kit_export_pdf(state: State<'_, AppState>) -> Result<String, String> {
-  let root = get_workspace_root(&state)?;
-  let (path, bytes) = spec_kit_export::export_pdf(&root)?;
-  append_spec_kit_log(
-    &root,
-    serde_json::json!({
-      "ts": Utc::now().to_rfc3339(),
-      "event": "export_pdf",
-      "path": path,
-      "bytes": bytes
-    }),
-  )?;
-  Ok(path)
-}
-
-fn append_spec_kit_log(root: &Path, entry: serde_json::Value) -> Result<(), String> {
+fn append_risk_scan_log(root: &Path, entry: serde_json::Value) -> Result<(), String> {
   let log_dir = root.join(".novel").join(".logs");
   fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir failed: {e}"))?;
-  let path = log_dir.join("spec_kit.jsonl");
+  let path = log_dir.join("risk_scan.jsonl");
   let mut line = entry.to_string();
   line.push('\n');
   fs::OpenOptions::new()
@@ -1487,7 +1431,99 @@ fn append_spec_kit_log(root: &Path, entry: serde_json::Value) -> Result<(), Stri
     .append(true)
     .open(path)
     .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
-    .map_err(|e| format!("append log failed: {e}"))
+    .map_err(|e| format!("append risk log failed: {e}"))
+}
+
+#[tauri::command]
+pub async fn risk_scan_content(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  file_path: Option<String>,
+  content: String,
+) -> Result<RiskScanResult, String> {
+  let root = get_workspace_root(&state)?;
+  let trimmed = content.trim();
+  if trimmed.is_empty() {
+    return Err("content is empty".to_string());
+  }
+
+  let settings = app_settings::load(&app)?;
+  let current_provider = settings
+    .providers
+    .iter()
+    .find(|p| p.id == settings.active_provider_id)
+    .cloned()
+    .ok_or_else(|| "provider not found".to_string())?;
+  let client = reqwest::Client::new();
+  let scanned_chars = content.chars().count();
+  let payload_text = trim_for_risk_scan(trimmed, 30_000);
+  let snippets = collect_related_chapter_snippets(&root, file_path.as_deref());
+
+  let mut prompt = String::new();
+  prompt.push_str("请对以下小说内容做合规风险检测，重点识别违法违规、过度暴力血腥、未成年人不当内容、仇恨歧视、色情露骨、现实敏感风险等问题。\n");
+  prompt.push_str("请返回 JSON，字段必须完整：\n");
+  prompt.push_str("{\"summary\":\"...\",\"overall_level\":\"low|medium|high\",\"findings\":[{\"level\":\"low|medium|high\",\"category\":\"...\",\"excerpt\":\"...\",\"reason\":\"...\",\"suggestion\":\"...\",\"line_start\":1,\"line_end\":1}]}\n");
+  prompt.push_str("要求：\n");
+  prompt.push_str("- 仅返回 JSON，不要 Markdown。\n");
+  prompt.push_str("- 若没有明显问题，findings 返回空数组，overall_level=low。\n");
+  prompt.push_str("- excerpt 必须引用原文中的短片段，避免过长。\n");
+  prompt.push_str("- suggestion 给出可执行改写建议。\n\n");
+  if let Some(path) = file_path.as_ref().filter(|p| !p.trim().is_empty()) {
+    prompt.push_str(format!("当前文件: {}\n\n", path.trim()).as_str());
+  }
+  if !snippets.is_empty() {
+    prompt.push_str("相关章节上下文（用于避免误判，非必须逐条点评）：\n");
+    for (idx, (path, text)) in snippets.iter().enumerate() {
+      prompt.push_str(format!("【上下文{}】{}\n{}\n\n", idx + 1, path, text).as_str());
+    }
+  }
+  prompt.push_str("待检测正文：\n");
+  prompt.push_str(payload_text.as_str());
+
+  let system_prompt = "你是严格的中文小说合规审校助手，输出务必是可解析 JSON，不得包含解释文字。";
+  let messages = vec![ChatMessage {
+    role: "user".to_string(),
+    content: prompt,
+  }];
+
+  let raw = match current_provider.kind {
+    app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
+      call_openai_unbounded(
+        &app,
+        &client,
+        &current_provider,
+        &messages,
+        system_prompt,
+        Some(0.2),
+      )
+      .await?
+    }
+    app_settings::ProviderKind::Anthropic => {
+      call_anthropic_unbounded(
+        &app,
+        &client,
+        &current_provider,
+        &messages,
+        system_prompt,
+      )
+      .await?
+    }
+  };
+
+  let result = parse_risk_scan_result(raw.as_str(), scanned_chars);
+  let _ = append_risk_scan_log(
+    &root,
+    serde_json::json!({
+      "ts": Utc::now().to_rfc3339(),
+      "provider": current_provider.id,
+      "model": current_provider.model_name,
+      "file_path": file_path,
+      "scanned_chars": result.scanned_chars,
+      "overall_level": result.overall_level,
+      "findings": result.findings.len(),
+    }),
+  );
+  Ok(result)
 }
 
 fn get_workspace_root(state: &State<'_, AppState>) -> Result<PathBuf, String> {

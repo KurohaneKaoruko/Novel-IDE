@@ -12,7 +12,7 @@ struct SecretsFile {
 }
 
 fn secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
-  app_data::data_file_path(app, "secrets.json")
+  app_data::secrets_file_path(app, "secrets.json")
 }
 
 fn read_secrets_file(app: &AppHandle) -> Result<SecretsFile, String> {

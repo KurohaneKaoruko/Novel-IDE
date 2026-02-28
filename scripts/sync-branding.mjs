@@ -78,8 +78,11 @@ function generateRustBrandingSource(branding) {
   const gitEmail = branding?.gitSignature?.email ?? "";
 
   return (
+    `#[allow(dead_code)]\n` +
     `pub const DISPLAY_NAME: &str = "${escapeRustString(displayName)}";\n` +
+    `#[allow(dead_code)]\n` +
     `pub const DATA_DIR_NAME: &str = "${escapeRustString(dataDirName)}";\n` +
+    `#[allow(dead_code)]\n` +
     `pub const LEGACY_DATA_DIR_NAME: &str = "${escapeRustString(legacyDataDirName)}";\n` +
     `pub const GIT_SIGNATURE_NAME: &str = "${escapeRustString(gitName)}";\n` +
     `pub const GIT_SIGNATURE_EMAIL: &str = "${escapeRustString(gitEmail)}";\n`
