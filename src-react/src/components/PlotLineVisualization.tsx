@@ -51,12 +51,12 @@ export const PlotLineVisualization: React.FC<PlotLineVisualizationProps> = ({
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
-        return '#4caf50'; // Green
+        return '#6e6e6e'; // Green
       case 'paused':
-        return '#ff9800'; // Orange
+        return '#888888'; // Orange
       case 'ongoing':
       default:
-        return '#2196f3'; // Blue
+        return '#d0d0d0'; // Neutral
     }
   };
 

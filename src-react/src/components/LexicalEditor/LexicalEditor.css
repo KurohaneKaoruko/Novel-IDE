@@ -86,7 +86,7 @@
 
 /* Selection styles */
 .lexical-content-editable ::selection {
-  background-color: #b4d5fe;
+  background-color: #d8d8d8;
 }
 
 /* Dark mode support */
@@ -101,6 +101,6 @@
   }
   
   .lexical-content-editable ::selection {
-    background-color: #264f78;
+    background-color: #4f4f4f;
   }
 }

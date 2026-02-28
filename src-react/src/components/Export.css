@@ -9,7 +9,6 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  backdrop-filter: blur(4px);
 }
 
 .export-panel {
@@ -104,8 +103,8 @@
 }
 
 .export-format.active {
-  border-color: var(--accent-primary, #2196f3);
-  background: var(--accent-light, #e3f2fd);
+  border-color: var(--accent-primary, #d0d0d0);
+  background: var(--accent-light, #f1f1f1);
 }
 
 .export-format-icon {
@@ -158,7 +157,7 @@
 }
 
 .export-field input:focus {
-  border-color: var(--accent-primary, #2196f3);
+  border-color: var(--accent-primary, #d0d0d0);
   background: var(--bg-primary, #fff);
 }
 
@@ -207,12 +206,12 @@
 }
 
 .export-btn.primary {
-  background: var(--accent-primary, #2196f3);
+  background: var(--accent-primary, #d0d0d0);
   color: white;
 }
 
 .export-btn.primary:hover {
-  background: var(--accent-dark, #1976d2);
+  background: var(--accent-dark, #b5b5b5);
 }
 
 /* Dark mode */
@@ -237,12 +236,12 @@
 }
 
 [data-theme="dark"] .export-format:hover {
-  background: #252526;
+  background: #252525;
 }
 
 [data-theme="dark"] .export-format.active {
-  border-color: #0078d4;
-  background: #1a2a3a;
+  border-color: #d0d0d0;
+  background: #2a2a2a;
 }
 
 [data-theme="dark"] .export-format-label {
@@ -250,13 +249,13 @@
 }
 
 [data-theme="dark"] .export-field input {
-  background: #252526;
+  background: #252525;
   border-color: #333;
   color: #e0e0e0;
 }
 
 [data-theme="dark"] .export-footer {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 

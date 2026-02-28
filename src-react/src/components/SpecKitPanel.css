@@ -4,11 +4,21 @@
   gap: 10px;
 }
 
+.spec-kit-spacer {
+  flex: 1;
+}
+
 .spec-kit-toolbar {
   display: flex;
   gap: 8px;
   padding: 10px;
   border-bottom: 1px solid #333;
+}
+
+.spec-kit-export-path {
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--text-muted, #888888);
 }
 
 .spec-kit-block {
@@ -68,7 +78,7 @@
 }
 
 .spec-kit-beat-id {
-  color: #9cdcfe;
+  color: #d0d0d0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
@@ -91,11 +101,11 @@
 }
 
 .spec-kit-issue.error {
-  border-color: #6b2f2f;
+  border-color: #434343;
 }
 
 .spec-kit-issue.warning {
-  border-color: #6b5a2f;
+  border-color: #515151;
 }
 
 .spec-kit-issue-head {
@@ -114,7 +124,7 @@
 }
 
 .spec-kit-issue-code {
-  color: #9cdcfe;
+  color: #d0d0d0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
@@ -163,10 +173,20 @@
 }
 
 .spec-kit-arc-beat {
-  color: #9cdcfe;
+  color: #d0d0d0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .spec-kit-arc-step {
   color: #c8c8c8;
+}
+
+.spec-kit-empty-note {
+  padding: 10px;
+  color: var(--text-muted, #888888);
+  font-size: 12px;
+}
+
+.spec-kit-empty-note-sm {
+  padding: 8px;
 }

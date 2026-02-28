@@ -1,6 +1,9 @@
 import { memo } from 'react'
 
 export type AppIconName =
+  | 'file'
+  | 'folder'
+  | 'folderOpen'
   | 'files'
   | 'chapters'
   | 'characters'
@@ -26,6 +29,22 @@ type AppIconProps = {
 
 function IconPath({ name }: { name: AppIconName }) {
   switch (name) {
+    case 'file':
+      return (
+        <>
+          <path d="M7 3h7l5 5v13H7z" />
+          <path d="M14 3v5h5" />
+        </>
+      )
+    case 'folder':
+      return <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+    case 'folderOpen':
+      return (
+        <>
+          <path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H3V8z" />
+          <path d="M3 11h18l-2 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-2v-6z" />
+        </>
+      )
     case 'files':
       return (
         <>

@@ -286,14 +286,14 @@ export const WritingGoalPanel: React.FC<WritingGoalPanelProps> = ({
                 <Line
                   type="monotone"
                   dataKey="实际字数"
-                  stroke="#4CAF50"
+                  stroke="#6e6e6e"
                   strokeWidth={2}
                   dot={{ r: 3 }}
                 />
                 <Line
                   type="monotone"
                   dataKey="目标字数"
-                  stroke="#FF9800"
+                  stroke="#888888"
                   strokeWidth={2}
                   strokeDasharray="5 5"
                   dot={{ r: 3 }}
@@ -312,7 +312,7 @@ export const WritingGoalPanel: React.FC<WritingGoalPanelProps> = ({
                 <Tooltip
                   formatter={(value: number | undefined) => (value === 1 ? '已完成' : '未完成')}
                 />
-                <Bar dataKey="完成" fill="#4CAF50" />
+                <Bar dataKey="完成" fill="#6e6e6e" />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -21,15 +21,15 @@
 .chapter-manager-error button {
   margin-top: 1rem;
   padding: 0.5rem 1rem;
-  background-color: var(--accent-color, #007acc);
-  color: white;
+  background-color: var(--accent-color, #d0d0d0);
+  color: var(--accent-contrast, #111111);
   border: none;
   border-radius: 4px;
   cursor: pointer;
 }
 
 .chapter-manager-error button:hover {
-  background-color: var(--accent-color-hover, #005a9e);
+  background-color: var(--accent-color-hover, #b5b5b5);
 }
 
 .chapter-manager-error-banner {
@@ -37,9 +37,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1rem;
-  background-color: #d32f2f;
-  color: white;
-  border-bottom: 1px solid #b71c1c;
+  background-color: #666666;
+  color: var(--accent-contrast, #111111);
+  border-bottom: 1px solid #505050;
 }
 
 .chapter-manager-error-banner button {
@@ -59,7 +59,31 @@
 .chapter-manager-header {
   padding: 1rem;
   border-bottom: 1px solid var(--border-color, #3c3c3c);
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
+}
+
+.chapter-manager-header-compact {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle, #3c3c3c);
+}
+
+.chapter-manager-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.chapter-manager-header-title {
+  color: var(--text-secondary, #b0b0b0);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chapter-manager-header-meta {
+  color: var(--text-muted, #858585);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .chapter-manager-header h2 {
@@ -96,6 +120,10 @@
   padding: 0.5rem;
 }
 
+.chapter-list-compact {
+  padding: 8px 0;
+}
+
 .chapter-list-empty {
   display: flex;
   flex-direction: column;
@@ -104,6 +132,18 @@
   height: 100%;
   color: var(--text-secondary, #858585);
   text-align: center;
+}
+
+.chapter-list-empty-compact {
+  padding: 20px;
+  display: block;
+  height: auto;
+}
+
+.chapter-list-empty-text {
+  margin: 0;
+  color: var(--text-muted, #888888);
+  font-size: 13px;
 }
 
 .chapter-list-empty .hint {
@@ -117,15 +157,46 @@
   align-items: stretch;
   margin-bottom: 0.5rem;
   padding: 0.75rem;
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
   border: 1px solid var(--border-color, #3c3c3c);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
+.chapter-item-compact {
+  margin-bottom: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle, #3c3c3c);
+  align-items: center;
+}
+
+.chapter-item-compact:hover {
+  background: var(--bg-hover, #2c2c2c);
+  border-color: var(--border-subtle, #3c3c3c);
+}
+
+.chapter-item-title-compact {
+  flex: 1;
+  color: var(--text-primary, #d4d4d4);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-item-meta-compact {
+  margin-left: 12px;
+  color: var(--text-muted, #888888);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .chapter-item:hover {
-  background-color: var(--bg-hover, #2a2d2e);
+  background-color: var(--bg-hover, #2c2c2c);
   border-color: var(--border-hover, #4c4c4c);
 }
 
@@ -135,9 +206,9 @@
 }
 
 .chapter-item-drag-over {
-  border-color: var(--accent-color, #007acc);
+  border-color: var(--accent-color, #d0d0d0);
   border-width: 2px;
-  background-color: var(--bg-hover, #2a2d2e);
+  background-color: var(--bg-hover, #2c2c2c);
 }
 
 .chapter-item-drag-handle {
@@ -195,13 +266,13 @@
 }
 
 .chapter-status-revising {
-  border-color: #f0ad4e;
-  color: #f0ad4e;
+  border-color: #a4a4a4;
+  color: #a4a4a4;
 }
 
 .chapter-status-completed {
-  border-color: #5cb85c;
-  color: #5cb85c;
+  border-color: #7b7b7b;
+  color: #7b7b7b;
 }
 
 .chapter-item-meta {

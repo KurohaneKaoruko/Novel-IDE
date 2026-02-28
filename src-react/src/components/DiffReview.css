@@ -28,7 +28,7 @@
 }
 
 .pending-badge {
-  background: #f57c00;
+  background: #7b7b7b;
   color: white;
   font-size: 11px;
   padding: 2px 6px;
@@ -55,8 +55,8 @@
 }
 
 .diff-review-item.active {
-  background: var(--accent-light, #e3f2fd);
-  border-left: 3px solid var(--accent-color, #2196f3);
+  background: var(--accent-light, #f1f1f1);
+  border-left: 3px solid var(--accent-color, #d0d0d0);
 }
 
 .diff-review-item-status {
@@ -84,12 +84,12 @@
 }
 
 .diff-review-item-stats .add {
-  color: #388e3c;
+  color: #565656;
   margin-right: 6px;
 }
 
 .diff-review-item-stats .delete {
-  color: #d32f2f;
+  color: #666666;
 }
 
 .diff-review-item.accepted .diff-review-item-path {
@@ -133,18 +133,18 @@
 }
 
 .diff-review-status.pending {
-  background: #fff3e0;
-  color: #f57c00;
+  background: #f1f1f1;
+  color: #7b7b7b;
 }
 
 .diff-review-status.accepted {
-  background: #e8f5e9;
-  color: #388e3c;
+  background: #ededed;
+  color: #565656;
 }
 
 .diff-review-status.rejected {
-  background: #ffebee;
-  color: #d32f2f;
+  background: #f3f3f3;
+  color: #666666;
 }
 
 .diff-review-actions {
@@ -171,7 +171,7 @@
 }
 
 .diff-review-view-toggle button.active {
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
   color: white;
 }
 
@@ -185,21 +185,21 @@
 }
 
 .diff-review-btn.accept {
-  background: #4caf50;
+  background: #6e6e6e;
   color: white;
 }
 
 .diff-review-btn.accept:hover {
-  background: #43a047;
+  background: #636363;
 }
 
 .diff-review-btn.reject {
-  background: #f44336;
+  background: #7a7a7a;
   color: white;
 }
 
 .diff-review-btn.reject:hover {
-  background: #e53935;
+  background: #717171;
 }
 
 .diff-review-btn.close {
@@ -264,15 +264,15 @@
 }
 
 .diff-line.delete {
-  background: #ffebee;
+  background: #f3f3f3;
 }
 
 .diff-line.add {
-  background: #e8f5e9;
+  background: #ededed;
 }
 
 .diff-line.modify {
-  background: #fff3e0;
+  background: #f1f1f1;
 }
 
 .diff-line .line-num {
@@ -292,12 +292,12 @@
 
 .diff-line.delete .line-prefix,
 .diff-line.delete .line-num {
-  color: #d32f2f;
+  color: #666666;
 }
 
 .diff-line.add .line-prefix,
 .diff-line.add .line-num {
-  color: #388e3c;
+  color: #565656;
 }
 
 .diff-line .line-content {
@@ -320,7 +320,7 @@
 }
 
 [data-theme="dark"] .diff-review-sidebar {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -333,16 +333,16 @@
 }
 
 [data-theme="dark"] .diff-review-item:hover {
-  background: #2a2d2e;
+  background: #2c2c2c;
 }
 
 [data-theme="dark"] .diff-review-item.active {
-  background: #37373d;
-  border-left-color: #0078d4;
+  background: #393939;
+  border-left-color: #d0d0d0;
 }
 
 [data-theme="dark"] .diff-review-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -360,7 +360,7 @@
 }
 
 [data-theme="dark"] .diff-pane-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
   color: #999;
 }
@@ -374,13 +374,13 @@
 }
 
 [data-theme="dark"] .diff-line.delete {
-  background: #3a1d1d;
+  background: #272727;
 }
 
 [data-theme="dark"] .diff-line.add {
-  background: #1d3a1d;
+  background: #272727;
 }
 
 [data-theme="dark"] .diff-line.modify {
-  background: #3a2d1d;
+  background: #2c2c2c;
 }

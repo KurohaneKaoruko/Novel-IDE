@@ -4,6 +4,16 @@
   height: 100%;
 }
 
+.spec-kit-lint-error {
+  margin: 10px;
+}
+
+.spec-kit-lint-note {
+  padding: 10px;
+  color: var(--text-muted, #888888);
+  font-size: 12px;
+}
+
 .spec-kit-lint-header {
   padding: 10px;
   border-bottom: 1px solid #333;
@@ -68,16 +78,16 @@
 }
 
 .spec-kit-lint-issue.warning {
-  border-color: #6b5a2f;
+  border-color: #515151;
 }
 
 .spec-kit-lint-issue.error {
-  border-color: #6b2f2f;
+  border-color: #434343;
 }
 
 .spec-kit-lint-issue-code {
   font-size: 12px;
-  color: #9cdcfe;
+  color: #d0d0d0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 

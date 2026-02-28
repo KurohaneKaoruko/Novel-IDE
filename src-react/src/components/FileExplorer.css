@@ -63,8 +63,8 @@
 }
 
 .file-explorer-search input:focus {
-  border-color: var(--accent-color, #2196f3);
-  box-shadow: 0 0 0 2px var(--accent-light, rgba(33, 150, 243, 0.1));
+  border-color: var(--accent-color, #d0d0d0);
+  box-shadow: 0 0 0 1px var(--accent-glow, #3a3a3a);
 }
 
 .file-explorer-search input::placeholder {
@@ -106,8 +106,8 @@
 }
 
 .file-explorer-item.active {
-  background: var(--accent-light, #e3f2fd);
-  color: var(--accent-color, #1976d2);
+  background: var(--bg-hover, #f0f0f0);
+  color: var(--accent-color, #b5b5b5);
 }
 
 .file-explorer-item.dir {
@@ -156,51 +156,4 @@
   background: var(--text-muted, #999);
 }
 
-/* Dark mode */
-[data-theme="dark"] .file-explorer-header {
-  color: #999;
-  border-color: #333;
-}
-
-[data-theme="dark"] .file-explorer-action {
-  color: #999;
-}
-
-[data-theme="dark"] .file-explorer-action:hover {
-  background: #333;
-  color: #fff;
-}
-
-[data-theme="dark"] .file-explorer-search input {
-  background: #252526;
-  border-color: #333;
-  color: #fff;
-}
-
-[data-theme="dark"] .file-explorer-search input:focus {
-  border-color: #0078d4;
-  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
-}
-
-[data-theme="dark"] .file-explorer-item {
-  color: #999;
-}
-
-[data-theme="dark"] .file-explorer-item:hover {
-  background: #2a2d2e;
-  color: #fff;
-}
-
-[data-theme="dark"] .file-explorer-item.active {
-  background: #37373d;
-  color: #fff;
-}
-
-[data-theme="dark"] .file-explorer-count {
-  background: #333;
-  color: #888;
-}
-
-[data-theme="dark"] .file-explorer-content::-webkit-scrollbar-thumb {
-  background: #444;
-}
+/* Theme is controlled by global tokens */

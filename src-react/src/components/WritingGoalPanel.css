@@ -26,8 +26,8 @@
   justify-content: space-between;
   padding: 8px 12px;
   margin-bottom: 16px;
-  background-color: var(--error-bg, #5a1d1d);
-  border: 1px solid var(--error-border, #f44336);
+  background-color: var(--error-bg, #313131);
+  border: 1px solid var(--error-border, #7a7a7a);
   border-radius: 4px;
   font-size: 14px;
 }
@@ -35,7 +35,7 @@
 .writing-goal-error-banner button {
   padding: 4px 8px;
   background-color: transparent;
-  border: 1px solid var(--error-border, #f44336);
+  border: 1px solid var(--error-border, #7a7a7a);
   color: var(--text-primary, #d4d4d4);
   border-radius: 3px;
   cursor: pointer;
@@ -43,7 +43,7 @@
 }
 
 .writing-goal-error-banner button:hover {
-  background-color: var(--error-border, #f44336);
+  background-color: var(--error-border, #7a7a7a);
 }
 
 /* Header */
@@ -62,9 +62,9 @@
 .today-progress-section {
   margin-bottom: 24px;
   padding: 16px;
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
   border-radius: 8px;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
 }
 
 .today-progress-section h3 {
@@ -107,8 +107,8 @@
   font-size: 12px;
   border-radius: 3px;
   cursor: pointer;
-  border: 1px solid var(--border-color, #3e3e42);
-  background-color: var(--bg-tertiary, #2d2d30);
+  border: 1px solid var(--border-color, #3f3f3f);
+  background-color: var(--bg-tertiary, #2e2e2e);
   color: var(--text-primary, #d4d4d4);
   transition: background-color 0.2s;
 }
@@ -116,16 +116,16 @@
 .btn-edit:hover,
 .btn-save:hover,
 .btn-cancel:hover {
-  background-color: var(--bg-hover, #3e3e42);
+  background-color: var(--bg-hover, #3f3f3f);
 }
 
 .btn-save {
-  background-color: var(--success-bg, #4CAF50);
-  border-color: var(--success-border, #4CAF50);
+  background-color: var(--success-bg, #6e6e6e);
+  border-color: var(--success-border, #6e6e6e);
 }
 
 .btn-save:hover {
-  background-color: var(--success-hover, #45a049);
+  background-color: var(--success-hover, #656565);
 }
 
 .goal-edit-inline {
@@ -138,15 +138,15 @@
   width: 100px;
   padding: 4px 8px;
   font-size: 14px;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
   border-radius: 3px;
-  background-color: var(--bg-tertiary, #2d2d30);
+  background-color: var(--bg-tertiary, #2e2e2e);
   color: var(--text-primary, #d4d4d4);
 }
 
 .goal-input:focus {
   outline: none;
-  border-color: var(--accent-color, #007acc);
+  border-color: var(--accent-color, #d0d0d0);
 }
 
 /* Progress Bar */
@@ -163,39 +163,39 @@
 
 .progress-percentage {
   font-weight: 600;
-  color: var(--accent-color, #007acc);
+  color: var(--accent-color, #d0d0d0);
 }
 
 .progress-bar {
   width: 100%;
   height: 24px;
-  background-color: var(--bg-tertiary, #2d2d30);
+  background-color: var(--bg-tertiary, #2e2e2e);
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
 }
 
 .progress-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #007acc, #00a8ff);
+  background: var(--accent-color, #d0d0d0);
   transition: width 0.3s ease;
   border-radius: 12px;
 }
 
 .progress-bar-fill.progress-complete {
-  background: linear-gradient(90deg, #4CAF50, #8BC34A);
+  background: #6e6e6e;
 }
 
 .congratulations-message {
   margin-top: 16px;
   padding: 12px;
-  background-color: var(--success-bg, #2d5016);
-  border: 1px solid var(--success-border, #4CAF50);
+  background-color: var(--success-bg, #313131);
+  border: 1px solid var(--success-border, #6e6e6e);
   border-radius: 6px;
   text-align: center;
   font-size: 14px;
   font-weight: 600;
-  color: var(--success-text, #8BC34A);
+  color: var(--success-text, #888888);
 }
 
 /* Congratulations Overlay */
@@ -205,7 +205,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.8);
+  background-color: #000000cc;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -223,13 +223,13 @@
 }
 
 .congratulations-content {
-  background-color: var(--bg-secondary, #252526);
-  border: 2px solid var(--success-border, #4CAF50);
+  background-color: var(--bg-secondary, #252525);
+  border: 2px solid var(--success-border, #6e6e6e);
   border-radius: 12px;
   padding: 48px 64px;
   text-align: center;
   animation: scaleIn 0.3s ease-in-out;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 32px #00000066;
 }
 
 @keyframes scaleIn {
@@ -262,7 +262,7 @@
   margin: 0 0 12px 0;
   font-size: 32px;
   font-weight: 700;
-  color: var(--success-text, #8BC34A);
+  color: var(--success-text, #888888);
 }
 
 .congratulations-content p {
@@ -277,14 +277,14 @@
   font-weight: 600;
   border-radius: 6px;
   cursor: pointer;
-  border: 2px solid var(--success-border, #4CAF50);
-  background-color: var(--success-bg, #4CAF50);
+  border: 2px solid var(--success-border, #6e6e6e);
+  background-color: var(--success-bg, #6e6e6e);
   color: white;
   transition: all 0.2s;
 }
 
 .btn-close-congrats:hover {
-  background-color: var(--success-hover, #45a049);
+  background-color: var(--success-hover, #656565);
   transform: scale(1.05);
 }
 
@@ -292,9 +292,9 @@
 .streak-section {
   margin-bottom: 24px;
   padding: 16px;
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
   border-radius: 8px;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
 }
 
 .streak-section h3 {
@@ -323,16 +323,16 @@
 .streak-value {
   font-size: 20px;
   font-weight: 700;
-  color: var(--accent-color, #007acc);
+  color: var(--accent-color, #d0d0d0);
 }
 
 /* History Section */
 .history-section {
   margin-bottom: 24px;
   padding: 16px;
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
   border-radius: 8px;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
 }
 
 .history-section h3 {
@@ -350,9 +350,9 @@
 .history-list-section {
   margin-bottom: 24px;
   padding: 16px;
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
   border-radius: 8px;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
 }
 
 .history-list-section h3 {
@@ -373,9 +373,9 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background-color: var(--bg-tertiary, #2d2d30);
+  background-color: var(--bg-tertiary, #2e2e2e);
   border-radius: 6px;
-  border: 1px solid var(--border-color, #3e3e42);
+  border: 1px solid var(--border-color, #3f3f3f);
 }
 
 .history-date {
@@ -403,15 +403,15 @@
 }
 
 .badge-success {
-  background-color: var(--success-bg, #2d5016);
-  color: var(--success-text, #8BC34A);
-  border: 1px solid var(--success-border, #4CAF50);
+  background-color: var(--success-bg, #313131);
+  color: var(--success-text, #888888);
+  border: 1px solid var(--success-border, #6e6e6e);
 }
 
 .badge-pending {
-  background-color: var(--warning-bg, #5a4a1d);
-  color: var(--warning-text, #FFB74D);
-  border: 1px solid var(--warning-border, #FF9800);
+  background-color: var(--warning-bg, #404040);
+  color: var(--warning-text, #acacac);
+  border: 1px solid var(--warning-border, #888888);
 }
 
 /* Empty State */

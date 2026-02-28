@@ -72,7 +72,7 @@
 }
 
 .ai-message-user .ai-message-avatar {
-  background: var(--accent-light, #e3f2fd);
+  background: var(--accent-light, #f1f1f1);
 }
 
 .ai-message-assistant .ai-message-avatar {
@@ -102,7 +102,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
   animation: thinking-bounce 1.4s infinite ease-in-out;
 }
 
@@ -129,7 +129,7 @@
 .ai-cursor {
   display: inline-block;
   animation: cursor-blink 0.8s infinite;
-  color: var(--accent-color, #2196f3);
+  color: var(--accent-color, #d0d0d0);
 }
 
 @keyframes cursor-blink {
@@ -152,21 +152,21 @@
 }
 
 .ai-changeset-card:hover {
-  background: var(--accent-light, #e3f2fd);
-  border-color: var(--accent-color, #2196f3);
+  background: var(--accent-light, #f1f1f1);
+  border-color: var(--accent-color, #d0d0d0);
 }
 
 .ai-changeset-card.pending {
-  border-left: 3px solid #f57c00;
+  border-left: 3px solid #7b7b7b;
 }
 
 .ai-changeset-card.accepted {
-  border-left: 3px solid #4caf50;
+  border-left: 3px solid #6e6e6e;
   opacity: 0.7;
 }
 
 .ai-changeset-card.rejected {
-  border-left: 3px solid #f44336;
+  border-left: 3px solid #7a7a7a;
   opacity: 0.7;
 }
 
@@ -185,9 +185,9 @@
   font-weight: 500;
 }
 
-.ai-changeset-card.pending .changeset-label { color: #f57c00; }
-.ai-changeset-card.accepted .changeset-label { color: #4caf50; }
-.ai-changeset-card.rejected .changeset-label { color: #f44336; }
+.ai-changeset-card.pending .changeset-label { color: #7b7b7b; }
+.ai-changeset-card.accepted .changeset-label { color: #6e6e6e; }
+.ai-changeset-card.rejected .changeset-label { color: #7a7a7a; }
 
 .changeset-file {
   font-size: 12px;
@@ -202,8 +202,8 @@
   font-family: monospace;
 }
 
-.changeset-card-stats .stat-add { color: #4caf50; }
-.changeset-card-stats .stat-delete { color: #f44336; }
+.changeset-card-stats .stat-add { color: #6e6e6e; }
+.changeset-card-stats .stat-delete { color: #7a7a7a; }
 
 /* Message Actions */
 .ai-message-actions {
@@ -224,9 +224,9 @@
 }
 
 .ai-action-btn:hover:not(:disabled) {
-  background: var(--accent-light, #e3f2fd);
-  border-color: var(--accent-color, #2196f3);
-  color: var(--accent-color, #2196f3);
+  background: var(--accent-light, #f1f1f1);
+  border-color: var(--accent-color, #d0d0d0);
+  color: var(--accent-color, #d0d0d0);
 }
 
 .ai-action-btn:disabled {
@@ -256,7 +256,7 @@
 }
 
 .pending-count {
-  background: #f57c00;
+  background: #7b7b7b;
   color: white;
   font-size: 10px;
   padding: 2px 6px;
@@ -287,7 +287,7 @@
 }
 
 .changesets-panel-item.active {
-  background: var(--accent-light, #e3f2fd);
+  background: var(--accent-light, #f1f1f1);
 }
 
 .changesets-panel-item.accepted {
@@ -321,8 +321,8 @@
   font-family: monospace;
 }
 
-.changesets-item-stats .add { color: #4caf50; }
-.changesets-item-stats .delete { color: #f44336; }
+.changesets-item-stats .add { color: #6e6e6e; }
+.changesets-item-stats .delete { color: #7a7a7a; }
 
 /* Input Area */
 .ai-input-area {
@@ -356,9 +356,9 @@
 }
 
 .ai-input-btn:hover:not(:disabled) {
-  background: var(--accent-light, #e3f2fd);
-  border-color: var(--accent-color, #2196f3);
-  color: var(--accent-color, #2196f3);
+  background: var(--accent-light, #f1f1f1);
+  border-color: var(--accent-color, #d0d0d0);
+  color: var(--accent-color, #d0d0d0);
 }
 
 .ai-input-btn:disabled {
@@ -381,7 +381,7 @@
 }
 
 .ai-textarea:focus {
-  border-color: var(--accent-color, #2196f3);
+  border-color: var(--accent-color, #d0d0d0);
 }
 
 .ai-textarea::placeholder {
@@ -392,7 +392,7 @@
   width: 40px;
   height: 40px;
   border: none;
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
   color: white;
   border-radius: 6px;
   cursor: pointer;
@@ -404,7 +404,7 @@
 }
 
 .ai-send-btn:hover:not(:disabled) {
-  background: var(--accent-dark, #1976d2);
+  background: var(--accent-dark, #b5b5b5);
 }
 
 .ai-send-btn:disabled {
@@ -426,7 +426,7 @@
 }
 
 [data-theme="dark"] .ai-changesets-panel {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -436,7 +436,7 @@
 }
 
 [data-theme="dark"] .ai-changeset-card {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -449,7 +449,7 @@
 }
 
 [data-theme="dark"] .ai-input-area {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -460,7 +460,7 @@
 }
 
 [data-theme="dark"] .ai-input-btn {
-  background: #252526;
+  background: #252525;
   border-color: #333;
   color: #999;
 }

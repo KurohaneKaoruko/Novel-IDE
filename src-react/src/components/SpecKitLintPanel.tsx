@@ -104,11 +104,11 @@ export const SpecKitLintPanel: React.FC<SpecKitLintPanelProps> = ({ text, enable
         <div className="spec-kit-lint-title">Spec-Kit 实时检查</div>
       </div>
 
-      {error ? <div className="error-text" style={{ margin: 10 }}>{error}</div> : null}
+      {error ? <div className="error-text spec-kit-lint-error">{error}</div> : null}
 
-      {!enabled ? <div style={{ padding: 10, color: '#888' }}>未启用</div> : null}
+      {!enabled ? <div className="spec-kit-lint-note">未启用</div> : null}
 
-      {enabled && !config ? <div style={{ padding: 10, color: '#888' }}>正在加载配置…</div> : null}
+      {enabled && !config ? <div className="spec-kit-lint-note">正在加载配置…</div> : null}
 
       {enabled && config && result ? (
         <>
@@ -133,7 +133,7 @@ export const SpecKitLintPanel: React.FC<SpecKitLintPanelProps> = ({ text, enable
           <div className="spec-kit-lint-section">
             <div className="spec-kit-lint-section-title">主题</div>
             {config.theme.keywords.length === 0 ? (
-              <div style={{ padding: 10, color: '#888' }}>未设置主题关键词</div>
+              <div className="spec-kit-lint-note">未设置主题关键词</div>
             ) : (
               <div className="spec-kit-lint-tags">
                 {config.theme.keywords.map((k) => (
@@ -148,7 +148,7 @@ export const SpecKitLintPanel: React.FC<SpecKitLintPanelProps> = ({ text, enable
           <div className="spec-kit-lint-section">
             <div className="spec-kit-lint-section-title">问题</div>
             {result.issues.length === 0 ? (
-              <div style={{ padding: 10, color: '#8bc34a' }}>暂无问题</div>
+              <div className="spec-kit-lint-note">暂无问题</div>
             ) : (
               <div className="spec-kit-lint-issues">
                 {result.issues.map((it, idx) => (
@@ -163,7 +163,7 @@ export const SpecKitLintPanel: React.FC<SpecKitLintPanelProps> = ({ text, enable
         </>
       ) : null}
 
-      {enabled && config && !result ? <div style={{ padding: 10, color: '#888' }}>正在分析…</div> : null}
+      {enabled && config && !result ? <div className="spec-kit-lint-note">正在分析…</div> : null}
     </div>
   );
 };

@@ -30,8 +30,8 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: #1e1e1e;
-  color: #e0e0e0;
+  background: #000000;
+  color: #f0f0f0;
   overflow: hidden;
 }
 
@@ -61,7 +61,7 @@ html {
 }
 
 :focus-visible {
-  outline: 2px solid #0078d4;
+  outline: 2px solid #8a8a8a;
   outline-offset: 2px;
 }
 
@@ -112,8 +112,8 @@ html {
   justify-content: center;
   gap: 12px;
   padding: 24px;
-  background: #121214;
-  color: #e7e7e8;
+  background: #131313;
+  color: #e7e7e7;
   font-family: 'Space Grotesk', 'Segoe UI Variable', sans-serif;
 }
 
@@ -125,7 +125,7 @@ html {
 
 .app-error-message {
   margin: 0;
-  color: #b4b4b8;
+  color: #b5b5b5;
 }
 
 .app-error-details {
@@ -133,23 +133,23 @@ html {
   max-width: 960px;
   overflow: auto;
   white-space: pre-wrap;
-  background: #1d1d20;
-  border: 1px solid #34343a;
+  background: #1e1e1e;
+  border: 1px solid #363636;
   border-radius: 8px;
   padding: 12px;
-  color: #ffb4a8;
+  color: #c9c9c9;
 }
 
 .app-error-button {
   width: fit-content;
-  border: 1px solid #2f77d4;
-  background: #2f77d4;
-  color: #fff;
+  border: 1px solid #f0f0f0;
+  background: #f0f0f0;
+  color: #111111;
   border-radius: 6px;
   padding: 8px 14px;
   cursor: pointer;
 }
 
 .app-error-button:hover {
-  background: #2866b7;
+  background: #ffffff;
 }

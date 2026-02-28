@@ -83,18 +83,18 @@
 
 /* Types */
 .timeline-item-chapter .timeline-dot {
-  background: var(--accent-light, #e3f2fd);
-  border-color: var(--accent-primary, #2196f3);
+  background: var(--accent-light, #f1f1f1);
+  border-color: var(--accent-primary, #d0d0d0);
 }
 
 .timeline-item-event .timeline-dot {
-  background: #e8f5e9;
-  border-color: #4caf50;
+  background: #ededed;
+  border-color: #6e6e6e;
 }
 
 .timeline-item-milestone .timeline-dot {
-  background: #fff3e0;
-  border-color: #ff9800;
+  background: #f1f1f1;
+  border-color: #888888;
 }
 
 /* Compact */
@@ -149,22 +149,22 @@
 }
 
 [data-theme="dark"] .timeline-item-chapter .timeline-dot {
-  background: #1a2a3a;
-  border-color: #0078d4;
+  background: #2a2a2a;
+  border-color: #d0d0d0;
 }
 
 [data-theme="dark"] .timeline-item-event .timeline-dot {
-  background: #1a2a1f;
-  border-color: #388e3c;
+  background: #212121;
+  border-color: #565656;
 }
 
 [data-theme="dark"] .timeline-item-milestone .timeline-dot {
-  background: #2a2a1a;
-  border-color: #f57c00;
+  background: #252525;
+  border-color: #7b7b7b;
 }
 
 [data-theme="dark"] .timeline-compact-item:hover {
-  background: #2a2d2e;
+  background: #2c2c2c;
 }
 
 [data-theme="dark"] .timeline-compact-title {

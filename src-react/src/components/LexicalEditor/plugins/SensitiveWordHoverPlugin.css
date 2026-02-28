@@ -85,21 +85,21 @@
 }
 
 .sensitive-word-tooltip-severity-low {
-  background: rgba(34, 197, 94, 0.2);
-  color: #22c55e;
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  background: rgba(108, 108, 108, 0.2);
+  color: #6c6c6c;
+  border: 1px solid rgba(108, 108, 108, 0.3);
 }
 
 .sensitive-word-tooltip-severity-medium {
-  background: rgba(234, 179, 8, 0.2);
-  color: #eab308;
-  border: 1px solid rgba(234, 179, 8, 0.3);
+  background: rgba(140, 140, 140, 0.2);
+  color: #8c8c8c;
+  border: 1px solid rgba(140, 140, 140, 0.3);
 }
 
 .sensitive-word-tooltip-severity-high {
-  background: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(125, 125, 125, 0.2);
+  color: #7d7d7d;
+  border: 1px solid rgba(125, 125, 125, 0.3);
 }
 
 .sensitive-word-tooltip-footer {
@@ -116,17 +116,17 @@
 }
 
 .sensitive-word-low {
-  text-decoration: underline wavy #22c55e;
+  text-decoration: underline wavy #6c6c6c;
   text-decoration-skip-ink: none;
 }
 
 .sensitive-word-medium {
-  text-decoration: underline wavy #eab308;
+  text-decoration: underline wavy #8c8c8c;
   text-decoration-skip-ink: none;
 }
 
 .sensitive-word-high {
-  text-decoration: underline wavy #ef4444;
+  text-decoration: underline wavy #7d7d7d;
   text-decoration-skip-ink: none;
 }
 

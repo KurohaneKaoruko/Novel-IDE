@@ -26,7 +26,7 @@
 .progress-value {
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent-primary, #2196f3);
+  color: var(--accent-primary, #d0d0d0);
 }
 
 .progress-bar {
@@ -37,26 +37,26 @@
 }
 
 .progress-bar.daily {
-  background: var(--bg-hover, #e8f5e9);
+  background: var(--bg-hover, #ededed);
 }
 
 .progress-bar.chapters {
-  background: var(--bg-hover, #fff3e0);
+  background: var(--bg-hover, #f1f1f1);
 }
 
 .progress-bar-fill {
   height: 100%;
-  background: var(--accent-primary, #2196f3);
+  background: var(--accent-primary, #d0d0d0);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
 
 .progress-bar.daily .progress-bar-fill {
-  background: #4caf50;
+  background: #6e6e6e;
 }
 
 .progress-bar.chapters .progress-bar-fill {
-  background: #ff9800;
+  background: #888888;
 }
 
 .progress-stats {
@@ -125,18 +125,18 @@
 }
 
 .compact-bar.daily {
-  background: #e8f5e9;
+  background: #ededed;
 }
 
 .compact-bar-fill {
   height: 100%;
-  background: var(--accent-primary, #2196f3);
+  background: var(--accent-primary, #d0d0d0);
   border-radius: 2px;
   transition: width 0.3s ease;
 }
 
 .compact-bar.daily .compact-bar-fill {
-  background: #4caf50;
+  background: #6e6e6e;
 }
 
 .compact-value {
@@ -153,11 +153,11 @@
 }
 
 [data-theme="dark"] .progress-bar.daily {
-  background: #1b3022;
+  background: #242424;
 }
 
 [data-theme="dark"] .progress-bar.chapters {
-  background: #332a1b;
+  background: #282828;
 }
 
 [data-theme="dark"] .progress-quick-stats {
@@ -173,5 +173,5 @@
 }
 
 [data-theme="dark"] .compact-bar.daily {
-  background: #1b3022;
+  background: #242424;
 }

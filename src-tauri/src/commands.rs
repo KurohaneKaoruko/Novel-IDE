@@ -299,6 +299,9 @@ pub fn init_novel(state: State<'_, AppState>) -> Result<(), String> {
   let dirs = [
     novel_dir.join(".settings"),
     novel_dir.join(".cache"),
+    novel_dir.join("plans"),
+    novel_dir.join("tasks"),
+    novel_dir.join("state"),
   ];
 
   for d in dirs {
@@ -341,6 +344,18 @@ pub fn init_novel(state: State<'_, AppState>) -> Result<(), String> {
   if !relations_path.exists() {
     let raw = serde_json::json!({ "relations": [] }).to_string();
     fs::write(relations_path, raw).map_err(|e| format!("write relations failed: {e}"))?;
+  }
+
+  let session_state = novel_dir.join("state").join("session-state.json");
+  if !session_state.exists() {
+    let raw = serde_json::json!({ "sessions": {} }).to_string();
+    fs::write(session_state, raw).map_err(|e| format!("write session state failed: {e}"))?;
+  }
+
+  let continuity_index = novel_dir.join("state").join("continuity-index.md");
+  if !continuity_index.exists() {
+    let raw = "# Continuity Index\n\n用于记录角色、时间线、伏笔回收等连续性信息。";
+    fs::write(continuity_index, raw).map_err(|e| format!("write continuity index failed: {e}"))?;
   }
 
   spec_kit::ensure_spec_kit_defaults(&novel_dir)?;

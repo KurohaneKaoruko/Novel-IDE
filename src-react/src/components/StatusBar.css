@@ -4,8 +4,8 @@
   align-items: center;
   height: var(--status-bar-height, 24px);
   padding: 0 12px;
-  background: var(--status-bar-bg, #0078d4);
-  color: rgba(255, 255, 255, 0.9);
+  background: var(--status-bar-bg, #d0d0d0);
+  color: var(--text-secondary, #b0b0b0);
   font-size: 12px;
   user-select: none;
 }
@@ -34,7 +34,7 @@
 
 .status-bar-item.clickable:hover {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--bg-hover, #1a1a1a);
 }
 
 .status-bar-icon {
@@ -48,23 +48,53 @@
 
 /* Git status colors */
 .status-bar-item.clean {
-  color: #4ec9b0;
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .status-bar-item.modified {
-  color: #dcdcaa;
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .status-bar-item.staged {
-  color: #4fc1ff;
+  color: var(--text-secondary, #b0b0b0);
 }
 
-/* Dark mode */
-[data-theme="dark"] .status-bar {
-  background: #252526;
-  border-top: 1px solid #333;
+@media (max-width: 900px) {
+  .status-bar {
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .status-bar-left,
+  .status-bar-right {
+    gap: 8px;
+  }
+
+  .status-bar-item {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-[data-theme="dark"] .status-bar-item.clickable:hover {
-  background: rgba(255, 255, 255, 0.1);
+@media (max-width: 680px) {
+  .status-bar-left .status-bar-item:not(:first-child) {
+    display: none;
+  }
+
+  .status-bar-right .status-bar-item:nth-child(2),
+  .status-bar-right .status-bar-item:nth-child(3),
+  .status-bar-right .status-bar-item:nth-child(4) {
+    display: none;
+  }
+
+  .status-bar-right {
+    margin-left: auto;
+  }
+
+  .status-bar-item.clickable.theme-toggle {
+    margin-left: 0;
+    padding: 2px 4px;
+  }
 }

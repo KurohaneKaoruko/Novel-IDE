@@ -16,7 +16,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: #252526;
+  background: #252525;
   border-bottom: 1px solid #3a3a3a;
   flex-shrink: 0;
 }
@@ -46,15 +46,15 @@
 }
 
 .diff-stat-add {
-  color: #4ec9b0;
+  color: #989898;
 }
 
 .diff-stat-delete {
-  color: #f48771;
+  color: #a4a4a4;
 }
 
 .diff-stat-modify {
-  color: #dcdcaa;
+  color: #cbcbcb;
 }
 
 .diff-status {
@@ -94,28 +94,28 @@
 
 .diff-btn-accept-all,
 .diff-btn-accept {
-  background: #0e639c;
-  border-color: #0e639c;
+  background: #5a5a5a;
+  border-color: #5a5a5a;
   color: #ffffff;
 }
 
 .diff-btn-accept-all:hover:not(:disabled),
 .diff-btn-accept:hover:not(:disabled) {
-  background: #1177bb;
-  border-color: #1177bb;
+  background: #6c6c6c;
+  border-color: #6c6c6c;
 }
 
 .diff-btn-reject-all,
 .diff-btn-reject {
-  background: #a1260d;
-  border-color: #a1260d;
+  background: #474747;
+  border-color: #474747;
   color: #ffffff;
 }
 
 .diff-btn-reject-all:hover:not(:disabled),
 .diff-btn-reject:hover:not(:disabled) {
-  background: #c1360d;
-  border-color: #c1360d;
+  background: #575757;
+  border-color: #575757;
 }
 
 .diff-btn-close {
@@ -158,7 +158,7 @@
 
 .diff-pane-header {
   padding: 8px 12px;
-  background: #252526;
+  background: #252525;
   border-bottom: 1px solid #3a3a3a;
   font-weight: 600;
   font-size: 12px;
@@ -194,9 +194,9 @@
   width: 50px;
   padding: 0 8px;
   text-align: right;
-  color: #858585;
-  background: #1e1e1e;
-  border-right: 1px solid #3a3a3a;
+  color: var(--text-muted, #858585);
+  background: var(--bg-secondary, #1e1e1e);
+  border-right: 1px solid var(--border-subtle, #3a3a3a);
   user-select: none;
   flex-shrink: 0;
 }
@@ -209,30 +209,30 @@
 
 /* Line highlighting based on modification type */
 .diff-line-add {
-  background: rgba(78, 201, 176, 0.15);
+  background: var(--bg-hover, #2a2a2a);
 }
 
 .diff-line-add .diff-line-number {
-  background: rgba(78, 201, 176, 0.2);
-  color: #4ec9b0;
+  background: var(--bg-active, #333333);
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .diff-line-delete {
-  background: rgba(244, 135, 113, 0.15);
+  background: var(--bg-tertiary, #232323);
 }
 
 .diff-line-delete .diff-line-number {
-  background: rgba(244, 135, 113, 0.2);
-  color: #f48771;
+  background: var(--bg-active, #333333);
+  color: var(--text-muted, #8d8d8d);
 }
 
 .diff-line-modify {
-  background: rgba(220, 220, 170, 0.15);
+  background: var(--bg-hover, #2a2a2a);
 }
 
 .diff-line-modify .diff-line-number {
-  background: rgba(220, 220, 170, 0.2);
-  color: #dcdcaa;
+  background: var(--bg-active, #333333);
+  color: var(--text-primary, #f1f1f1);
 }
 
 /* Status highlighting */
@@ -247,8 +247,8 @@
 
 /* Modifications Panel */
 .diff-modifications {
-  border-top: 1px solid #3a3a3a;
-  background: #252526;
+  border-top: 1px solid var(--border-subtle, #3a3a3a);
+  background: var(--bg-secondary, #252525);
   max-height: 200px;
   display: flex;
   flex-direction: column;
@@ -259,9 +259,9 @@
   padding: 8px 16px;
   font-weight: 600;
   font-size: 12px;
-  color: #888;
+  color: var(--text-muted, #888);
   text-transform: uppercase;
-  border-bottom: 1px solid #3a3a3a;
+  border-bottom: 1px solid var(--border-subtle, #3a3a3a);
 }
 
 .diff-modifications-list {
@@ -276,22 +276,22 @@
   align-items: center;
   padding: 8px 12px;
   margin-bottom: 6px;
-  background: #2a2a2a;
+  background: var(--bg-tertiary, #2a2a2a);
   border-radius: 3px;
   border-left: 3px solid transparent;
 }
 
 .diff-modification-pending {
-  border-left-color: #007acc;
+  border-left-color: #d0d0d0;
 }
 
 .diff-modification-accepted {
-  border-left-color: #4ec9b0;
+  border-left-color: var(--accent-primary, #d0d0d0);
   opacity: 0.7;
 }
 
 .diff-modification-rejected {
-  border-left-color: #f48771;
+  border-left-color: var(--text-muted, #8f8f8f);
   opacity: 0.7;
 }
 
@@ -311,28 +311,28 @@
 }
 
 .diff-modification-type-add {
-  background: rgba(78, 201, 176, 0.2);
-  color: #4ec9b0;
+  background: var(--bg-hover, #333333);
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .diff-modification-type-delete {
-  background: rgba(244, 135, 113, 0.2);
-  color: #f48771;
+  background: var(--bg-hover, #333333);
+  color: var(--text-muted, #8f8f8f);
 }
 
 .diff-modification-type-modify {
-  background: rgba(220, 220, 170, 0.2);
-  color: #dcdcaa;
+  background: var(--bg-hover, #333333);
+  color: var(--text-primary, #f1f1f1);
 }
 
 .diff-modification-lines {
   font-size: 12px;
-  color: #888;
+  color: var(--text-muted, #888);
 }
 
 .diff-modification-status {
   font-size: 11px;
-  color: #888;
+  color: var(--text-muted, #888);
   text-transform: capitalize;
 }
 

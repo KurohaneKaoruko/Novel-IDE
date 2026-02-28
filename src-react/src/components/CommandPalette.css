@@ -9,7 +9,6 @@
   justify-content: center;
   padding-top: 100px;
   z-index: 1000;
-  backdrop-filter: blur(4px);
 }
 
 .command-palette {
@@ -94,7 +93,7 @@
 
 .command-palette-item:hover,
 .command-palette-item.selected {
-  background: var(--accent-color, #0078d4);
+  background: var(--accent-color, #d0d0d0);
   color: #fff;
 }
 

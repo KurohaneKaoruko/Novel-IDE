@@ -12,7 +12,7 @@
 }
 
 .recovery-dialog {
-  background-color: #252526;
+  background-color: #252525;
   border: 1px solid #3a3a3a;
   border-radius: 6px;
   width: 90%;
@@ -64,7 +64,7 @@
 
 .recovery-item.selected {
   background-color: #2a2a2a;
-  border-color: #0e639c;
+  border-color: #5a5a5a;
 }
 
 .recovery-item-header {
@@ -105,12 +105,12 @@
 }
 
 .recovery-button.primary {
-  background-color: #0e639c;
+  background-color: #5a5a5a;
   color: #fff;
 }
 
 .recovery-button.primary:hover {
-  background-color: #1177bb;
+  background-color: #6c6c6c;
 }
 
 .recovery-button.secondary {

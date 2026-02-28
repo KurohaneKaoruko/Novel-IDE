@@ -73,8 +73,8 @@
 }
 
 .tab-bar-item.drag-over {
-  background: var(--accent-light, #e3f2fd);
-  border-left: 2px solid var(--accent-color, #2196f3);
+  background: var(--bg-hover, #eeeeee);
+  border-left: 2px solid var(--accent-color, #d0d0d0);
 }
 
 .tab-bar-item-title {
@@ -85,7 +85,7 @@
 }
 
 .tab-bar-item-dirty {
-  color: var(--accent-color, #2196f3);
+  color: var(--accent-color, #d0d0d0);
   font-size: 10px;
 }
 
@@ -111,8 +111,8 @@
 }
 
 .tab-bar-item-close:hover {
-  background: var(--danger-bg, #ffebee);
-  color: var(--danger-color, #f44336);
+  background: var(--bg-hover, #eeeeee);
+  color: var(--text-primary, #333);
 }
 
 .tab-bar-item.dirty .tab-bar-item-close {
@@ -139,33 +139,4 @@
   }
 }
 
-/* Dark mode */
-[data-theme="dark"] .tab-bar {
-  background: #252526;
-  border-color: #333;
-}
-
-[data-theme="dark"] .tab-bar-item {
-  background: transparent;
-  color: #999;
-}
-
-[data-theme="dark"] .tab-bar-item:hover {
-  background: #333;
-  color: #fff;
-}
-
-[data-theme="dark"] .tab-bar-item.active {
-  background: #1e1e1e;
-  border-color: #333;
-  border-bottom-color: #1e1e1e;
-}
-
-[data-theme="dark"] .tab-bar-item.drag-over {
-  background: #333;
-  border-left-color: #0078d4;
-}
-
-[data-theme="dark"] .tab-bar::-webkit-scrollbar-thumb {
-  background: #444;
-}
+/* Theme is driven by CSS vars from App.css */

@@ -71,7 +71,7 @@
 }
 
 .ai-message-user .ai-message-avatar {
-  background: var(--accent-light, #e3f2fd);
+  background: var(--accent-light, #f1f1f1);
 }
 
 .ai-message-assistant .ai-message-avatar {
@@ -97,7 +97,7 @@
 .ai-message-streaming {
   display: inline-block;
   animation: blink 0.8s infinite;
-  color: var(--accent-color, #2196f3);
+  color: var(--accent-color, #d0d0d0);
 }
 
 @keyframes blink {
@@ -151,9 +151,9 @@
   font-weight: 500;
 }
 
-.changeset-status-pending { color: #f57c00; }
-.changeset-status-accepted { color: #388e3c; }
-.changeset-status-rejected { color: #d32f2f; }
+.changeset-status-pending { color: #7b7b7b; }
+.changeset-status-accepted { color: #565656; }
+.changeset-status-rejected { color: #666666; }
 
 /* Change Sets Panel */
 .ai-panel-changesets {
@@ -236,11 +236,11 @@
 }
 
 .ai-changeset-stats .stat-add {
-  color: #388e3c;
+  color: #565656;
 }
 
 .ai-changeset-stats .stat-delete {
-  color: #d32f2f;
+  color: #666666;
 }
 
 .ai-changeset-actions {
@@ -260,21 +260,21 @@
 }
 
 .ai-btn-accept {
-  background: #4caf50;
+  background: #6e6e6e;
   color: white;
 }
 
 .ai-btn-accept:hover {
-  background: #43a047;
+  background: #636363;
 }
 
 .ai-btn-reject {
-  background: #f44336;
+  background: #7a7a7a;
   color: white;
 }
 
 .ai-btn-reject:hover {
-  background: #e53935;
+  background: #717171;
 }
 
 .ai-btn-close {
@@ -330,7 +330,7 @@
 }
 
 .ai-panel-textarea:focus {
-  border-color: var(--accent-color, #2196f3);
+  border-color: var(--accent-color, #d0d0d0);
 }
 
 .ai-panel-textarea::placeholder {
@@ -341,7 +341,7 @@
   width: 40px;
   height: 40px;
   border: none;
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
   color: white;
   border-radius: 6px;
   cursor: pointer;
@@ -353,7 +353,7 @@
 }
 
 .ai-panel-send:hover:not(:disabled) {
-  background: var(--accent-dark, #1976d2);
+  background: var(--accent-dark, #b5b5b5);
 }
 
 .ai-panel-send:disabled {
@@ -375,7 +375,7 @@
 }
 
 [data-theme="dark"] .ai-panel-changesets {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -390,7 +390,7 @@
 }
 
 [data-theme="dark"] .ai-changeset-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -403,7 +403,7 @@
 }
 
 [data-theme="dark"] .ai-panel-input {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -414,7 +414,7 @@
 }
 
 [data-theme="dark"] .ai-panel-action {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 

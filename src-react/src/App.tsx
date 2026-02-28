@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { confirm, message } from '@tauri-apps/plugin-dialog'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
@@ -50,8 +50,8 @@ import {
   type ProjectSource,
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
-import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager } from './services'
-import type { AIAssistanceResponse, ChangeSet, EditorUserConfig } from './services'
+import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager, novelPlannerService } from './services'
+import type { AIAssistanceResponse, ChangeSet, EditorUserConfig, NovelTask, SessionPlannerState, WriterMode } from './services'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
@@ -217,6 +217,8 @@ type UISettingsState = {
   density: 'compact' | 'comfortable'
   motion: 'full' | 'reduced'
   sidebarCollapsed: boolean
+  sidebarWidth: number
+  rightPanelWidth: number
 }
 
 type SelectionOffsets = {
@@ -230,6 +232,22 @@ type SelectionLineRange = {
 }
 
 type InlineAIAssistCommand = 'polish' | 'expand' | 'condense' | 'spec_kit_fix'
+
+type StreamWaiter = {
+  resolve: () => void
+  reject: (error: Error) => void
+}
+
+type TaskQualityResult = {
+  ok: boolean
+  reason: string | null
+}
+
+type SendChatOptions = {
+  skipModeWrap?: boolean
+}
+
+const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
 
 function App() {
   // Diff Context
@@ -246,6 +264,16 @@ function App() {
   const [uiDensity, setUiDensity] = useState<'compact' | 'comfortable'>(initialUISettings.density)
   const [uiMotion, setUiMotion] = useState<'full' | 'reduced'>(initialUISettings.motion)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(initialUISettings.sidebarCollapsed)
+  const [sidebarWidth, setSidebarWidth] = useState<number>(initialUISettings.sidebarWidth)
+  const [rightPanelWidth, setRightPanelWidth] = useState<number>(initialUISettings.rightPanelWidth)
+  const resizeStateRef = useRef<
+    | {
+        target: 'sidebar' | 'right'
+        startX: number
+        startWidth: number
+      }
+    | null
+  >(null)
 
   // Activity Bar State
   const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit'>('files')
@@ -286,18 +314,35 @@ function App() {
   const gitCommitInputRef = useRef<HTMLInputElement | null>(null)
   const autoOpenedRef = useRef(false)
   const [isMobileLayout, setIsMobileLayout] = useState(false)
+  const SIDEBAR_WIDTH_MIN = 200
+  const SIDEBAR_WIDTH_MAX = 420
+  const RIGHT_PANEL_WIDTH_MIN = 260
+  const RIGHT_PANEL_WIDTH_MAX = 520
 
   // Chat State
   const [chatMessages, setChatMessages] = useState<ChatItem[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState | null>(null)
   const [editorContextMenu, setEditorContextMenu] = useState<EditorContextMenuState | null>(null)
+  const chatMessagesRef = useRef<ChatItem[]>([])
   const chatSessionIdRef = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   )
   // Chat session management (future feature)
   // const [chatSessions, setChatSessions] = useState<Array<{ id: string; name: string; updatedAt: number }>>([])
   // const [showSessionManager, setShowSessionManager] = useState(false)
+
+  // Planner / Writer Mode State
+  const [writerMode, setWriterMode] = useState<WriterMode>('normal')
+  const [plannerState, setPlannerState] = useState<SessionPlannerState | null>(null)
+  const [plannerTasks, setPlannerTasks] = useState<NovelTask[]>([])
+  const [plannerBusy, setPlannerBusy] = useState(false)
+  const [plannerQueueRunning, setPlannerQueueRunning] = useState(false)
+  const [plannerLastRunError, setPlannerLastRunError] = useState<string | null>(null)
+  const plannerStopRef = useRef(false)
+  const streamWaitersRef = useRef<Map<string, StreamWaiter>>(new Map())
+  const streamFailuresRef = useRef<Set<string>>(new Set())
+  const streamOutputRef = useRef<Map<string, string>>(new Map())
 
   // Settings & Agents
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null)
@@ -352,6 +397,20 @@ function App() {
     return activeFile.content.replace(/\s/g, '').length
   }, [activeFile])
 
+  const plannerTaskStats = useMemo(() => {
+    const total = plannerTasks.length
+    const done = plannerTasks.filter((task) => task.status === 'done').length
+    const running = plannerTasks.filter((task) => task.status === 'running').length
+    const blocked = plannerTasks.filter((task) => task.status === 'blocked').length
+    const todo = plannerTasks.filter((task) => task.status === 'todo' || task.status === 'retry').length
+    return { total, done, running, blocked, todo }
+  }, [plannerTasks])
+
+  const plannerCurrentTask = useMemo(
+    () => plannerTasks.find((task) => task.status === 'running') ?? plannerTasks.find((task) => task.status === 'retry') ?? null,
+    [plannerTasks],
+  )
+
   const effectiveProviderId = useMemo(() => {
     if (!appSettings) return ''
     const active = appSettings.active_provider_id
@@ -390,13 +449,19 @@ function App() {
   })
 
   useEffect(() => {
+    chatMessagesRef.current = chatMessages
+  }, [chatMessages])
+
+  useEffect(() => {
     uiSettingsManager.updateSettings({
       theme,
       density: uiDensity,
       motion: uiMotion,
       sidebarCollapsed,
+      sidebarWidth,
+      rightPanelWidth,
     })
-  }, [theme, uiDensity, uiMotion, sidebarCollapsed])
+  }, [theme, uiDensity, uiMotion, sidebarCollapsed, sidebarWidth, rightPanelWidth])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -415,6 +480,73 @@ function App() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev)
   }, [])
+
+  const clampSidebarWidth = useCallback(
+    (value: number) => Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, value)),
+    [SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX],
+  )
+
+  const clampRightPanelWidth = useCallback(
+    (value: number) => Math.max(RIGHT_PANEL_WIDTH_MIN, Math.min(RIGHT_PANEL_WIDTH_MAX, value)),
+    [RIGHT_PANEL_WIDTH_MIN, RIGHT_PANEL_WIDTH_MAX],
+  )
+
+  const stopResize = useCallback(() => {
+    resizeStateRef.current = null
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }, [])
+
+  const onResizeMove = useCallback(
+    (event: globalThis.MouseEvent) => {
+      if (isMobileLayout) return
+      const state = resizeStateRef.current
+      if (!state) return
+      const dx = event.clientX - state.startX
+      if (state.target === 'sidebar') {
+        setSidebarWidth(clampSidebarWidth(state.startWidth + dx))
+      } else {
+        setRightPanelWidth(clampRightPanelWidth(state.startWidth - dx))
+      }
+    },
+    [clampRightPanelWidth, clampSidebarWidth, isMobileLayout],
+  )
+
+  const startSidebarResize = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (isMobileLayout || sidebarCollapsed) return
+      resizeStateRef.current = {
+        target: 'sidebar',
+        startX: event.clientX,
+        startWidth: sidebarWidth,
+      }
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+    },
+    [isMobileLayout, sidebarCollapsed, sidebarWidth],
+  )
+
+  const startRightPanelResize = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (isMobileLayout || !activeRightTab) return
+      resizeStateRef.current = {
+        target: 'right',
+        startX: event.clientX,
+        startWidth: rightPanelWidth,
+      }
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+    },
+    [activeRightTab, isMobileLayout, rightPanelWidth],
+  )
+
+  const layoutCssVars = useMemo(() => {
+    if (isMobileLayout) return undefined
+    return {
+      '--sidebar-width': `${clampSidebarWidth(sidebarWidth)}px`,
+      '--right-panel-width': `${clampRightPanelWidth(rightPanelWidth)}px`,
+    } as CSSProperties
+  }, [clampRightPanelWidth, clampSidebarWidth, isMobileLayout, rightPanelWidth, sidebarWidth])
 
   // --- Actions ---
 
@@ -544,6 +676,156 @@ function App() {
     await writeText('.novel/.settings/sensitive-words.json', raw)
   }, [workspaceRoot, sensitiveWordEnabled, sensitiveWordDictionary])
 
+  const extractTaskSummaryFromMessage = useCallback((text: string): string => {
+    const normalized = text.trim()
+    if (!normalized) return ''
+    const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (lines.length === 0) return ''
+    const useful = lines
+      .filter((line) => !line.startsWith('TASK_DONE:'))
+      .slice(-3)
+      .join(' ')
+      .trim()
+    return useful.slice(0, 360)
+  }, [])
+
+  const validateTaskQuality = useCallback(
+    async (task: NovelTask, assistantText: string, taskPool: NovelTask[]): Promise<TaskQualityResult> => {
+      const text = assistantText.trim()
+      if (!text) return { ok: false, reason: 'AI 未输出内容' }
+      const doneTag = text.includes(`TASK_DONE: ${task.id}`)
+      if (!doneTag) return { ok: false, reason: `缺少任务完成标记 TASK_DONE: ${task.id}` }
+
+      let content = ''
+      try {
+        content = await readText(task.scope)
+      } catch {
+        return { ok: false, reason: `目标文件未写入：${task.scope}` }
+      }
+      const normalized = content.replace(/\s+/g, '')
+      const minLength = Math.max(600, Math.floor(task.target_words * 0.42))
+      if (normalized.length < minLength) {
+        return { ok: false, reason: `文件内容偏短（${normalized.length}/${minLength}）` }
+      }
+
+      const placeholderPattern = /\bTODO\b|待补充|待完善|\[待写\]|lorem|xxx|待续/i
+      if (placeholderPattern.test(content)) {
+        return { ok: false, reason: '章节包含占位文本，未完成正式创作' }
+      }
+
+      const endText = content.trim()
+      if (endText.length > 0 && task.acceptance_checks.some((check) => check.includes('钩子'))) {
+        const endSlice = endText.slice(-80)
+        const hookPattern = /[？?！!。…]/
+        if (!hookPattern.test(endSlice)) {
+          return { ok: false, reason: '章节结尾缺少有效钩子或收束句' }
+        }
+      }
+
+      if (task.depends_on.length > 0) {
+        const depId = task.depends_on[0]
+        const depTask = taskPool.find((item) => item.id === depId)
+        if (depTask && depTask.scope !== task.scope) {
+          try {
+            const depContent = await readText(depTask.scope)
+            const currentHead = content.replace(/\s+/g, '').slice(0, 140)
+            const depHead = depContent.replace(/\s+/g, '').slice(0, 140)
+            if (currentHead.length > 80 && depHead.length > 80 && currentHead === depHead) {
+              return { ok: false, reason: '章节开头与上一任务高度重复' }
+            }
+          } catch {
+            // Ignore dependency read failure; not a hard error for balanced gate.
+          }
+        }
+      }
+
+      const chapterMatch = task.scope.match(/chapter-(\d+)\.md$/i)
+      if (chapterMatch && task.depends_on.length > 0) {
+        const depTask = taskPool.find((item) => item.id === task.depends_on[0])
+        const depMatch = depTask?.scope.match(/chapter-(\d+)\.md$/i)
+        if (depMatch) {
+          const currentNum = Number(chapterMatch[1])
+          const depNum = Number(depMatch[1])
+          if (Number.isFinite(currentNum) && Number.isFinite(depNum) && currentNum <= depNum) {
+            return { ok: false, reason: '章节时间顺序异常（章节编号未前进）' }
+          }
+        }
+      }
+
+      return { ok: true, reason: null }
+    },
+    [],
+  )
+
+  const refreshPlannerQueue = useCallback(async () => {
+    if (!workspaceRoot || !isTauriApp()) return
+    await novelPlannerService.ensurePlannerWorkspace()
+    const queue = await novelPlannerService.loadRunQueue()
+    setPlannerTasks(queue)
+  }, [workspaceRoot])
+
+  const loadPlannerSession = useCallback(async () => {
+    if (!workspaceRoot || !isTauriApp()) return
+    await novelPlannerService.ensurePlannerWorkspace()
+    const sessionId = chatSessionIdRef.current
+    const session = await novelPlannerService.getSessionState(sessionId)
+    setPlannerState(session)
+    setWriterMode(session.mode)
+    const queue = await novelPlannerService.loadRunQueue()
+    setPlannerTasks(queue)
+  }, [workspaceRoot])
+
+  const ensurePlanningArtifacts = useCallback(
+    async (mode: WriterMode, instruction?: string) => {
+      if (!workspaceRoot || !isTauriApp()) return
+      if (mode === 'normal') return
+      await novelPlannerService.ensurePlannerWorkspace()
+      await novelPlannerService.ensureMasterPlan(mode, {
+        instruction: instruction ?? '',
+        targetWords: 1_200_000,
+        chapterWordTarget,
+      })
+      const queue = await novelPlannerService.loadRunQueue()
+      if (queue.length > 0) {
+        setPlannerTasks(queue)
+        return
+      }
+      const tasks = await novelPlannerService.generateTasksFromPlan({
+        mode,
+        targetWords: 1_200_000,
+        chapterWordTarget,
+      })
+      setPlannerTasks(tasks)
+    },
+    [chapterWordTarget, workspaceRoot],
+  )
+
+  const buildPromptByMode = useCallback(
+    async (userInput: string, mode: WriterMode): Promise<string> => {
+      if (!workspaceRoot || !isTauriApp()) return userInput
+      await novelPlannerService.ensurePlannerWorkspace()
+      if (mode !== 'normal') {
+        await ensurePlanningArtifacts(mode, userInput)
+      }
+      const context = await novelPlannerService.buildModeContext(mode, tree, activePath)
+      return novelPlannerService.buildModePrompt(mode, userInput, context, activePath)
+    },
+    [activePath, ensurePlanningArtifacts, tree, workspaceRoot],
+  )
+
+  const waitForStreamCompletion = useCallback((streamId: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      streamWaitersRef.current.set(streamId, { resolve, reject })
+      window.setTimeout(() => {
+        const waiter = streamWaitersRef.current.get(streamId)
+        if (!waiter) return
+        streamWaitersRef.current.delete(streamId)
+        streamFailuresRef.current.delete(streamId)
+        reject(new Error('等待 AI 响应超时'))
+      }, 8 * 60 * 1000)
+    })
+  }, [])
+
   const loadGraph = useCallback(async () => {
     if (!workspaceRoot) return
     try {
@@ -584,6 +866,46 @@ function App() {
       setGraphEdges([])
     }
   }, [workspaceRoot])
+
+  const openSidebarTab = useCallback(
+    (tab: 'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'specKit') => {
+      setActiveSidebarTab(tab)
+      setSidebarCollapsed(false)
+      if (isMobileLayout) {
+        setActiveRightTab(null)
+      }
+    },
+    [isMobileLayout],
+  )
+
+  const openRightTab = useCallback(
+    (tab: 'chat' | 'graph' | 'writing-goal' | 'spec-kit') => {
+      setActiveRightTab(tab)
+      if (tab === 'graph') {
+        void loadGraph()
+      }
+      if (isMobileLayout) {
+        setSidebarCollapsed(true)
+      }
+    },
+    [isMobileLayout, loadGraph],
+  )
+
+  const toggleRightTab = useCallback(
+    (tab: 'chat' | 'graph' | 'writing-goal' | 'spec-kit') => {
+      setActiveRightTab((prev) => {
+        const next = prev === tab ? null : tab
+        if (next === 'graph') {
+          void loadGraph()
+        }
+        if (next && isMobileLayout) {
+          setSidebarCollapsed(true)
+        }
+        return next
+      })
+    },
+    [isMobileLayout, loadGraph],
+  )
 
   const refreshProjectPickerState = useCallback(async () => {
     if (!isTauriApp()) return
@@ -914,7 +1236,7 @@ function App() {
             onClick={() => void onOpenFile(entry)}
             onContextMenu={(e) => openExplorerContextMenu(e, entry)}
           >
-            <span className="file-icon file">📄</span>
+            <span className="file-icon file"><AppIcon name="file" size={14} /></span>
             {entry.name}
           </div>
         )
@@ -927,7 +1249,7 @@ function App() {
             onClick={() => setOpen((v) => !v)}
             onContextMenu={(e) => openExplorerContextMenu(e, entry)}
           >
-            <span className="file-icon">{open ? '📂' : '📁'}</span>
+            <span className="file-icon"><AppIcon name={open ? 'folderOpen' : 'folder'} size={14} /></span>
             {entry.name}
           </div>
           {open &&
@@ -1148,66 +1470,96 @@ function App() {
     chatInputRef.current?.focus()
   }, [getSelectionText])
 
-  const onSendChat = useCallback(async (overrideContent?: string) => {
-    const content = (overrideContent ?? chatInput).trim()
-    if (!content) return
-    const user: ChatItem = { id: newId(), role: 'user', content }
-    const streamId = newId()
-    const assistantId = newId()
-    const assistant: ChatItem = { id: assistantId, role: 'assistant', content: '', streaming: true, streamId }
+  const onSendChat = useCallback(
+    async (overrideContent?: string, options?: SendChatOptions): Promise<string | null> => {
+      const content = (overrideContent ?? chatInput).trim()
+      if (!content) return null
 
-    setChatMessages((prev) => [...prev, user, assistant])
-    if (!overrideContent || overrideContent === chatInput) {
-      setChatInput('')
-    }
+      let sendPayload = content
+      if (!options?.skipModeWrap) {
+        try {
+          sendPayload = await buildPromptByMode(content, writerMode)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setError(msg)
+        }
+      }
 
-    if (!isTauriApp()) {
-      setChatMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? { ...m, content: '当前未运行在 Tauri 环境，无法调用 AI。', streaming: false } : m)),
-      )
-      return
-    }
+      const user: ChatItem = { id: newId(), role: 'user', content }
+      const streamId = newId()
+      const assistantId = newId()
+      const assistant: ChatItem = { id: assistantId, role: 'assistant', content: '', streaming: true, streamId }
+      streamOutputRef.current.set(streamId, '')
 
-    if (!workspaceRoot) {
-      setChatMessages((prev) =>
-        prev.map((m) => (m.id === assistantId ? { ...m, content: '请先打开一个工作区（Workspace）。', streaming: false } : m)),
-      )
-      return
-    }
+      setChatMessages((prev) => [...prev, user, assistant])
+      if (!overrideContent || overrideContent === chatInput) {
+        setChatInput('')
+      }
 
-    try {
-      await initNovel()
-    } catch (e) {
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
-        ),
-      )
-      return
-    }
+      if (!isTauriApp()) {
+        streamOutputRef.current.delete(streamId)
+        setChatMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: '当前未运行在 Tauri 环境，无法调用 AI。', streaming: false } : m)),
+        )
+        return null
+      }
 
-    const messagesToSend = [...chatMessages, user].map((m) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      timestamp: m.timestamp || Date.now()
-    }))
-    try {
-      const { chatGenerateStream } = await import('./tauriChat')
-      await chatGenerateStream({
-        streamId,
-        messages: messagesToSend,
-        useMarkdown: appSettings?.output.use_markdown ?? false,
-        agentId: appSettings?.active_agent_id ?? null,
-      })
-    } catch (e) {
-      setChatMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
-        ),
-      )
-    }
-  }, [chatInput, chatMessages, newId, appSettings, workspaceRoot])
+      if (!workspaceRoot) {
+        streamOutputRef.current.delete(streamId)
+        setChatMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: '请先打开一个工作区（Workspace）。', streaming: false } : m)),
+        )
+        return null
+      }
+
+      try {
+        await initNovel()
+      } catch (e) {
+        streamOutputRef.current.delete(streamId)
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
+          ),
+        )
+        return null
+      }
+
+      const sourceMessages = [...chatMessagesRef.current, user]
+      const maxConversationWindow = 24
+      const boundedMessages =
+        sourceMessages.length > maxConversationWindow
+          ? sourceMessages.slice(sourceMessages.length - maxConversationWindow)
+          : sourceMessages
+      const messagesToSend = boundedMessages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp || Date.now(),
+      }))
+      if (messagesToSend.length > 0) {
+        messagesToSend[messagesToSend.length - 1].content = sendPayload
+      }
+      try {
+        const { chatGenerateStream } = await import('./tauriChat')
+        await chatGenerateStream({
+          streamId,
+          messages: messagesToSend,
+          useMarkdown: appSettings?.output.use_markdown ?? false,
+          agentId: appSettings?.active_agent_id ?? null,
+        })
+        return streamId
+      } catch (e) {
+        streamOutputRef.current.delete(streamId)
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
+          ),
+        )
+        return null
+      }
+    },
+    [appSettings, buildPromptByMode, chatInput, newId, workspaceRoot, writerMode],
+  )
 
   const onSmartComplete = useCallback(() => {
     if (!activeFile) return
@@ -1232,6 +1584,174 @@ function App() {
       `上下文：\n${snippet}`
     void onSendChat(prompt)
   }, [activeFile, chapterWordTarget, activeCharCount, onSendChat])
+
+  const onWriterModeChange = useCallback(
+    async (mode: WriterMode) => {
+      if (!workspaceRoot || !isTauriApp()) {
+        setWriterMode(mode)
+        return
+      }
+      setWriterMode(mode)
+      const session = await novelPlannerService.setSessionMode(chatSessionIdRef.current, mode)
+      setPlannerState(session)
+      if (mode === 'normal') {
+        setPlannerLastRunError(null)
+        return
+      }
+      setPlannerBusy(true)
+      try {
+        await ensurePlanningArtifacts(mode)
+        await refreshPlannerQueue()
+      } catch (e) {
+        setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setPlannerBusy(false)
+      }
+    },
+    [ensurePlanningArtifacts, refreshPlannerQueue, workspaceRoot],
+  )
+
+  const onGeneratePlanAndTasks = useCallback(async () => {
+    if (!workspaceRoot || !isTauriApp()) return
+    if (writerMode === 'normal') {
+      await message('普通模式不生成大纲与任务，请切换为 Plan 或 Spec。', { title: '提示' })
+      return
+    }
+    setPlannerBusy(true)
+    setPlannerLastRunError(null)
+    try {
+      await novelPlannerService.generateMasterPlan(writerMode, {
+        instruction: chatInput,
+        targetWords: 1_200_000,
+        chapterWordTarget,
+      })
+      const tasks = await novelPlannerService.generateTasksFromPlan({
+        mode: writerMode,
+        targetWords: 1_200_000,
+        chapterWordTarget,
+      })
+      setPlannerTasks(tasks)
+      if (activePath !== MASTER_PLAN_RELATIVE_PATH) {
+        await onOpenByPath(MASTER_PLAN_RELATIVE_PATH)
+      }
+      if ((plannerState?.auto_run ?? true) && tasks.length > 0) {
+        void runPlannerQueue(chatInput)
+      }
+    } catch (e) {
+      setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPlannerBusy(false)
+    }
+  }, [activePath, chapterWordTarget, chatInput, onOpenByPath, plannerState, workspaceRoot, writerMode])
+
+  const runPlannerQueue = useCallback(
+    async (userInstruction = '') => {
+      if (!workspaceRoot || !isTauriApp()) return
+      if (writerMode === 'normal') {
+        setPlannerLastRunError('普通模式不执行任务队列')
+        return
+      }
+      if (plannerQueueRunning) return
+      setPlannerQueueRunning(true)
+      setPlannerLastRunError(null)
+      plannerStopRef.current = false
+      setPlannerBusy(true)
+
+      try {
+        await ensurePlanningArtifacts(writerMode, userInstruction)
+        let tasks = await novelPlannerService.loadRunQueue()
+        setPlannerTasks(tasks)
+        let guard = 0
+        while (!plannerStopRef.current) {
+          guard += 1
+          if (guard > 400) break
+          const next = novelPlannerService.getNextExecutableTask(tasks)
+          if (!next) break
+
+          await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, next.id, null)
+          tasks = await novelPlannerService.updateTask(writerMode, next.id, (task) => ({
+            ...task,
+            status: 'running',
+            last_error: undefined,
+          }))
+          setPlannerTasks(tasks)
+
+          const context = await novelPlannerService.buildModeContext(writerMode, tree, next.scope || activePath)
+          const taskPrompt = novelPlannerService.buildTaskExecutionPrompt(writerMode, next, context, userInstruction)
+          const streamId = await onSendChat(taskPrompt, { skipModeWrap: true })
+          if (!streamId) {
+            throw new Error(`任务 ${next.id} 无法启动`)
+          }
+          await waitForStreamCompletion(streamId)
+          const latestAssistant = streamOutputRef.current.get(streamId) ?? ''
+          streamOutputRef.current.delete(streamId)
+
+          const quality = await validateTaskQuality(next, latestAssistant, tasks)
+          if (!quality.ok) {
+            tasks = await novelPlannerService.updateTask(writerMode, next.id, (task) => ({
+              ...task,
+              status: task.retries >= 1 ? 'blocked' : 'retry',
+              retries: task.retries + 1,
+              last_error: quality.reason ?? '质量校验失败',
+            }))
+            setPlannerTasks(tasks)
+            if ((tasks.find((task) => task.id === next.id)?.status ?? '') === 'blocked') {
+              throw new Error(`任务 ${next.id} 已阻塞：${quality.reason ?? '未知错误'}`)
+            }
+            continue
+          }
+
+          const summary = extractTaskSummaryFromMessage(latestAssistant)
+          tasks = await novelPlannerService.updateTask(writerMode, next.id, (task) => ({
+            ...task,
+            status: 'done',
+            completed_at: new Date().toISOString(),
+            last_error: undefined,
+          }))
+          await novelPlannerService.appendContinuityEntry(next, summary || '任务完成')
+          await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, null, null)
+          setPlannerTasks(tasks)
+          await refreshTree()
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setPlannerLastRunError(msg)
+        await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, null, msg)
+      } finally {
+        plannerStopRef.current = false
+        setPlannerQueueRunning(false)
+        setPlannerBusy(false)
+      }
+    },
+    [
+      ensurePlanningArtifacts,
+      validateTaskQuality,
+      extractTaskSummaryFromMessage,
+      isTauriApp,
+      onSendChat,
+      plannerQueueRunning,
+      refreshTree,
+      waitForStreamCompletion,
+      workspaceRoot,
+      writerMode,
+      tree,
+      activePath,
+    ],
+  )
+
+  const stopPlannerQueue = useCallback(() => {
+    plannerStopRef.current = true
+    setPlannerQueueRunning(false)
+  }, [])
+
+  const onPlannerAutoRunChange = useCallback(
+    async (nextAutoRun: boolean) => {
+      if (!workspaceRoot || !isTauriApp()) return
+      const session = await novelPlannerService.setSessionAutoRun(chatSessionIdRef.current, nextAutoRun)
+      setPlannerState(session)
+    },
+    [workspaceRoot],
+  )
 
   // --- DiffView Handlers ---
 
@@ -1562,6 +2082,28 @@ function App() {
   }, [isMobileLayout])
 
   useEffect(() => {
+    if (isMobileLayout) {
+      stopResize()
+      return
+    }
+    const handleMouseMove = (event: globalThis.MouseEvent) => onResizeMove(event)
+    const handleMouseUp = () => stopResize()
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      stopResize()
+    }
+  }, [isMobileLayout, onResizeMove, stopResize])
+
+  useEffect(() => {
+    if (!isMobileLayout) return
+    if (!activePath) return
+    setSidebarCollapsed(true)
+  }, [isMobileLayout, activePath])
+
+  useEffect(() => {
     if (autoOpenedRef.current) return
     autoOpenedRef.current = true
     void (async () => {
@@ -1609,6 +2151,24 @@ function App() {
     void refreshProjectPickerState()
     setAppView((prev) => (prev === 'workspace' ? prev : 'workspace'))
   }, [loadProjectSettings, loadSensitiveWordSettings, refreshGit, refreshProjectPickerState, workspaceRoot])
+
+  useEffect(() => {
+    if (!isTauriApp()) return
+    if (!workspaceRoot) return
+    void loadPlannerSession().catch((e) => {
+      setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+    })
+  }, [loadPlannerSession, workspaceRoot])
+
+  useEffect(() => {
+    if (!workspaceRoot || !isTauriApp()) return
+    if (writerMode === 'normal') return
+    if (!(plannerState?.auto_run ?? false)) return
+    if (plannerQueueRunning || plannerBusy) return
+    const next = novelPlannerService.getNextExecutableTask(plannerTasks)
+    if (!next) return
+    void runPlannerQueue()
+  }, [isTauriApp, plannerBusy, plannerQueueRunning, plannerState, plannerTasks, runPlannerQueue, workspaceRoot, writerMode])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -1684,6 +2244,8 @@ function App() {
       if (!streamId) return
       const token = typeof p.token === 'string' ? p.token : ''
       if (!token) return
+      const prevText = streamOutputRef.current.get(streamId) ?? ''
+      streamOutputRef.current.set(streamId, `${prevText}${token}`)
       setChatMessages((prev) =>
         prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, content: `${m.content}${token}` } : m)),
       )
@@ -1695,6 +2257,19 @@ function App() {
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
       setChatMessages((prev) => prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, streaming: false } : m)))
+      const waiter = streamWaitersRef.current.get(streamId)
+      if (waiter) {
+        streamWaitersRef.current.delete(streamId)
+        if (streamFailuresRef.current.has(streamId)) {
+          streamFailuresRef.current.delete(streamId)
+          waiter.reject(new Error('AI 任务执行失败'))
+        } else {
+          waiter.resolve()
+        }
+      }
+      window.setTimeout(() => {
+        streamOutputRef.current.delete(streamId)
+      }, 30000)
     }).then((u) => unlistenFns.push(u))
 
     void listen('ai_change_set', (event) => {
@@ -1758,6 +2333,16 @@ function App() {
             : m,
         ),
       )
+      streamFailuresRef.current.add(streamId)
+      const waiter = streamWaitersRef.current.get(streamId)
+      if (waiter) {
+        streamWaitersRef.current.delete(streamId)
+        streamFailuresRef.current.delete(streamId)
+        waiter.reject(new Error(extra ? `${message} (${extra})` : message))
+      }
+      window.setTimeout(() => {
+        streamOutputRef.current.delete(streamId)
+      }, 1000)
     }).then((u) => unlistenFns.push(u))
 
     return () => {
@@ -1936,66 +2521,48 @@ function App() {
   }
 
   return (
-    <div className="app-container" data-theme={theme} data-density={uiDensity} data-motion={uiMotion}>
+    <div className="app-container" data-theme={theme} data-density={uiDensity} data-motion={uiMotion} style={layoutCssVars}>
       <div className="workbench-body">
         {/* Activity Bar (Left) */}
         <div className="activity-bar">
           <div
             className={`activity-bar-item ${activeSidebarTab === 'files' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveSidebarTab('files')
-              setSidebarCollapsed(false)
-            }}
+            onClick={() => openSidebarTab('files')}
             title="资源管理器"
           >
             <span className="activity-bar-icon"><AppIcon name="files" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'chapters' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveSidebarTab('chapters')
-              setSidebarCollapsed(false)
-            }}
+            onClick={() => openSidebarTab('chapters')}
             title="章节管理"
           >
             <span className="activity-bar-icon"><AppIcon name="chapters" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'characters' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveSidebarTab('characters')
-              setSidebarCollapsed(false)
-            }}
+            onClick={() => openSidebarTab('characters')}
             title="人物管理"
           >
             <span className="activity-bar-icon"><AppIcon name="characters" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'plotlines' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveSidebarTab('plotlines')
-              setSidebarCollapsed(false)
-            }}
+            onClick={() => openSidebarTab('plotlines')}
             title="情节线管理"
           >
             <span className="activity-bar-icon"><AppIcon name="plotlines" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'specKit' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveSidebarTab('specKit')
-              setSidebarCollapsed(false)
-            }}
+            onClick={() => openSidebarTab('specKit')}
             title="Spec-Kit"
           >
             <span className="activity-bar-icon"><AppIcon name="specKit" /></span>
           </div>
           <div
             className={`activity-bar-item ${activeSidebarTab === 'git' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveSidebarTab('git')
-              setSidebarCollapsed(false)
-            }}
+            onClick={() => openSidebarTab('git')}
             title="源代码管理"
           >
             <span className="activity-bar-icon"><AppIcon name="git" /></span>
@@ -2029,14 +2596,14 @@ function App() {
           <>
             <div className="sidebar-header">
               <span>{workspaceRoot ? workspaceRoot.split(/[/\\]/).pop() || '项目' : '资源管理器'}</span>
-              <div style={{ flex: 1 }} />
+              <div className="spacer" />
               {workspaceRoot ? (
                 <button className="icon-button" onClick={() => void refreshTree()} title="刷新">
                   <AppIcon name="refresh" size={14} />
                 </button>
               ) : null}
             </div>
-            <div className="sidebar-content" style={{ flex: 1 }} onContextMenu={(e) => {
+            <div className="sidebar-content flex-1" onContextMenu={(e) => {
               e.preventDefault()
               if (workspaceRoot) {
                 setExplorerContextMenu({ x: e.clientX, y: e.clientY, entry: { kind: 'dir', path: workspaceRoot, name: workspaceRoot.split('/').pop() || '', children: [] } })
@@ -2045,7 +2612,7 @@ function App() {
               {workspaceRoot ? (
                 <>
                   {error ? <div className="error-text">{error}</div> : null}
-                  <div style={{ padding: '8px 10px', borderBottom: '1px solid #333' }}>
+                  <div className="sidebar-search-wrap">
                     <input
                       className="explorer-search"
                       value={explorerQuery}
@@ -2053,10 +2620,10 @@ function App() {
                       placeholder="搜索..."
                     />
                   </div>
-                  {visibleTree ? <TreeNode entry={visibleTree} depth={0} /> : <div style={{ padding: 10 }}>加载中...</div>}
+                  {visibleTree ? <TreeNode entry={visibleTree} depth={0} /> : <div className="sidebar-loading">加载中...</div>}
                 </>
               ) : (
-                <div style={{ padding: 20, textAlign: 'center' }}>
+                <div className="sidebar-empty">
                   <button
                     className="primary-button"
                     onClick={() => {
@@ -2079,7 +2646,7 @@ function App() {
                   ) : null}
                   {!isTauriApp() && (
                     <input
-                      style={{ width: '100%', marginTop: 10, padding: 4 }}
+                      className="workspace-path-input"
                       value={workspaceInput}
                       onChange={(e) => setWorkspaceInput(e.target.value)}
                       placeholder="或输入路径"
@@ -2091,15 +2658,14 @@ function App() {
             {workspaceRoot ? (
               <>
                 <div className="sidebar-header">大纲</div>
-                <div className="sidebar-content" style={{ flex: '0 0 auto', maxHeight: '150px' }}>
+                <div className="sidebar-content sidebar-outline">
                   <button
-                    className="btn btn-secondary"
+                    className="btn btn-secondary sidebar-outline-btn"
                     onClick={() => void onOpenByPath('outline/outline.md')}
-                    style={{ width: 'calc(100% - 20px)', margin: '10px', display: 'block' }}
                   >
                     打开 outline.md
                   </button>
-                  <div style={{ padding: '0 10px', fontSize: '11px', color: '#888' }}>在 outline/ 目录维护章节大纲。</div>
+                  <div className="sidebar-outline-hint">在 outline/ 目录维护章节大纲。</div>
                 </div>
               </>
             ) : null}
@@ -2121,7 +2687,7 @@ function App() {
               </div>
               <div className="git-status-list">
                 {gitItems.length === 0 ? (
-                  <div style={{ padding: 10, color: '#888' }}>无变更</div>
+                  <div className="git-empty">无变更</div>
                 ) : (
                   gitItems.map((it) => (
                     <div
@@ -2152,10 +2718,10 @@ function App() {
                 </button>
               </div>
               {gitCommits.length > 0 ? (
-                <div style={{ padding: 10, borderTop: '1px solid #333' }}>
+                <div className="git-commits">
                   {gitCommits.slice(0, 5).map((c) => (
-                    <div key={c.id} style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
-                      <span style={{ fontFamily: 'monospace', marginRight: 6 }}>{c.id.slice(0, 7)}</span>
+                    <div key={c.id} className="git-commit-item">
+                      <span className="git-commit-hash">{c.id.slice(0, 7)}</span>
                       <span>{c.summary}</span>
                     </div>
                   ))}
@@ -2206,6 +2772,13 @@ function App() {
 
         {activeSidebarTab === 'specKit' ? <SpecKitPanel /> : null}
       </div>
+      {!isMobileLayout && !sidebarCollapsed ? (
+        <div
+          className="layout-resize-handle layout-resize-handle-sidebar"
+          onMouseDown={startSidebarResize}
+          title="拖动调整左侧栏宽度"
+        />
+      ) : null}
 
       {/* Main Content */}
       <div className="main-content">
@@ -2277,7 +2850,7 @@ function App() {
                     {
                       id: 'ai-polish',
                       label: 'AI 润色',
-                      icon: '✨',
+                      icon: 'A',
                       action: async (editor, selection) => {
                         await runInlineAIAssist('polish', selection, editor)
                       },
@@ -2286,7 +2859,7 @@ function App() {
                     {
                       id: 'ai-expand',
                       label: 'AI 扩写',
-                      icon: '📝',
+                      icon: '+',
                       action: async (editor, selection) => {
                         await runInlineAIAssist('expand', selection, editor)
                       },
@@ -2295,7 +2868,7 @@ function App() {
                     {
                       id: 'ai-condense',
                       label: 'AI 缩写',
-                      icon: '✂️',
+                      icon: '-',
                       action: async (editor, selection) => {
                         await runInlineAIAssist('condense', selection, editor)
                       },
@@ -2304,7 +2877,7 @@ function App() {
                     {
                       id: 'ai-spec-kit-fix',
                       label: 'Spec-Kit 修正',
-                      icon: '🧩',
+                      icon: 'S',
                       action: async (editor, selection) => {
                         await runInlineAIAssist('spec_kit_fix', selection, editor)
                       },
@@ -2345,24 +2918,33 @@ function App() {
 
       {/* Right Activity Bar & Panel */}
       <div className="right-panel-container">
+        {!isMobileLayout && activeRightTab ? (
+          <div
+            className="layout-resize-handle layout-resize-handle-right"
+            onMouseDown={startRightPanelResize}
+            title="拖动调整右侧面板宽度"
+          />
+        ) : null}
         {activeRightTab ? (
           <aside className="right-panel-content">
             {activeRightTab === 'chat' ? (
               <>
                 <div className="ai-header">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, color: '#888', fontWeight: 500 }}>AI 对话</span>
+                  <div className="ai-title-row">
+                    <span>AI 对话</span>
                     <button
-                      className="icon-button"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="icon-button ai-new-session-btn"
                       onClick={() => {
-                        const newId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-                        chatSessionIdRef.current = newId
+                        const nextSessionId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+                        chatSessionIdRef.current = nextSessionId
                         setChatMessages([])
+                        void loadPlannerSession().catch((e) => {
+                          setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+                        })
                       }}
                       title="新建对话"
                     >
-                      ➕ 新会话
+                      新会话
                     </button>
                   </div>
                   <div className="ai-config-row">
@@ -2381,7 +2963,7 @@ function App() {
                       {agentsList.length === 0 ? <option value="">无智能体</option> : null}
                       {agentsList.map((a) => (
                         <option key={a.id} value={a.id}>
-                          🤖 {a.name}
+                          {a.name}
                         </option>
                       ))}
                     </select>
@@ -2406,13 +2988,114 @@ function App() {
                       ))}
                     </select>
                   </div>
+                  <div className="ai-config-row">
+                    <select
+                      className="ai-select"
+                      value={writerMode}
+                      onChange={(e) => void onWriterModeChange(e.target.value as WriterMode)}
+                    >
+                      <option value="normal">Normal 模式（无大纲）</option>
+                      <option value="plan">Plan 模式（粗纲）</option>
+                      <option value="spec">Spec 模式（粗纲+任务）</option>
+                    </select>
+                  </div>
+                  <div className="ai-planner-actions">
+                    <button
+                      className="icon-button"
+                      disabled={plannerBusy || writerMode === 'normal'}
+                      onClick={() => void onGeneratePlanAndTasks()}
+                      title="生成粗纲和任务队列"
+                    >
+                      生成规划
+                    </button>
+                    <button
+                      className="icon-button"
+                      disabled={writerMode === 'normal'}
+                      onClick={() => void onOpenByPath(MASTER_PLAN_RELATIVE_PATH)}
+                      title="打开设计文档"
+                    >
+                      设计文档
+                    </button>
+                    <button
+                      className="icon-button"
+                      disabled={writerMode === 'normal'}
+                      onClick={() => void onOpenByPath('.novel/tasks/run-queue.md')}
+                      title="打开任务队列"
+                    >
+                      Tasks
+                    </button>
+                    <button
+                      className="icon-button"
+                      disabled={plannerBusy || writerMode === 'normal' || plannerQueueRunning}
+                      onClick={() => void runPlannerQueue(chatInput)}
+                      title="执行任务队列"
+                    >
+                      自动执行
+                    </button>
+                    <button
+                      className="icon-button"
+                      disabled={!plannerQueueRunning}
+                      onClick={stopPlannerQueue}
+                      title="停止任务队列"
+                    >
+                      停止
+                    </button>
+                    <label className="planner-auto-run">
+                      <input
+                        type="checkbox"
+                        checked={plannerState?.auto_run ?? writerMode !== 'normal'}
+                        disabled={writerMode === 'normal' || plannerQueueRunning}
+                        onChange={(e) => void onPlannerAutoRunChange(e.target.checked)}
+                      />
+                      自动续跑
+                    </label>
+                  </div>
+                  {writerMode !== 'normal' ? (
+                    <div className="planner-progress-line">
+                      <span>任务 {plannerTaskStats.done}/{plannerTaskStats.total}</span>
+                      <span>待执行 {plannerTaskStats.todo}</span>
+                      <span>运行中 {plannerTaskStats.running}</span>
+                      {plannerTaskStats.blocked > 0 ? <span>阻塞 {plannerTaskStats.blocked}</span> : null}
+                    </div>
+                  ) : null}
+                  {plannerCurrentTask ? (
+                    <div className="planner-current-task">
+                      当前任务：{plannerCurrentTask.id} {plannerCurrentTask.title}
+                    </div>
+                  ) : null}
+                  {plannerLastRunError ? <div className="planner-error-text">{plannerLastRunError}</div> : null}
                 </div>
+
+                {writerMode !== 'normal' && plannerTasks.length > 0 ? (
+                  <div className="planner-task-board">
+                    {plannerTasks.slice(0, 8).map((task) => (
+                      <div key={task.id} className={`planner-task-item is-${task.status}`}>
+                        <div className="planner-task-main">
+                          <span className="planner-task-id">{task.id}</span>
+                          <span className="planner-task-title">{task.title}</span>
+                        </div>
+                        <div className="planner-task-meta">
+                          <span>V{task.volume}</span>
+                          <span>{task.target_words} 字</span>
+                          <span>{task.status}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {plannerTasks.length > 8 ? (
+                      <div className="planner-task-more">
+                        还有 {plannerTasks.length - 8} 个任务，打开 `run-queue.md` 查看全部
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <div className="ai-messages">
                   {chatMessages.length === 0 ? (
-                    <div style={{ padding: 20, color: '#888', textAlign: 'center', fontSize: 13 }}>
-                      <div>👋 嗨，我是你的写作助手。</div>
-                      <div style={{ marginTop: 8 }}>我可以帮你续写情节、润色文笔或构思大纲。</div>
+                    <div className="ai-empty-state">
+                      <div>嗨，我是你的写作助手。</div>
+                      <div className="ai-empty-state-sub">
+                        当前模式：{writerMode.toUpperCase()}。我可以帮你续写情节、规划大纲并按任务自动写作。
+                      </div>
                     </div>
                   ) : (
                     chatMessages.map((m) => (
@@ -2433,7 +3116,7 @@ function App() {
                             </span>
                           )}
                         </div>
-                        <div className="message-content" style={{ whiteSpace: 'pre-wrap' }} onContextMenu={(e) => openChatContextMenu(e, m.content)}>
+                        <div className="message-content" onContextMenu={(e) => openChatContextMenu(e, m.content)}>
                           {m.content || (m.role === 'assistant' && m.streaming ? '正在思考…' : '')}
                         </div>
                         {m.role === 'assistant' && m.streaming ? (
@@ -2445,7 +3128,6 @@ function App() {
                         {m.role === 'assistant' && m.changeSet && m.changeSet.modifications.length > 0 ? (
                           <div className="file-modifications">
                             <div className="file-modifications-header">
-                              <span className="file-icon">📝</span>
                               <span>修改了 {m.changeSet.filePath.split('/').pop()}</span>
                             </div>
                             <div className="file-modifications-list">
@@ -2455,7 +3137,6 @@ function App() {
                                 title="点击查看差异"
                               >
                                 <div className="file-modification-name">
-                                  <span className="file-icon">📄</span>
                                   <span className="file-name">{m.changeSet.filePath.split('/').pop()}</span>
                                 </div>
                                 <div className="file-modification-path">{m.changeSet.filePath}</div>
@@ -2470,7 +3151,7 @@ function App() {
                         {m.role === 'assistant' && m.content ? (
                           <div className="ai-actions">
                             <button className="icon-button" disabled={!activeFile} onClick={() => insertAtCursor(m.content)} title="插入">
-                              ↵
+                              插入
                             </button>
                           </div>
                         ) : null}
@@ -2480,14 +3161,14 @@ function App() {
                 </div>
 
                 <div className="ai-input-area">
-                  <div className="ai-actions" style={{ marginBottom: 6, justifyContent: 'flex-start', gap: 10 }}>
+                  <div className="ai-actions ai-input-tools">
                     <button className="icon-button" disabled={!activeFile} onClick={() => onQuoteSelection()} title="引用选区">
-                      ❝
+                      引用
                     </button>
                     <button className="icon-button" disabled={!activeFile} onClick={() => void onSmartComplete()} title="智能补全">
-                      ⚡
+                      续写
                     </button>
-                    <div style={{ flex: 1 }} />
+                    <div className="spacer" />
                     <button className="primary-button" disabled={busy || !chatInput.trim()} onClick={() => void onSendChat()}>
                       发送
                     </button>
@@ -2510,16 +3191,16 @@ function App() {
             ) : null}
 
             {activeRightTab === 'graph' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div className="ai-header" style={{ justifyContent: 'center' }}>
+              <div className="graph-panel">
+                <div className="ai-header graph-header">
                   <button className="icon-button" onClick={() => void loadGraph()}>
-                    ↻ 刷新图谱
+                    刷新图谱
                   </button>
                 </div>
-                <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-                  <canvas ref={graphCanvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
+                <div className="graph-canvas-wrap">
+                  <canvas ref={graphCanvasRef} className="graph-canvas" />
                 </div>
-                <div style={{ padding: 10, fontSize: 11, color: '#666', textAlign: 'center' }}>
+                <div className="graph-footer">
                   数据: concept/characters.md & relations.md
                 </div>
               </div>
@@ -2543,31 +3224,28 @@ function App() {
         <div className="right-activity-bar">
           <div
             className={`right-activity-item ${activeRightTab === 'chat' ? 'active' : ''}`}
-            onClick={() => setActiveRightTab(activeRightTab === 'chat' ? null : 'chat')}
+            onClick={() => toggleRightTab('chat')}
             title="对话"
           >
             <span className="right-activity-icon"><AppIcon name="chat" /></span>
           </div>
           <div
             className={`right-activity-item ${activeRightTab === 'graph' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveRightTab(activeRightTab === 'graph' ? null : 'graph')
-              if (activeRightTab !== 'graph') void loadGraph()
-            }}
+            onClick={() => toggleRightTab('graph')}
             title="图谱"
           >
             <span className="right-activity-icon"><AppIcon name="graph" /></span>
           </div>
           <div
             className={`right-activity-item ${activeRightTab === 'writing-goal' ? 'active' : ''}`}
-            onClick={() => setActiveRightTab(activeRightTab === 'writing-goal' ? null : 'writing-goal')}
+            onClick={() => toggleRightTab('writing-goal')}
             title="写作目标"
           >
             <span className="right-activity-icon"><AppIcon name="target" /></span>
           </div>
           <div
             className={`right-activity-item ${activeRightTab === 'spec-kit' ? 'active' : ''}`}
-            onClick={() => setActiveRightTab(activeRightTab === 'spec-kit' ? null : 'spec-kit')}
+            onClick={() => toggleRightTab('spec-kit')}
             title="Spec-Kit 检查"
           >
             <span className="right-activity-icon"><AppIcon name="specKit" /></span>
@@ -2663,10 +3341,10 @@ function App() {
             </div>
             <div className="modal-body">
               {!appSettings ? (
-                <div style={{ padding: 12, color: '#ccc' }}>
-                  <div style={{ fontSize: 13, marginBottom: 8 }}>设置加载失败或尚未加载完成。</div>
+                <div className="settings-load-state">
+                  <div className="settings-load-message">设置加载失败或尚未加载完成。</div>
                   {settingsError ? <div className="error-text">{settingsError}</div> : null}
-                  <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                  <div className="settings-load-actions">
                     <button className="btn btn-secondary" onClick={() => void reloadAppSettings()}>
                       重新加载
                     </button>
@@ -2676,11 +3354,11 @@ function App() {
                   </div>
                 </div>
               ) : (
-                <div className="settings-form">
-                <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>通用</h3>
-                  <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <label style={{ flex: 1, writingMode: 'horizontal-tb' }}>Markdown 输出</label>
+                <div className="settings-form settings-page">
+                <div className="settings-section">
+                  <h3 className="settings-section-title">通用</h3>
+                  <div className="form-group settings-inline-row">
+                    <label className="settings-inline-label">Markdown 输出</label>
                     <input
                       type="checkbox"
                       checked={appSettings.output.use_markdown}
@@ -2704,14 +3382,7 @@ function App() {
                         setLaunchModeState(mode)
                         void persistAppSettings(next, prev)
                       }}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="picker">总是显示项目选择页</option>
                       <option value="auto_last">自动打开上次项目</option>
@@ -2741,14 +3412,7 @@ function App() {
                         setAppSettingsState(next)
                         void persistAppSettings(next, prev)
                       }}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="auto_apply">自动应用（推荐）</option>
                       <option value="review">审阅后应用</option>
@@ -2768,14 +3432,7 @@ function App() {
                     <select
                       value={theme}
                       onChange={(e) => setTheme(e.target.value as 'light' | 'dark')}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="dark">暗色</option>
                       <option value="light">亮色</option>
@@ -2786,14 +3443,7 @@ function App() {
                     <select
                       value={uiDensity}
                       onChange={(e) => setUiDensity(e.target.value as 'compact' | 'comfortable')}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="comfortable">默认</option>
                       <option value="compact">紧凑</option>
@@ -2804,23 +3454,15 @@ function App() {
                     <select
                       value={uiMotion}
                       onChange={(e) => setUiMotion(e.target.value as 'full' | 'reduced')}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="full">完整动效</option>
                       <option value="reduced">减少动效</option>
                     </select>
                   </div>
-                  <div style={{ marginTop: 12 }}>
+                  <div className="settings-action-row">
                     <button
-                      className="btn btn-secondary"
-                      style={{ fontSize: 12, padding: '6px 12px' }}
+                      className="btn btn-secondary settings-small-btn"
                       onClick={() => {
                         uiSettingsManager.resetSettings()
                         const defaults = uiSettingsManager.getSettings() as UISettingsState
@@ -2828,6 +3470,8 @@ function App() {
                         setUiDensity(defaults.density)
                         setUiMotion(defaults.motion)
                         setSidebarCollapsed(defaults.sidebarCollapsed)
+                        setSidebarWidth(defaults.sidebarWidth)
+                        setRightPanelWidth(defaults.rightPanelWidth)
                       }}
                     >
                       重置界面设置
@@ -2836,8 +3480,8 @@ function App() {
                 </div>
 
                 {/* Editor Configuration Section */}
-                <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>编辑器配置</h3>
+                <div className="settings-section">
+                  <h3 className="settings-section-title">编辑器配置</h3>
 
                   {/* Font Family */}
                   <div className="form-group">
@@ -2847,14 +3491,7 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ fontFamily: e.target.value })
                       }}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="system-ui, -apple-system, sans-serif">系统默认</option>
                       <option value="'Songti SC', 'SimSun', serif">宋体</option>
@@ -2870,6 +3507,7 @@ function App() {
                   <div className="form-group">
                     <label>字号 ({editorUserConfig.fontSize}px)</label>
                     <input
+                      className="settings-range-input"
                       type="range"
                       min="10"
                       max="32"
@@ -2878,7 +3516,6 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ fontSize: Number(e.target.value) })
                       }}
-                      style={{ width: '100%' }}
                     />
                   </div>
 
@@ -2886,6 +3523,7 @@ function App() {
                   <div className="form-group">
                     <label>行高 ({editorUserConfig.lineHeight})</label>
                     <input
+                      className="settings-range-input"
                       type="range"
                       min="1.0"
                       max="3.0"
@@ -2894,7 +3532,6 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ lineHeight: Number(e.target.value) })
                       }}
-                      style={{ width: '100%' }}
                     />
                   </div>
 
@@ -2906,14 +3543,7 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ theme: e.target.value as 'light' | 'dark' })
                       }}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="dark">暗色</option>
                       <option value="light">亮色</option>
@@ -2928,14 +3558,7 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ editorWidth: e.target.value as 'centered' | 'full' })
                       }}
-                      style={{
-                        padding: '6px 10px',
-                        background: '#333',
-                        border: '1px solid #555',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: 13,
-                      }}
+                      
                     >
                       <option value="centered">居中（800px）</option>
                       <option value="full">全宽</option>
@@ -2946,6 +3569,7 @@ function App() {
                   <div className="form-group">
                     <label>自动保存间隔 ({editorUserConfig.autoSaveInterval === 0 ? '禁用' : `${editorUserConfig.autoSaveInterval}秒`})</label>
                     <input
+                      className="settings-range-input"
                       type="range"
                       min="0"
                       max="300"
@@ -2954,18 +3578,16 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ autoSaveInterval: Number(e.target.value) })
                       }}
-                      style={{ width: '100%' }}
                     />
-                    <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                    <div className="settings-hint">
                       {editorUserConfig.autoSaveInterval === 0 ? '自动保存已禁用' : `每 ${editorUserConfig.autoSaveInterval} 秒自动保存到本地缓存`}
                     </div>
                   </div>
 
                   {/* Reset Button */}
-                  <div style={{ marginTop: 12 }}>
+                  <div className="settings-action-row">
                     <button
-                      className="btn btn-secondary"
-                      style={{ fontSize: 12, padding: '6px 12px' }}
+                      className="btn btn-secondary settings-small-btn"
                       onClick={() => {
                         void (async () => {
                           const ok = await showConfirm('确定要重置编辑器配置为默认值吗？')
@@ -2981,12 +3603,12 @@ function App() {
                 </div>
 
                 {/* Sensitive Word Configuration Section */}
-                <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>敏感词检测</h3>
+                <div className="settings-section">
+                  <h3 className="settings-section-title">敏感词检测</h3>
 
                   {/* Enable/Disable Toggle */}
-                  <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                    <label style={{ flex: 1, writingMode: 'horizontal-tb' }}>启用敏感词检测</label>
+                  <div className="form-group settings-inline-row settings-inline-row-spaced">
+                    <label className="settings-inline-label">启用敏感词检测</label>
                     <input
                       type="checkbox"
                       checked={sensitiveWordEnabled}
@@ -2995,14 +3617,15 @@ function App() {
                   </div>
 
                   {/* Custom Words Management */}
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={{ fontSize: 12, color: '#ccc', marginBottom: 6, display: 'block' }}>
+                  <div className="settings-subsection">
+                    <label className="settings-subtitle">
                       自定义敏感词词库
                     </label>
 
                     {/* Add Word Input */}
-                    <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                    <div className="settings-inline-actions">
                       <input
+                        className="settings-inline-input"
                         type="text"
                         value={newSensitiveWord}
                         onChange={(e) => setNewSensitiveWord(e.target.value)}
@@ -3013,19 +3636,9 @@ function App() {
                           }
                         }}
                         placeholder="输入敏感词..."
-                        style={{
-                          flex: 1,
-                          padding: '6px 10px',
-                          background: '#333',
-                          border: '1px solid #555',
-                          borderRadius: 4,
-                          color: '#fff',
-                          fontSize: 13,
-                        }}
                       />
                       <button
-                        className="primary-button"
-                        style={{ fontSize: 12, padding: '6px 12px' }}
+                        className="primary-button settings-small-btn"
                         onClick={onAddSensitiveWord}
                         disabled={!newSensitiveWord.trim()}
                       >
@@ -3034,48 +3647,22 @@ function App() {
                     </div>
 
                     {/* Word List */}
-                    <div
-                      style={{
-                        maxHeight: 200,
-                        overflowY: 'auto',
-                        background: '#2d2d2d',
-                        border: '1px solid #444',
-                        borderRadius: 4,
-                        padding: 8,
-                      }}
-                    >
+                    <div className="settings-word-list">
                       {sensitiveWordDictionary.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic', textAlign: 'center', padding: 10 }}>
+                        <div className="settings-empty-note">
                           暂无自定义敏感词
                         </div>
                       ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        <div className="settings-word-tags">
                           {sensitiveWordDictionary.map((word) => (
                             <div
                               key={word}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                background: '#444',
-                                padding: '4px 8px',
-                                borderRadius: 4,
-                                fontSize: 12,
-                                color: '#fff',
-                              }}
+                              className="settings-word-tag"
                             >
                               <span>{word}</span>
                               <button
                                 onClick={() => onRemoveSensitiveWord(word)}
-                                style={{
-                                  background: 'transparent',
-                                  border: 'none',
-                                  color: '#ff6b6b',
-                                  cursor: 'pointer',
-                                  padding: 0,
-                                  fontSize: 14,
-                                  lineHeight: 1,
-                                }}
+                                className="settings-word-tag-remove"
                                 title="删除"
                               >
                                 ×
@@ -3086,18 +3673,17 @@ function App() {
                       )}
                     </div>
 
-                    <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+                    <div className="settings-hint">
                       共 {sensitiveWordDictionary.length} 个敏感词
                     </div>
                   </div>
                 </div>
 
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <h3 style={{ fontSize: 14, color: '#fff', margin: 0, writingMode: 'horizontal-tb' }}>模型配置</h3>
+                <div className="settings-section">
+                  <div className="settings-section-head">
+                    <h3 className="settings-section-title settings-section-title-inline">模型配置</h3>
                     <button
-                      className="primary-button"
-                      style={{ fontSize: 12, padding: '4px 8px' }}
+                      className="primary-button settings-tiny-btn"
                       onClick={() => {
                         setEditingProvider({
                           id: newId(),
@@ -3113,21 +3699,11 @@ function App() {
                     </button>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div className="settings-provider-list">
                     {appSettings.providers.map((p) => (
                       <div
                         key={p.id}
-                        className="provider-item"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          background: '#333',
-                          padding: '8px 12px',
-                          borderRadius: 4,
-                          border: appSettings.active_provider_id === p.id ? '1px solid #007acc' : '1px solid transparent',
-                          cursor: 'pointer',
-                        }}
+                        className={`provider-item settings-provider-item${appSettings.active_provider_id === p.id ? ' active' : ''}`}
                         onClick={() => {
                           if (appSettings.active_provider_id !== p.id) {
                             const prev = appSettings
@@ -3137,16 +3713,16 @@ function App() {
                           }
                         }}
                       >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
-                          <div style={{ color: '#fff', fontSize: 13, fontWeight: 500 }}>{p.name}</div>
-                          <div style={{ color: '#888', fontSize: 11 }}>
+                        <div className="settings-provider-meta">
+                          <div className="settings-provider-name">{p.name}</div>
+                          <div className="settings-provider-detail">
                             {p.kind} • {p.model_name}
                           </div>
-                          <div style={{ color: apiKeyStatus[p.id] ? '#9cdcfe' : '#888', fontSize: 11 }}>
+                          <div className={`settings-provider-key${apiKeyStatus[p.id] ? ' is-set' : ''}`}>
                             API Key：{apiKeyStatus[p.id] ? '已设置' : '未设置'}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
+                        <div className="settings-provider-actions">
                           {appSettings.active_provider_id !== p.id && (
                             <button
                               className="icon-button"
@@ -3203,42 +3779,34 @@ function App() {
                   </div>
                 </div>
 
-                <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: 14, marginBottom: 10, color: '#fff', writingMode: 'horizontal-tb' }}>智能体管理</h3>
+                <div className="settings-section">
+                  <h3 className="settings-section-title">智能体管理</h3>
 
                   {/* Built-in Agents */}
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>内置智能体</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className="settings-subsection settings-subsection-lg">
+                    <div className="settings-subtitle">内置智能体</div>
+                    <div className="settings-grid-two">
                       {agentsList
                         .filter((a) => a.category !== '自定义')
                         .map((a) => (
                           <div
                             key={a.id}
-                            className="agent-card"
-                            style={{
-                              background: '#333',
-                              padding: 10,
-                              borderRadius: 4,
-                              cursor: 'pointer',
-                              border: agentEditorId === a.id ? '1px solid #007acc' : '1px solid transparent',
-                            }}
+                            className={`agent-card settings-agent-card${agentEditorId === a.id ? ' active' : ''}`}
                             onClick={() => setAgentEditorId(a.id)}
                           >
-                            <div style={{ fontWeight: 500, color: '#fff', fontSize: 13 }}>{a.name}</div>
-                            <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{a.category}</div>
+                            <div className="settings-agent-name">{a.name}</div>
+                            <div className="settings-agent-category">{a.category}</div>
                           </div>
                         ))}
                     </div>
                   </div>
 
                   {/* Custom Agents */}
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <div style={{ fontSize: 12, color: '#888' }}>自定义智能体</div>
+                  <div className="settings-subsection">
+                    <div className="settings-subsection-head">
+                      <div className="settings-subtitle settings-subtitle-inline">自定义智能体</div>
                       <button
-                        className="icon-button"
-                        style={{ fontSize: 12, padding: '2px 6px', border: '1px solid #444', borderRadius: 3 }}
+                        className="icon-button settings-create-btn"
                         onClick={() => {
                           const id = newId()
                           const next: Agent = {
@@ -3257,33 +3825,24 @@ function App() {
                       </button>
                     </div>
                     {agentsList.filter((a) => a.category === '自定义').length === 0 ? (
-                      <div style={{ fontSize: 12, color: '#666', fontStyle: 'italic', padding: 10, textAlign: 'center', background: '#2d2d2d', borderRadius: 4 }}>
+                      <div className="settings-empty-note settings-empty-box">
                         暂无自定义智能体
                       </div>
                     ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div className="settings-grid-two">
                         {agentsList
                           .filter((a) => a.category === '自定义')
                           .map((a) => (
                             <div
                               key={a.id}
-                              className="agent-card"
-                              style={{
-                                background: '#333',
-                                padding: 10,
-                                borderRadius: 4,
-                                cursor: 'pointer',
-                                border: agentEditorId === a.id ? '1px solid #007acc' : '1px solid transparent',
-                                position: 'relative',
-                              }}
+                              className={`agent-card settings-agent-card settings-agent-card-custom${agentEditorId === a.id ? ' active' : ''}`}
                               onClick={() => setAgentEditorId(a.id)}
                             >
-                              <div style={{ fontWeight: 500, color: '#fff', fontSize: 13 }}>{a.name}</div>
-                              <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>自定义</div>
+                              <div className="settings-agent-name">{a.name}</div>
+                              <div className="settings-agent-category">自定义</div>
                               {agentEditorId === a.id && (
                                 <button
-                                  className="icon-button"
-                                  style={{ position: 'absolute', top: 6, right: 6, padding: 2, fontSize: 12 }}
+                                  className="icon-button settings-agent-delete-btn"
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     void (async () => {
@@ -3304,11 +3863,11 @@ function App() {
                   </div>
 
                   {agentEditorId && agentsList.find((a) => a.id === agentEditorId) && (
-                    <div style={{ marginTop: 16, borderTop: '1px solid #444', paddingTop: 16 }}>
-                      <div style={{ fontSize: 13, fontWeight: 'bold', color: '#fff', marginBottom: 10 }}>
+                    <div className="settings-editor-panel">
+                      <div className="settings-editor-title">
                         编辑: {agentsList.find((a) => a.id === agentEditorId)?.name}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div className="settings-editor-fields">
                         <div className="form-group">
                           <label>名称</label>
                           <input
@@ -3323,21 +3882,20 @@ function App() {
                         <div className="form-group">
                           <label>系统提示词 (System Prompt)</label>
                           <textarea
-                            className="ai-textarea"
+                            className="ai-textarea settings-agent-prompt"
                             placeholder="你是一个..."
-                            style={{ height: 120 }}
+
                             value={agentsList.find((a) => a.id === agentEditorId)?.system_prompt ?? ''}
                             onChange={(e) =>
                               setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, system_prompt: e.target.value } : a)))
                             }
                           />
                         </div>
-                        <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                          <label style={{ flex: '0 0 100px' }}>分章字数</label>
+                        <div className="form-group settings-inline-row settings-inline-gap">
+                          <label className="settings-fixed-label">分章字数</label>
                           <input
                             type="number"
-                            className="ai-textarea"
-                            style={{ width: 100, height: 32 }}
+                            className="ai-textarea settings-agent-number"
                             min={500}
                             max={10000}
                             value={agentsList.find((a) => a.id === agentEditorId)?.chapter_word_target ?? 3000}
@@ -3345,7 +3903,7 @@ function App() {
                               setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, chapter_word_target: parseInt(e.target.value) || 3000 } : a)))
                             }
                           />
-                          <span style={{ fontSize: 11, color: '#888' }}>字/章 (0=不分章)</span>
+                          <span className="settings-spacer-text">字/章 (0=不分章)</span>
                         </div>
                       </div>
                     </div>
@@ -3373,7 +3931,7 @@ function App() {
       {/* Model Modal */}
       {showModelModal && (
         <div className="modal-overlay" onClick={() => setShowModelModal(false)}>
-          <div className="modal-content" style={{ width: 450 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content modal-content-sm" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{isNewProvider ? '添加模型' : '编辑模型'}</h2>
               <button className="close-btn" onClick={() => setShowModelModal(false)}>
@@ -3522,8 +4080,7 @@ function App() {
         }}
         onThemeToggle={toggleTheme}
         onGitClick={() => {
-          setActiveSidebarTab('git')
-          setSidebarCollapsed(false)
+          openSidebarTab('git')
         }}
       />
 
@@ -3751,20 +4308,24 @@ function App() {
               category: 'AI',
               shortcut: 'Ctrl+Shift+L',
               action: () => {
-                setActiveRightTab('chat')
+                openRightTab('chat')
                 window.setTimeout(() => {
                   chatInputRef.current?.focus()
                 }, 0)
               },
             },
             { id: 'smartComplete', label: '智能补全', category: 'AI', action: () => void onSmartComplete() },
+            { id: 'modeNormal', label: '切换 Normal 模式', category: 'AI规划', action: () => void onWriterModeChange('normal') },
+            { id: 'modePlan', label: '切换 Plan 模式', category: 'AI规划', action: () => void onWriterModeChange('plan') },
+            { id: 'modeSpec', label: '切换 Spec 模式', category: 'AI规划', action: () => void onWriterModeChange('spec') },
+            { id: 'generatePlan', label: '生成规划文档', category: 'AI规划', action: () => void onGeneratePlanAndTasks() },
+            { id: 'runQueue', label: '执行任务队列', category: 'AI规划', action: () => void runPlannerQueue(chatInput) },
             {
               id: 'gitCommit',
               label: 'Git 提交',
               category: 'Git',
               action: () => {
-                setActiveSidebarTab('git')
-                setSidebarCollapsed(false)
+                openSidebarTab('git')
                 if (gitCommitMsg.trim()) {
                   void onGitCommit()
                   return
@@ -3779,8 +4340,7 @@ function App() {
               label: 'Git 推送',
               category: 'Git',
               action: async () => {
-                setActiveSidebarTab('git')
-                setSidebarCollapsed(false)
+                openSidebarTab('git')
                 await showErrorDialog('当前版本暂不支持 Git Push，请在外部终端执行。')
               },
             },

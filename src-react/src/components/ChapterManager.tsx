@@ -84,39 +84,32 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
       )}
       
       {/* Header - simplified */}
-      <div className="chapter-manager-header" style={{ padding: '12px', borderBottom: '1px solid #333' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: '#bbb', fontSize: 12, fontWeight: 500 }}>章节管理</span>
-          <span style={{ color: '#888', fontSize: 11 }}>
+      <div className="chapter-manager-header chapter-manager-header-compact">
+        <div className="chapter-manager-header-row">
+          <span className="chapter-manager-header-title">章节管理</span>
+          <span className="chapter-manager-header-meta">
             {chapters.length} 章 · {totalStats.totalWordCount.toLocaleString()} 字
           </span>
         </div>
       </div>
 
       {/* Chapter list - simplified display */}
-      <div className="chapter-list" style={{ padding: '8px 0' }}>
+      <div className="chapter-list chapter-list-compact">
         {chapters.length === 0 ? (
-          <div className="chapter-list-empty" style={{ padding: '20px', textAlign: 'center' }}>
-            <p style={{ color: '#888', fontSize: 13 }}>暂无章节</p>
+          <div className="chapter-list-empty chapter-list-empty-compact">
+            <p className="chapter-list-empty-text">暂无章节</p>
           </div>
         ) : (
           chapters.map((chapter) => (
             <div
               key={chapter.id}
-              className="chapter-item"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                padding: '8px 12px',
-                borderBottom: '1px solid #333',
-                cursor: 'pointer',
-              }}
+              className="chapter-item chapter-item-compact"
               onClick={() => handleChapterClick(chapter)}
             >
-              <span style={{ flex: 1, color: '#ddd', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span className="chapter-item-title-compact">
                 {chapter.title}
               </span>
-              <span style={{ color: '#888', fontSize: 12, marginLeft: 12 }}>
+              <span className="chapter-item-meta-compact">
                 {chapter.wordCount.toLocaleString()} 字
               </span>
             </div>

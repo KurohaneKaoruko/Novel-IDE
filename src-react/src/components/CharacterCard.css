@@ -1,7 +1,7 @@
 .character-card {
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-secondary, #252526);
+  background-color: var(--bg-secondary, #252525);
   border: 1px solid var(--border-color, #3c3c3c);
   border-radius: 6px;
   overflow: hidden;
@@ -53,7 +53,7 @@
 }
 
 .action-button:hover:not(:disabled) {
-  background-color: var(--bg-hover, #2a2d2e);
+  background-color: var(--bg-hover, #2c2c2c);
   border-color: var(--border-hover, #4c4c4c);
 }
 
@@ -63,19 +63,19 @@
 }
 
 .action-edit:hover:not(:disabled) {
-  border-color: var(--accent-color, #007acc);
+  border-color: var(--accent-color, #d0d0d0);
 }
 
 .action-delete:hover:not(:disabled) {
-  border-color: #d32f2f;
+  border-color: #666666;
 }
 
 .action-save:hover:not(:disabled) {
-  border-color: #5cb85c;
+  border-color: #7b7b7b;
 }
 
 .action-cancel:hover:not(:disabled) {
-  border-color: #f0ad4e;
+  border-color: #a4a4a4;
 }
 
 .character-card-body {
@@ -123,7 +123,7 @@
 }
 
 .field-input:focus {
-  border-color: var(--accent-color, #007acc);
+  border-color: var(--accent-color, #d0d0d0);
 }
 
 .field-input::placeholder {

@@ -24,7 +24,7 @@
   font-size: 20px;
   font-weight: 600;
   margin-bottom: 12px;
-  color: #f48771;
+  color: #a4a4a4;
 }
 
 .editor-error-message {
@@ -51,12 +51,12 @@
 }
 
 .editor-error-button.primary {
-  background-color: #0e639c;
+  background-color: #5a5a5a;
   color: #fff;
 }
 
 .editor-error-button.primary:hover {
-  background-color: #1177bb;
+  background-color: #6c6c6c;
 }
 
 .editor-error-button.secondary {

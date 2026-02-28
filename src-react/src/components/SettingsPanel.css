@@ -9,7 +9,6 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  backdrop-filter: blur(4px);
 }
 
 .settings-panel {
@@ -124,7 +123,7 @@
 }
 
 .settings-select:focus {
-  border-color: var(--accent-primary, #2196f3);
+  border-color: var(--accent-primary, #d0d0d0);
 }
 
 .settings-input {
@@ -139,7 +138,7 @@
 }
 
 .settings-input:focus {
-  border-color: var(--accent-primary, #2196f3);
+  border-color: var(--accent-primary, #d0d0d0);
   outline: none;
 }
 
@@ -182,7 +181,7 @@
 }
 
 .settings-toggle input:checked + .settings-toggle-slider {
-  background: var(--accent-primary, #2196f3);
+  background: var(--accent-primary, #d0d0d0);
 }
 
 .settings-toggle input:checked + .settings-toggle-slider:before {
@@ -245,7 +244,7 @@
 }
 
 [data-theme="dark"] .settings-panel-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -264,13 +263,13 @@
 
 [data-theme="dark"] .settings-select,
 [data-theme="dark"] .settings-input {
-  background: #252526;
+  background: #252525;
   border-color: #333;
   color: #e0e0e0;
 }
 
 [data-theme="dark"] .shortcut-item {
-  background: #252526;
+  background: #252525;
 }
 
 [data-theme="dark"] .shortcut-key {
@@ -280,5 +279,5 @@
 }
 
 [data-theme="dark"] .settings-about {
-  background: #252526;
+  background: #252525;
 }

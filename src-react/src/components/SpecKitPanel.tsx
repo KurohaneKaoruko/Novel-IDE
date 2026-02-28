@@ -159,7 +159,7 @@ export const SpecKitPanel: React.FC = () => {
           <button disabled={loading} onClick={() => void onMatchArcs()}>
             匹配弧线
           </button>
-          <div style={{ flex: 1 }} />
+          <div className="spec-kit-spacer" />
           <button disabled={loading} onClick={() => void onExport('md')}>
             导出 MD
           </button>
@@ -172,7 +172,7 @@ export const SpecKitPanel: React.FC = () => {
         </div>
 
         {error ? <div className="error-text">{error}</div> : null}
-        {lastExport ? <div style={{ padding: '0 10px', fontSize: 12, color: '#8bc34a' }}>已导出: {lastExport}</div> : null}
+        {lastExport ? <div className="spec-kit-export-path">已导出: {lastExport}</div> : null}
 
         {storySpec ? (
           <div className="spec-kit-block">
@@ -206,9 +206,9 @@ export const SpecKitPanel: React.FC = () => {
                     }}
                   />
                   <Legend />
-                  <Bar dataKey="act1" stackId="a" name="Act 1" fill="#4f81bd" isAnimationActive={false} />
-                  <Bar dataKey="act2" stackId="a" name="Act 2" fill="#c0504d" isAnimationActive={false} />
-                  <Bar dataKey="act3" stackId="a" name="Act 3" fill="#9bbb59" isAnimationActive={false} />
+                  <Bar dataKey="act1" stackId="a" name="Act 1" fill="#848484" isAnimationActive={false} />
+                  <Bar dataKey="act2" stackId="a" name="Act 2" fill="#747474" isAnimationActive={false} />
+                  <Bar dataKey="act3" stackId="a" name="Act 3" fill="#909090" isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -224,7 +224,7 @@ export const SpecKitPanel: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div style={{ padding: 10, color: '#888' }}>尚未生成 StorySpec（先点“生成三幕大纲”）。</div>
+          <div className="spec-kit-empty-note">尚未生成 StorySpec（先点“生成三幕大纲”）。</div>
         )}
 
         {report ? (
@@ -236,7 +236,7 @@ export const SpecKitPanel: React.FC = () => {
             </div>
             <div className="spec-kit-issues">
               {report.issues.length === 0 ? (
-                <div style={{ padding: 8, color: '#8bc34a' }}>全部通过</div>
+                <div className="spec-kit-empty-note spec-kit-empty-note-sm">全部通过</div>
               ) : (
                 report.issues.map((it, idx) => (
                   <div key={`${it.code}-${idx}`} className={`spec-kit-issue ${it.severity}`}>
@@ -257,7 +257,7 @@ export const SpecKitPanel: React.FC = () => {
           <div className="spec-kit-block">
             <div className="spec-kit-title">弧线匹配</div>
             {arcDisplay.length === 0 ? (
-              <div style={{ padding: 10, color: '#888' }}>暂无弧线映射</div>
+              <div className="spec-kit-empty-note">暂无弧线映射</div>
             ) : (
               <div className="spec-kit-arcs">
                 {arcDisplay.map((c) => (
@@ -266,7 +266,7 @@ export const SpecKitPanel: React.FC = () => {
                       {c.character_name} ({c.archetype_id})
                     </div>
                     {c.entries.length === 0 ? (
-                      <div style={{ padding: 8, color: '#888' }}>无可映射节拍</div>
+                      <div className="spec-kit-empty-note spec-kit-empty-note-sm">无可映射节拍</div>
                     ) : (
                       c.entries.map((e) => (
                         <div key={`${c.character_id}-${e.beat}`} className="spec-kit-arc-row">

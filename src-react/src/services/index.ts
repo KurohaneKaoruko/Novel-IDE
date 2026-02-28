@@ -46,3 +46,6 @@ export type { EditorUserConfig } from './EditorConfigManager';
 
 export { uiSettingsManager } from './UISettingsManager';
 export type { UISettings, UITheme, UIDensity, UIMotion } from './UISettingsManager';
+
+export { NovelPlannerService, novelPlannerService } from './NovelPlannerService';
+export type { WriterMode, TaskStatus, NovelTask, SessionPlannerState, PlannerContextPack } from './NovelPlannerService';

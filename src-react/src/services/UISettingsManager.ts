@@ -9,6 +9,8 @@ export interface UISettings {
   density: UIDensity
   motion: UIMotion
   sidebarCollapsed: boolean
+  sidebarWidth: number
+  rightPanelWidth: number
 }
 
 const DEFAULT_SETTINGS: UISettings = {
@@ -16,6 +18,8 @@ const DEFAULT_SETTINGS: UISettings = {
   density: 'comfortable',
   motion: 'full',
   sidebarCollapsed: false,
+  sidebarWidth: 248,
+  rightPanelWidth: 320,
 }
 
 class UISettingsManager {
@@ -62,7 +66,16 @@ class UISettingsManager {
     const validTheme = settings.theme === 'light' || settings.theme === 'dark'
     const validDensity = settings.density === 'compact' || settings.density === 'comfortable'
     const validMotion = settings.motion === 'full' || settings.motion === 'reduced'
-    return validTheme && validDensity && validMotion && typeof settings.sidebarCollapsed === 'boolean'
+    const validSidebarWidth = Number.isFinite(settings.sidebarWidth) && settings.sidebarWidth >= 180 && settings.sidebarWidth <= 500
+    const validRightPanelWidth = Number.isFinite(settings.rightPanelWidth) && settings.rightPanelWidth >= 240 && settings.rightPanelWidth <= 520
+    return (
+      validTheme &&
+      validDensity &&
+      validMotion &&
+      typeof settings.sidebarCollapsed === 'boolean' &&
+      validSidebarWidth &&
+      validRightPanelWidth
+    )
   }
 
   private notifyListeners(): void {

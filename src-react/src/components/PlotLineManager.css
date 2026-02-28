@@ -22,7 +22,7 @@
 
 .btn-create {
   padding: 8px 16px;
-  background-color: var(--primary-color, #007acc);
+  background-color: var(--primary-color, #d0d0d0);
   color: white;
   border: none;
   border-radius: 4px;
@@ -32,7 +32,7 @@
 }
 
 .btn-create:hover {
-  background-color: var(--primary-hover, #005a9e);
+  background-color: var(--primary-hover, #b5b5b5);
 }
 
 .plot-line-manager-loading,
@@ -50,16 +50,16 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 20px;
-  background-color: var(--error-bg, #5a1a1a);
-  color: var(--error-text, #ff6b6b);
-  border-bottom: 1px solid var(--error-border, #8a2a2a);
+  background-color: var(--error-bg, #2f2f2f);
+  color: var(--error-text, #9c9c9c);
+  border-bottom: 1px solid var(--error-border, #4a4a4a);
 }
 
 .plot-line-manager-error button {
   padding: 4px 12px;
   background-color: transparent;
-  color: var(--error-text, #ff6b6b);
-  border: 1px solid var(--error-text, #ff6b6b);
+  color: var(--error-text, #9c9c9c);
+  border: 1px solid var(--error-text, #9c9c9c);
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
@@ -123,7 +123,7 @@
 .form-group select:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: var(--primary-color, #007acc);
+  border-color: var(--primary-color, #d0d0d0);
 }
 
 .form-group textarea {
@@ -150,12 +150,12 @@
 }
 
 .btn-submit {
-  background-color: var(--primary-color, #007acc);
+  background-color: var(--primary-color, #d0d0d0);
   color: white;
 }
 
 .btn-submit:hover {
-  background-color: var(--primary-hover, #005a9e);
+  background-color: var(--primary-hover, #b5b5b5);
 }
 
 .btn-cancel {
@@ -201,13 +201,13 @@
 }
 
 .plot-line-item:hover {
-  border-color: var(--primary-color, #007acc);
+  border-color: var(--primary-color, #d0d0d0);
   background-color: var(--bg-hover, #2a2a2a);
 }
 
 .plot-line-item.selected {
-  border-color: var(--primary-color, #007acc);
-  background-color: var(--bg-selected, #2a3a4a);
+  border-color: var(--primary-color, #d0d0d0);
+  background-color: var(--bg-selected, #3a3a3a);
 }
 
 .plot-line-item-header {
@@ -231,18 +231,18 @@
 }
 
 .status-ongoing {
-  background-color: rgba(33, 150, 243, 0.2);
-  color: #2196f3;
+  background-color: var(--bg-hover, #2a2a2a);
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .status-completed {
-  background-color: rgba(76, 175, 80, 0.2);
-  color: #4caf50;
+  background-color: var(--bg-hover, #2a2a2a);
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .status-paused {
-  background-color: rgba(255, 152, 0, 0.2);
-  color: #ff9800;
+  background-color: var(--bg-hover, #2a2a2a);
+  color: var(--text-secondary, #b0b0b0);
 }
 
 .plot-line-item-info {
@@ -317,10 +317,10 @@
 }
 
 .btn-delete {
-  background-color: var(--error-bg, #5a1a1a);
-  color: var(--error-text, #ff6b6b);
+  background-color: var(--error-bg, #2f2f2f);
+  color: var(--error-text, #9c9c9c);
 }
 
 .btn-delete:hover {
-  background-color: var(--error-hover, #6a2a2a);
+  background-color: var(--error-hover, #3f3f3f);
 }

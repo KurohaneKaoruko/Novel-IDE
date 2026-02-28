@@ -29,7 +29,7 @@
 }
 
 .diff-review-count {
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
   color: white;
   font-size: 11px;
   padding: 2px 8px;
@@ -58,8 +58,8 @@
 }
 
 .filter-btn.active {
-  background: var(--accent-color, #2196f3);
-  border-color: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
+  border-color: var(--accent-color, #d0d0d0);
   color: white;
 }
 
@@ -86,7 +86,7 @@
 }
 
 .view-toggle button.active {
-  background: var(--accent-color, #2196f3);
+  background: var(--accent-color, #d0d0d0);
   color: white;
 }
 
@@ -120,8 +120,8 @@
 }
 
 .diff-review-file-item.active {
-  background: var(--accent-light, #e3f2fd);
-  border-left: 3px solid var(--accent-color, #2196f3);
+  background: var(--accent-light, #f1f1f1);
+  border-left: 3px solid var(--accent-color, #d0d0d0);
 }
 
 .diff-review-file-item.accepted {
@@ -163,8 +163,8 @@
   font-family: monospace;
 }
 
-.file-item-stats .add { color: #4caf50; }
-.file-item-stats .delete { color: #f44336; }
+.file-item-stats .add { color: #6e6e6e; }
+.file-item-stats .delete { color: #7a7a7a; }
 
 /* Main Diff View */
 .diff-review-main {
@@ -203,18 +203,18 @@
 }
 
 .file-header-status.pending {
-  background: #fff3e0;
-  color: #f57c00;
+  background: #f1f1f1;
+  color: #7b7b7b;
 }
 
 .file-header-status.accepted {
-  background: #e8f5e9;
-  color: #4caf50;
+  background: #ededed;
+  color: #6e6e6e;
 }
 
 .file-header-status.rejected {
-  background: #ffebee;
-  color: #f44336;
+  background: #f3f3f3;
+  color: #7a7a7a;
 }
 
 .file-header-actions {
@@ -232,21 +232,21 @@
 }
 
 .action-btn.accept {
-  background: #4caf50;
+  background: #6e6e6e;
   color: white;
 }
 
 .action-btn.accept:hover {
-  background: #43a047;
+  background: #636363;
 }
 
 .action-btn.reject {
-  background: #f44336;
+  background: #7a7a7a;
   color: white;
 }
 
 .action-btn.reject:hover {
-  background: #e53935;
+  background: #717171;
 }
 
 .action-btn.close {
@@ -319,15 +319,15 @@
 }
 
 .diff-line.delete {
-  background: #ffebee;
+  background: #f3f3f3;
 }
 
 .diff-line.add {
-  background: #e8f5e9;
+  background: #ededed;
 }
 
 .diff-line.modify {
-  background: #fff3e0;
+  background: #f1f1f1;
 }
 
 .diff-line .line-num {
@@ -347,12 +347,12 @@
 
 .diff-line.delete .line-prefix,
 .diff-line.delete .line-num {
-  color: #d32f2f;
+  color: #666666;
 }
 
 .diff-line.add .line-prefix,
 .diff-line.add .line-num {
-  color: #4caf50;
+  color: #6e6e6e;
 }
 
 .diff-line .line-content {
@@ -370,12 +370,12 @@
 }
 
 [data-theme="dark"] .diff-review-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
 [data-theme="dark"] .diff-review-sidebar {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -384,12 +384,12 @@
 }
 
 [data-theme="dark"] .diff-review-file-item:hover {
-  background: #2a2d2e;
+  background: #2c2c2c;
 }
 
 [data-theme="dark"] .diff-review-file-item.active {
-  background: #37373d;
-  border-left-color: #0078d4;
+  background: #393939;
+  border-left-color: #d0d0d0;
 }
 
 [data-theme="dark"] .diff-review-file-item.accepted,
@@ -406,7 +406,7 @@
 }
 
 [data-theme="dark"] .diff-review-file-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
 }
 
@@ -415,7 +415,7 @@
 }
 
 [data-theme="dark"] .diff-pane-header {
-  background: #252526;
+  background: #252525;
   border-color: #333;
   color: #999;
 }
@@ -429,13 +429,13 @@
 }
 
 [data-theme="dark"] .diff-line.delete {
-  background: #3a1d1d;
+  background: #272727;
 }
 
 [data-theme="dark"] .diff-line.add {
-  background: #1d3a1d;
+  background: #272727;
 }
 
 [data-theme="dark"] .diff-line.modify {
-  background: #3a2d1d;
+  background: #2c2c2c;
 }

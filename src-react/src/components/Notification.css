@@ -77,24 +77,24 @@
 
 /* Types */
 .notification-info {
-  border-color: #2196f3;
+  border-color: #d0d0d0;
 }
 
 .notification-success {
-  border-color: #4caf50;
+  border-color: #6e6e6e;
 }
 
 .notification-warning {
-  border-color: #ff9800;
+  border-color: #888888;
 }
 
 .notification-error {
-  border-color: #f44336;
+  border-color: #7a7a7a;
 }
 
 /* Dark mode */
 [data-theme="dark"] .notification-item {
-  background: #252526;
+  background: #252525;
 }
 
 [data-theme="dark"] .notification-title {
