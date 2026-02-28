@@ -142,17 +142,11 @@
 }
 
 .project-launch-mode select {
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-2, var(--bg-tertiary));
-  color: var(--text-primary);
-  padding: 8px 10px;
-  outline: none;
+  width: 100%;
 }
 
 .project-launch-mode select:focus {
-  border-color: var(--border-focus);
-  box-shadow: var(--ring, 0 0 0 2px var(--accent-glow));
+  outline: none;
 }
 
 .project-last-workspace {

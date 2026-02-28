@@ -107,7 +107,6 @@
 }
 
 .form-group input,
-.form-group select,
 .form-group textarea {
   width: 100%;
   padding: 8px 12px;
@@ -119,8 +118,12 @@
   font-family: inherit;
 }
 
+.form-group select {
+  width: 100%;
+  font-family: inherit;
+}
+
 .form-group input:focus,
-.form-group select:focus,
 .form-group textarea:focus {
   outline: none;
   border-color: var(--primary-color, #d0d0d0);

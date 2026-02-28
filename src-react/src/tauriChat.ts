@@ -23,3 +23,9 @@ export async function chatGenerateStream(args: {
     agentId: args.agentId ?? null,
   })
 }
+
+export async function chatCancelStream(streamId: string): Promise<void> {
+  return invoke<void>('chat_cancel_stream', {
+    streamId,
+  })
+}

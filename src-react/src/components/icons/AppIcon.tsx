@@ -19,6 +19,7 @@ export type AppIconName =
   | 'add'
   | 'save'
   | 'preview'
+  | 'stop'
 
 type AppIconProps = {
   name: AppIconName
@@ -159,6 +160,8 @@ function IconPath({ name }: { name: AppIconName }) {
           <circle cx="12" cy="12" r="2.5" />
         </>
       )
+    case 'stop':
+      return <rect x="7" y="7" width="10" height="10" rx="1.5" />
     default:
       return null
   }

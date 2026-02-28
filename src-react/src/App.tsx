@@ -5,7 +5,6 @@ import { confirm, message } from '@tauri-apps/plugin-dialog'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import type { LexicalEditor as LexicalEditorType } from 'lexical'
-import { $getSelection, $isRangeSelection } from 'lexical'
 import './App.css'
 import { LexicalEditor } from './components/LexicalEditor'
 import type { EditorConfig } from './types/editor'
@@ -81,9 +80,20 @@ type ChatItem = {
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
+  cancelled?: boolean
   streamId?: string
   changeSet?: ChangeSet
+  versionGroupId?: string
+  versionIndex?: number
+  versionCount?: number
   timestamp?: number
+}
+
+type AssistantVersion = {
+  content: string
+  changeSet?: ChangeSet
+  cancelled?: boolean
+  timestamp: number
 }
 
 type BackendChangeSet = {
@@ -187,9 +197,34 @@ function parseBackendChangeSets(raw: unknown): ImportedChangeSet[] {
   return imported
 }
 
+function appendStreamTextWithOverlap(existing: string, incoming: string): { next: string; appended: string } {
+  if (!incoming) return { next: existing, appended: '' }
+  if (!existing) return { next: incoming, appended: incoming }
+  if (existing.endsWith(incoming)) return { next: existing, appended: '' }
+
+  const maxOverlap = Math.min(existing.length, incoming.length, 4096)
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (existing.slice(existing.length - overlap) === incoming.slice(0, overlap)) {
+      const appended = incoming.slice(overlap)
+      return appended ? { next: `${existing}${appended}`, appended } : { next: existing, appended: '' }
+    }
+  }
+  return { next: `${existing}${incoming}`, appended: incoming }
+}
+
+function formatElapsedLabel(totalSeconds: number): string {
+  const safe = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0
+  if (safe < 60) return `${safe}s`
+  const mins = Math.floor(safe / 60)
+  const secs = safe % 60
+  return `${mins}m ${secs}s`
+}
+
 type ChatContextMenuState = {
   x: number
   y: number
+  messageId: string
+  role: 'user' | 'assistant'
   message: string
   selection: string
 }
@@ -244,10 +279,28 @@ type TaskQualityResult = {
 
 type SendChatOptions = {
   skipModeWrap?: boolean
+  sourceMessages?: ChatItem[]
+  useExistingLastUser?: boolean
+  hideUserEcho?: boolean
+  versionGroupId?: string
+}
+
+type AssistantReplayContext = {
+  replayHistory: ChatItem[]
+  replayUser: ChatItem
+  versionGroupId: string
 }
 
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
 const CUSTOM_PROVIDER_PRESET_KEY = 'custom'
+const MODE_SLASH_COMMAND_REGEX = /^\/(normal|plan|spec|普通|大纲|细纲)\b/i
+const AUTO_SLASH_COMMAND_REGEX = /^\/auto(?:\s+(on|off))?\b/i
+const FIRST_TOKEN_RETRY_TIMEOUT_MS = 35_000
+const AUTO_RETRY_MAX_PER_GROUP = 1
+const AUTO_LONG_WRITE_MAX_ROUNDS = 120
+const AUTO_LONG_WRITE_MIN_CHARS = 500
+const AUTO_LONG_WRITE_MAX_CHARS = 2400
+const AUTO_LONG_WRITE_MAX_CHAPTER_ADVANCES = 24
 
 type CustomProviderApiFormat = 'openai' | 'claude'
 
@@ -367,6 +420,7 @@ function App() {
   // Editors & Refs
   const editorRef = useRef<LexicalEditorType | null>(null)
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const aiMessagesRef = useRef<HTMLDivElement | null>(null)
   const graphCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const gitCommitInputRef = useRef<HTMLInputElement | null>(null)
   const autoOpenedRef = useRef(false)
@@ -379,6 +433,7 @@ function App() {
   // Chat State
   const [chatMessages, setChatMessages] = useState<ChatItem[]>([])
   const [chatInput, setChatInput] = useState('')
+  const [chatAutoScroll, setChatAutoScroll] = useState(true)
   const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState | null>(null)
   const [editorContextMenu, setEditorContextMenu] = useState<EditorContextMenuState | null>(null)
   const chatMessagesRef = useRef<ChatItem[]>([])
@@ -396,10 +451,23 @@ function App() {
   const [plannerBusy, setPlannerBusy] = useState(false)
   const [plannerQueueRunning, setPlannerQueueRunning] = useState(false)
   const [plannerLastRunError, setPlannerLastRunError] = useState<string | null>(null)
+  const [autoLongWriteEnabled, setAutoLongWriteEnabled] = useState(false)
+  const [autoLongWriteRunning, setAutoLongWriteRunning] = useState(false)
+  const [autoLongWriteStatus, setAutoLongWriteStatus] = useState('')
+  const autoLongWriteStopRef = useRef(false)
   const plannerStopRef = useRef(false)
   const streamWaitersRef = useRef<Map<string, StreamWaiter>>(new Map())
   const streamFailuresRef = useRef<Set<string>>(new Set())
   const streamOutputRef = useRef<Map<string, string>>(new Map())
+  const streamAssistantGroupRef = useRef<Map<string, string>>(new Map())
+  const streamAssistantIdRef = useRef<Map<string, string>>(new Map())
+  const manualCancelledStreamsRef = useRef<Set<string>>(new Set())
+  const versionGroupAutoRetryCountRef = useRef<Map<string, number>>(new Map())
+  const streamStartedAtRef = useRef<Map<string, number>>(new Map())
+  const streamLastTokenAtRef = useRef<Map<string, number>>(new Map())
+  const assistantVersionsRef = useRef<Map<string, AssistantVersion[]>>(new Map())
+  const [streamPhaseById, setStreamPhaseById] = useState<Record<string, string>>({})
+  const [streamUiTick, setStreamUiTick] = useState(0)
 
   // Settings & Agents
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null)
@@ -436,19 +504,80 @@ function App() {
     if (!activeFile) return 0
     return activeFile.content.replace(/\s/g, '').length
   }, [activeFile])
-
-  const plannerTaskStats = useMemo(() => {
-    const total = plannerTasks.length
-    const done = plannerTasks.filter((task) => task.status === 'done').length
-    const running = plannerTasks.filter((task) => task.status === 'running').length
-    const blocked = plannerTasks.filter((task) => task.status === 'blocked').length
-    const todo = plannerTasks.filter((task) => task.status === 'todo' || task.status === 'retry').length
-    return { total, done, running, blocked, todo }
-  }, [plannerTasks])
-
-  const plannerCurrentTask = useMemo(
-    () => plannerTasks.find((task) => task.status === 'running') ?? plannerTasks.find((task) => task.status === 'retry') ?? null,
-    [plannerTasks],
+  const activeStreamingMessage = useMemo(
+    () => [...chatMessages].reverse().find((m) => m.role === 'assistant' && m.streaming && m.streamId) ?? null,
+    [chatMessages],
+  )
+  const latestCompletedAssistant = useMemo(
+    () => [...chatMessages].reverse().find((m) => m.role === 'assistant' && !m.streaming) ?? null,
+    [chatMessages],
+  )
+  const latestCompletedAssistantId = latestCompletedAssistant?.id ?? null
+  const activeStreamId = activeStreamingMessage?.streamId ?? null
+  const isChatStreaming = !!activeStreamId
+  const canRegenerateLatest = !!latestCompletedAssistant && !isChatStreaming
+  const autoToggleDisabled = !activeFile || plannerQueueRunning || (!autoLongWriteEnabled && isChatStreaming)
+  const showStopAction = isChatStreaming || autoLongWriteRunning
+  useEffect(() => {
+    if (!isChatStreaming) return
+    const timer = window.setInterval(() => {
+      setStreamUiTick((prev) => (prev + 1) % 1_000_000)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [isChatStreaming])
+  const scrollChatToBottom = useCallback((smooth = false) => {
+    const panel = aiMessagesRef.current
+    if (!panel) return
+    panel.scrollTo({ top: panel.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+  }, [])
+  const upsertAssistantVersion = useCallback((groupId: string, version: AssistantVersion): { index: number; count: number } => {
+    const map = assistantVersionsRef.current
+    const list = map.get(groupId) ?? []
+    const existingIndex = list.findIndex((item) => item.content === version.content)
+    if (existingIndex >= 0) {
+      const existing = list[existingIndex]
+      list[existingIndex] = {
+        ...existing,
+        changeSet: version.changeSet ?? existing.changeSet,
+        cancelled: version.cancelled ?? existing.cancelled,
+      }
+      map.set(groupId, list)
+      return { index: existingIndex, count: list.length }
+    }
+    list.push(version)
+    map.set(groupId, list)
+    return { index: list.length - 1, count: list.length }
+  }, [])
+  const getStreamPhaseLabel = useCallback(
+    (streamId?: string): string => {
+      if (!streamId) return 'AI processing...'
+      const phase = streamPhaseById[streamId]
+      const now = Date.now()
+      const startedAt = streamStartedAtRef.current.get(streamId) ?? now
+      const lastTokenAt = streamLastTokenAtRef.current.get(streamId) ?? startedAt
+      const elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000))
+      const idleSec = Math.max(0, Math.floor((now - lastTokenAt) / 1000))
+      let base = 'AI processing...'
+      switch (phase) {
+        case 'initializing':
+          base = 'AI initializing...'
+          break
+        case 'thinking':
+          base = 'AI thinking...'
+          break
+        case 'responding':
+          base = idleSec >= 15 ? 'AI waiting for next chunk...' : 'AI streaming...'
+          break
+        case 'retrying':
+          base = 'AI auto retrying...'
+          break
+        default:
+          base = 'AI processing...'
+          break
+      }
+      return elapsedSec > 0 ? `${base} (${formatElapsedLabel(elapsedSec)})` : base
+    },
+    [streamPhaseById, streamUiTick],
   )
 
   const effectiveProviderId = useMemo(() => {
@@ -491,6 +620,14 @@ function App() {
   useEffect(() => {
     chatMessagesRef.current = chatMessages
   }, [chatMessages])
+
+  useEffect(() => {
+    if (!chatAutoScroll) return
+    const timer = window.setTimeout(() => {
+      scrollChatToBottom()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [chatMessages, chatAutoScroll, scrollChatToBottom])
 
   useEffect(() => {
     uiSettingsManager.updateSettings({
@@ -869,13 +1006,17 @@ function App() {
 
   const openSidebarTab = useCallback(
     (tab: 'files' | 'git' | 'chapters' | 'characters' | 'plotlines' | 'risk') => {
-      setActiveSidebarTab(tab)
-      setSidebarCollapsed(false)
+      if (activeSidebarTab === tab) {
+        setSidebarCollapsed((prev) => !prev)
+      } else {
+        setActiveSidebarTab(tab)
+        setSidebarCollapsed(false)
+      }
       if (isMobileLayout) {
         setActiveRightTab(null)
       }
     },
-    [isMobileLayout],
+    [activeSidebarTab, isMobileLayout],
   )
 
   const openRightTab = useCallback(
@@ -1347,25 +1488,86 @@ function App() {
     return ''
   }, [])
 
-  const insertAtCursor = useCallback((text: string) => {
-    const editor = editorRef.current
-    if (!editor || !text) return
+  const resolveInlineReferences = useCallback(
+    async (input: string): Promise<string> => {
+      const source = input.trim()
+      if (!source.includes('#')) return source
 
-    // Use Lexical's insertTextAtCursor method from AIAssistPlugin
-    const extendedEditor = editor as any
-    if (extendedEditor.insertTextAtCursor && typeof extendedEditor.insertTextAtCursor === 'function') {
-      extendedEditor.insertTextAtCursor(text)
-    } else {
-      // Fallback to direct update
-      editor.update(() => {
-        const selection = $getSelection()
-        if ($isRangeSelection(selection)) {
-          selection.insertText(text)
+      const selectionRegex = /#(?:选区|selection)\b/gi
+      const currentFileRegex = /#(?:当前文件|current_file|current)\b/gi
+      const filePrefixRegex = /#(?:文件|file):([^\s#]+)/gi
+      const filePathRegex = /#([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,16})/g
+
+      const blocks: string[] = []
+      const fileRefs: string[] = []
+      const seenFileRefs = new Set<string>()
+      let cleaned = source
+
+      const pushBlock = (title: string, body: string) => {
+        const normalized = body.trim()
+        blocks.push(`[${title}]\n${normalized || '(empty)'}`)
+      }
+
+      if (selectionRegex.test(source)) {
+        const selected = getSelectionText().trim()
+        pushBlock('选区', selected || '(未检测到选区，请先在编辑器中选中文本)')
+        cleaned = cleaned.replace(selectionRegex, '').trim()
+      }
+
+      if (currentFileRegex.test(source)) {
+        if (activeFile) {
+          pushBlock(`当前文件 ${activeFile.path}`, activeFile.content)
+        } else {
+          pushBlock('当前文件', '(当前没有打开文件)')
         }
-      })
-      editor.focus()
-    }
-  }, [])
+        cleaned = cleaned.replace(currentFileRegex, '').trim()
+      }
+
+      for (const match of source.matchAll(filePrefixRegex)) {
+        const ref = (match[1] ?? '').trim().replace(/\\/g, '/')
+        if (!ref) continue
+        const key = ref.toLowerCase()
+        if (seenFileRefs.has(key)) continue
+        seenFileRefs.add(key)
+        fileRefs.push(ref)
+      }
+
+      for (const match of source.matchAll(filePathRegex)) {
+        const ref = (match[1] ?? '').trim().replace(/\\/g, '/')
+        if (!ref) continue
+        const key = ref.toLowerCase()
+        if (seenFileRefs.has(key)) continue
+        seenFileRefs.add(key)
+        fileRefs.push(ref)
+      }
+
+      cleaned = cleaned.replace(filePrefixRegex, '').replace(filePathRegex, '').trim()
+
+      if (fileRefs.length > 0) {
+        for (const ref of fileRefs) {
+          const rel = ref.replace(/^\.?\//, '')
+          if (!rel) continue
+          if (!workspaceRoot || !isTauriApp()) {
+            pushBlock(`文件 ${rel}`, '(当前环境无法读取项目文件)')
+            continue
+          }
+          try {
+            const content = await readText(rel)
+            pushBlock(`文件 ${rel}`, content)
+          } catch (e) {
+            pushBlock(`文件 ${rel}`, `读取失败: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        }
+      }
+
+      if (blocks.length === 0) return source
+      if (!cleaned) {
+        return `请基于以下引用继续写作。\n\n${blocks.join('\n\n')}`
+      }
+      return `${cleaned}\n\n[引用]\n${blocks.join('\n\n')}`
+    },
+    [activeFile, getSelectionText, workspaceRoot],
+  )
 
   const copyText = useCallback(async (text: string) => {
     const value = text ?? ''
@@ -1392,7 +1594,7 @@ function App() {
       window.alert(text)
       return
     }
-    await message(text, { title: '错误', kind: 'error' })
+    await message(text, { title: '\u63d0\u793a' })
   }, [])
 
   const persistAppSettings = useCallback(
@@ -1476,11 +1678,18 @@ function App() {
     })()
   }, [agentsSnapshot, saveAndCloseSettings, settingsDirty, settingsSnapshot, showConfirm])
 
-  const openChatContextMenu = useCallback((e: MouseEvent, message: string) => {
+  const openChatContextMenu = useCallback((e: MouseEvent, item: ChatItem) => {
     e.preventDefault()
     e.stopPropagation()
     const selection = window.getSelection?.()?.toString() ?? ''
-    setChatContextMenu({ x: e.clientX, y: e.clientY, message, selection })
+    setChatContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      messageId: item.id,
+      role: item.role,
+      message: item.content,
+      selection,
+    })
   }, [])
 
   useEffect(() => {
@@ -1526,40 +1735,148 @@ function App() {
   }, [editorContextMenu])
 
   const onQuoteSelection = useCallback(() => {
-    const text = getSelectionText().trim()
-    if (!text) return
-    setChatInput((prev) => (prev ? `${prev}\n${text}` : text))
+    setChatInput((prev) => {
+      const next = prev.trim()
+      return next ? `${next} #选区` : '#选区 '
+    })
     chatInputRef.current?.focus()
-  }, [getSelectionText])
+  }, [])
 
   const onSendChat = useCallback(
     async (overrideContent?: string, options?: SendChatOptions): Promise<string | null> => {
-      const content = (overrideContent ?? chatInput).trim()
-      if (!content) return null
+      const rawInput = (overrideContent ?? chatInput).trim()
+      if (!rawInput) return null
+      if (chatMessagesRef.current.some((m) => m.streaming)) return null
 
-      let sendPayload = content
+      const autoMatch = rawInput.match(AUTO_SLASH_COMMAND_REGEX)
+      if (autoMatch) {
+        const directive = (autoMatch[1] ?? '').toLowerCase()
+        const nextEnabled = directive === 'on' ? true : directive === 'off' ? false : !autoLongWriteEnabled
+        if (!activeFile) {
+          setError('Auto requires an active file.')
+          return null
+        }
+        setAutoLongWriteEnabled(nextEnabled)
+        autoLongWriteStopRef.current = !nextEnabled
+        setAutoLongWriteStatus(nextEnabled ? 'Auto enabled.' : 'Auto disabled.')
+        if (!nextEnabled && activeStreamId && isTauriApp()) {
+          manualCancelledStreamsRef.current.add(activeStreamId)
+          void import('./tauriChat')
+            .then(({ chatCancelStream }) => chatCancelStream(activeStreamId))
+            .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+        }
+        if (!overrideContent || overrideContent === chatInput) {
+          setChatInput('')
+        }
+        return null
+      }
+
+      const slashMatch = rawInput.match(MODE_SLASH_COMMAND_REGEX)
+      const slashModeRaw = (slashMatch?.[1] ?? '').toLowerCase()
+      const requestedMode: WriterMode | null =
+        slashModeRaw === 'plan' || slashModeRaw === '大纲'
+          ? 'plan'
+          : slashModeRaw === 'spec' || slashModeRaw === '细纲'
+            ? 'spec'
+            : slashModeRaw === 'normal' || slashModeRaw === '普通'
+              ? 'normal'
+              : null
+      const content = requestedMode ? rawInput.replace(MODE_SLASH_COMMAND_REGEX, '').trim() : rawInput
+      const applyRequestedMode = async (mode: WriterMode) => {
+        if (mode === writerMode) return
+        if (!workspaceRoot || !isTauriApp()) {
+          setWriterMode(mode)
+          return
+        }
+        setWriterMode(mode)
+        const session = await novelPlannerService.setSessionMode(chatSessionIdRef.current, mode)
+        setPlannerState(session)
+        if (mode === 'normal') {
+          setPlannerLastRunError(null)
+          return
+        }
+        setPlannerBusy(true)
+        try {
+          await ensurePlanningArtifacts(mode, content)
+          await refreshPlannerQueue()
+        } catch (e) {
+          setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+        } finally {
+          setPlannerBusy(false)
+        }
+      }
+
+      if (!content) {
+        if (requestedMode) await applyRequestedMode(requestedMode)
+        if (!overrideContent || overrideContent === chatInput) {
+          setChatInput('')
+        }
+        return null
+      }
+
+      let referencedContent = content
+      try {
+        referencedContent = await resolveInlineReferences(content)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+
+      let sendPayload = referencedContent
+      const modeForPrompt = requestedMode ?? writerMode
+      if (requestedMode) await applyRequestedMode(requestedMode)
       if (!options?.skipModeWrap) {
         try {
-          sendPayload = await buildPromptByMode(content, writerMode)
+          sendPayload = await buildPromptByMode(referencedContent, modeForPrompt)
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           setError(msg)
         }
       }
 
+      const sourceHistory = options?.sourceMessages ?? chatMessagesRef.current
       const user: ChatItem = { id: newId(), role: 'user', content }
       const streamId = newId()
       const assistantId = newId()
-      const assistant: ChatItem = { id: assistantId, role: 'assistant', content: '', streaming: true, streamId }
+      const versionGroupId = options?.versionGroupId ?? newId()
+      const existingVersions = assistantVersionsRef.current.get(versionGroupId)
+      const assistant: ChatItem = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        streaming: true,
+        streamId,
+        versionGroupId,
+        versionIndex: existingVersions && existingVersions.length > 0 ? existingVersions.length - 1 : 0,
+        versionCount: existingVersions && existingVersions.length > 0 ? existingVersions.length : 1,
+      }
+      const startedAt = Date.now()
       streamOutputRef.current.set(streamId, '')
+      streamAssistantGroupRef.current.set(streamId, versionGroupId)
+      streamAssistantIdRef.current.set(streamId, assistantId)
+      streamStartedAtRef.current.set(streamId, startedAt)
+      streamLastTokenAtRef.current.set(streamId, startedAt)
 
-      setChatMessages((prev) => [...prev, user, assistant])
+      if (options?.hideUserEcho) {
+        if (options?.sourceMessages) {
+          setChatMessages([...options.sourceMessages, assistant])
+        } else {
+          setChatMessages((prev) => [...prev, assistant])
+        }
+      } else {
+        setChatMessages((prev) => [...prev, user, assistant])
+      }
+      setChatAutoScroll(true)
       if (!overrideContent || overrideContent === chatInput) {
         setChatInput('')
       }
 
       if (!isTauriApp()) {
         streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
         setChatMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, content: '当前未运行在 Tauri 环境，无法调用 AI。', streaming: false } : m)),
         )
@@ -1568,6 +1885,11 @@ function App() {
 
       if (!workspaceRoot) {
         streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
         setChatMessages((prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, content: '请先打开一个工作区（Workspace）。', streaming: false } : m)),
         )
@@ -1578,6 +1900,11 @@ function App() {
         await initNovel()
       } catch (e) {
         streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
@@ -1586,7 +1913,7 @@ function App() {
         return null
       }
 
-      const sourceMessages = [...chatMessagesRef.current, user]
+      const sourceMessages = options?.useExistingLastUser ? [...sourceHistory] : [...sourceHistory, user]
       const maxConversationWindow = 24
       const boundedMessages =
         sourceMessages.length > maxConversationWindow
@@ -1602,6 +1929,7 @@ function App() {
         messagesToSend[messagesToSend.length - 1].content = sendPayload
       }
       try {
+        setStreamPhaseById((prev) => ({ ...prev, [streamId]: 'initializing' }))
         const { chatGenerateStream } = await import('./tauriChat')
         await chatGenerateStream({
           streamId,
@@ -1612,6 +1940,16 @@ function App() {
         return streamId
       } catch (e) {
         streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
+        setStreamPhaseById((prev) => {
+          const next = { ...prev }
+          delete next[streamId]
+          return next
+        })
         setChatMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
@@ -1620,8 +1958,231 @@ function App() {
         return null
       }
     },
-    [appSettings, buildPromptByMode, chatInput, newId, workspaceRoot, writerMode],
+    [
+      activeFile,
+      activeStreamId,
+      autoLongWriteEnabled,
+      appSettings,
+      buildPromptByMode,
+      chatInput,
+      ensurePlanningArtifacts,
+      newId,
+      refreshPlannerQueue,
+      resolveInlineReferences,
+      workspaceRoot,
+      writerMode,
+    ],
   )
+
+  const onStopChat = useCallback(async () => {
+    autoLongWriteStopRef.current = true
+    setAutoLongWriteEnabled(false)
+    if (!activeStreamId || !isTauriApp()) return
+    try {
+      manualCancelledStreamsRef.current.add(activeStreamId)
+      const { chatCancelStream } = await import('./tauriChat')
+      await chatCancelStream(activeStreamId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }, [activeStreamId])
+
+  const maybeAutoRetryNoTokenStream = useCallback(
+    async (streamId: string) => {
+      if (!isTauriApp()) return
+      const active = chatMessagesRef.current.find((m) => m.role === 'assistant' && m.streamId === streamId && m.streaming)
+      if (!active) return
+      const hasOutput = (streamOutputRef.current.get(streamId) ?? '').length > 0
+      if (hasOutput) return
+      if (manualCancelledStreamsRef.current.has(streamId)) return
+
+      const groupId = streamAssistantGroupRef.current.get(streamId) ?? active.versionGroupId ?? active.id
+      const retried = versionGroupAutoRetryCountRef.current.get(groupId) ?? 0
+      if (retried >= AUTO_RETRY_MAX_PER_GROUP) return
+      versionGroupAutoRetryCountRef.current.set(groupId, retried + 1)
+      setStreamPhaseById((prev) => ({ ...prev, [streamId]: 'retrying' }))
+
+      try {
+        const { chatCancelStream } = await import('./tauriChat')
+        await chatCancelStream(streamId)
+      } catch {}
+
+      const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+      for (let i = 0; i < 40; i += 1) {
+        const stillOldStream = chatMessagesRef.current.some((m) => m.role === 'assistant' && m.streamId === streamId && m.streaming)
+        if (!stillOldStream) break
+        await wait(120)
+      }
+      for (let i = 0; i < 40; i += 1) {
+        const anyStreaming = chatMessagesRef.current.some((m) => m.streaming)
+        if (!anyStreaming) break
+        await wait(120)
+      }
+      if (chatMessagesRef.current.some((m) => m.streaming)) return
+
+      const assistantId = streamAssistantIdRef.current.get(streamId) ?? active.id
+      setError('AI 首次输出超时，已自动重试一次。')
+      const history = chatMessagesRef.current
+      const assistantIndex = history.findIndex((m) => m.id === assistantId && m.role === 'assistant' && !m.streaming)
+      if (assistantIndex < 0) return
+      let userIndex = -1
+      for (let i = assistantIndex - 1; i >= 0; i -= 1) {
+        if (history[i].role === 'user') {
+          userIndex = i
+          break
+        }
+      }
+      if (userIndex < 0) return
+      const targetAssistant = history[assistantIndex]
+      const replayUser = history[userIndex]
+      const replayHistory = history.slice(0, assistantIndex)
+      const versionGroupId = targetAssistant.versionGroupId ?? targetAssistant.id
+      if (targetAssistant.content.trim()) {
+        upsertAssistantVersion(versionGroupId, {
+          content: targetAssistant.content,
+          changeSet: targetAssistant.changeSet,
+          cancelled: targetAssistant.cancelled,
+          timestamp: Date.now(),
+        })
+      }
+      await onSendChat(replayUser.content, {
+        sourceMessages: replayHistory,
+        useExistingLastUser: true,
+        hideUserEcho: true,
+        versionGroupId,
+      })
+    },
+    [onSendChat, upsertAssistantVersion],
+  )
+  useEffect(() => {
+    if (!activeStreamId) return
+    const timer = window.setTimeout(() => {
+      void maybeAutoRetryNoTokenStream(activeStreamId)
+    }, FIRST_TOKEN_RETRY_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [activeStreamId, maybeAutoRetryNoTokenStream])
+
+  const resolveAssistantReplayContext = useCallback(
+    (assistantMessageId?: string): AssistantReplayContext | null => {
+      if (chatMessagesRef.current.some((m) => m.streaming)) return null
+      const history = chatMessagesRef.current
+      if (history.length === 0) return null
+
+      let assistantIndex = -1
+      if (assistantMessageId) {
+        assistantIndex = history.findIndex((m) => m.id === assistantMessageId && m.role === 'assistant' && !m.streaming)
+      }
+      if (assistantIndex < 0) {
+        for (let i = history.length - 1; i >= 0; i -= 1) {
+          const item = history[i]
+          if (item.role === 'assistant' && !item.streaming) {
+            assistantIndex = i
+            break
+          }
+        }
+      }
+      if (assistantIndex < 0) return null
+
+      let userIndex = -1
+      for (let i = assistantIndex - 1; i >= 0; i -= 1) {
+        if (history[i].role === 'user') {
+          userIndex = i
+          break
+        }
+      }
+      if (userIndex < 0) return null
+
+      const targetAssistant = history[assistantIndex]
+      const versionGroupId = targetAssistant.versionGroupId ?? targetAssistant.id
+      if (targetAssistant.content.trim()) {
+        upsertAssistantVersion(versionGroupId, {
+          content: targetAssistant.content,
+          changeSet: targetAssistant.changeSet,
+          cancelled: targetAssistant.cancelled,
+          timestamp: Date.now(),
+        })
+      }
+
+      const replayHistory = history.slice(0, assistantIndex)
+      const replayUser = replayHistory[replayHistory.length - 1]
+      if (!replayUser || replayUser.role !== 'user') return null
+      return { replayHistory, replayUser, versionGroupId }
+    },
+    [upsertAssistantVersion],
+  )
+
+  const onRegenerateAssistant = useCallback(
+    async (assistantMessageId?: string) => {
+      const replay = resolveAssistantReplayContext(assistantMessageId)
+      if (!replay) return
+      await onSendChat(replay.replayUser.content, {
+        sourceMessages: replay.replayHistory,
+        useExistingLastUser: true,
+        hideUserEcho: true,
+        versionGroupId: replay.versionGroupId,
+      })
+    },
+    [onSendChat, resolveAssistantReplayContext],
+  )
+
+  const onGenerateAssistantCandidates = useCallback(
+    async (assistantMessageId?: string, extraCount = 2) => {
+      const replay = resolveAssistantReplayContext(assistantMessageId)
+      if (!replay) return
+      const rounds = Math.max(1, Math.min(4, Math.floor(extraCount)))
+      for (let i = 0; i < rounds; i += 1) {
+        const streamId = await onSendChat(replay.replayUser.content, {
+          sourceMessages: replay.replayHistory,
+          useExistingLastUser: true,
+          hideUserEcho: true,
+          versionGroupId: replay.versionGroupId,
+        })
+        if (!streamId) break
+        try {
+          await waitForStreamCompletion(streamId)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          if (!/cancel/i.test(msg)) {
+            setError(msg)
+          }
+          break
+        }
+      }
+    },
+    [onSendChat, resolveAssistantReplayContext, waitForStreamCompletion],
+  )
+
+  const onSwitchAssistantVersion = useCallback((messageId: string, direction: -1 | 1) => {
+    setChatMessages((prev) => {
+      const index = prev.findIndex((m) => m.id === messageId && m.role === 'assistant')
+      if (index < 0) return prev
+      const current = prev[index]
+      const groupId = current.versionGroupId
+      if (!groupId) return prev
+      const versions = assistantVersionsRef.current.get(groupId)
+      if (!versions || versions.length < 2) return prev
+
+      const currentIndex =
+        typeof current.versionIndex === 'number'
+          ? Math.max(0, Math.min(versions.length - 1, current.versionIndex))
+          : versions.length - 1
+      let nextIndex = currentIndex + direction
+      if (nextIndex < 0) nextIndex = versions.length - 1
+      if (nextIndex >= versions.length) nextIndex = 0
+
+      const selected = versions[nextIndex]
+      const next = [...prev]
+      next[index] = {
+        ...current,
+        content: selected.content,
+        changeSet: selected.changeSet,
+        cancelled: selected.cancelled,
+        versionIndex: nextIndex,
+        versionCount: versions.length,
+      }
+      return next
+    })
+  }, [])
 
   const onSmartComplete = useCallback(() => {
     if (!activeFile) return
@@ -1646,6 +2207,395 @@ function App() {
       `上下文：\n${snippet}`
     void onSendChat(prompt)
   }, [activeFile, chapterWordTarget, activeCharCount, onSendChat])
+
+  const getLatestFileCharCount = useCallback(
+    async (filePath: string, fallback = ''): Promise<number> => {
+      if (!filePath) return 0
+      if (workspaceRoot && isTauriApp()) {
+        try {
+          const latest = await readText(filePath)
+          return latest.replace(/\s/g, '').length
+        } catch {
+          // Fall back to in-memory content when disk read fails.
+        }
+      }
+      return fallback.replace(/\s/g, '').length
+    },
+    [workspaceRoot],
+  )
+
+  const collectWorkspaceFiles = useCallback((root: FsEntry | null): Set<string> => {
+    const out = new Set<string>()
+    if (!root) return out
+    const stack: FsEntry[] = [root]
+    while (stack.length > 0) {
+      const node = stack.pop()!
+      if (node.kind === 'file') {
+        out.add(node.path.replace(/\\/g, '/'))
+      } else {
+        for (const child of node.children ?? []) {
+          stack.push(child)
+        }
+      }
+    }
+    return out
+  }, [])
+
+  const buildNextChapterPath = useCallback((currentPath: string, files: Set<string>): string | null => {
+    const normalized = (currentPath ?? '').replace(/\\/g, '/')
+    const slash = normalized.lastIndexOf('/')
+    const dir = slash >= 0 ? normalized.slice(0, slash) : ''
+    const file = slash >= 0 ? normalized.slice(slash + 1) : normalized
+    const match = file.match(/^chapter-(\d+)([^.]*)\.(md|txt)$/i)
+    if (!match) return null
+    const digits = match[1] ?? ''
+    const suffix = match[2] ?? ''
+    const ext = match[3] ?? 'md'
+    const nextNum = String(Number(digits) + 1).padStart(digits.length, '0')
+    const nextFile = `chapter-${nextNum}${suffix}.${ext}`
+    const sameDirCandidate = dir ? `${dir}/${nextFile}` : nextFile
+    if (files.has(sameDirCandidate)) return sameDirCandidate
+
+    const globalMatches = [...files].filter((path) => path.endsWith(`/${nextFile}`) || path === nextFile).sort()
+    if (globalMatches.length > 0) {
+      const preferred = globalMatches.find((path) => path.startsWith('stories/vol-')) ?? globalMatches[0]
+      return preferred
+    }
+
+    const volMatch = dir.match(/^(.*\/)?vol-(\d+)$/i)
+    if (volMatch) {
+      const volPrefix = volMatch[1] ?? ''
+      const nextVol = String(Number(volMatch[2]) + 1).padStart(volMatch[2].length, '0')
+      return `${volPrefix}vol-${nextVol}/${nextFile}`
+    }
+
+    return sameDirCandidate
+  }, [])
+
+  const ensureAutoNextChapter = useCallback(
+    async (currentPath: string): Promise<string | null> => {
+      const files = collectWorkspaceFiles(tree)
+      const candidate = buildNextChapterPath(currentPath, files)
+      if (!candidate) return null
+      if (!candidate.startsWith('stories/')) return null
+      if (!files.has(candidate)) {
+        try {
+          await createFile(candidate)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          if (msg.includes('parent directory does not exist')) {
+            const slash = candidate.lastIndexOf('/')
+            if (slash > 0) {
+              await createDir(candidate.slice(0, slash))
+            }
+            await createFile(candidate)
+          } else {
+            throw e
+          }
+        }
+      }
+      await onOpenByPath(candidate)
+      await refreshTree()
+      return candidate
+    },
+    [buildNextChapterPath, collectWorkspaceFiles, onOpenByPath, refreshTree, tree],
+  )
+
+  const ensureAutoStoryFile = useCallback(
+    async (path: string): Promise<string | null> => {
+      const normalized = (path ?? '').replace(/\\/g, '/')
+      if (!normalized || !normalized.startsWith('stories/')) return null
+      const files = collectWorkspaceFiles(tree)
+      if (!files.has(normalized)) {
+        try {
+          await createFile(normalized)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          if (msg.includes('parent directory does not exist')) {
+            const slash = normalized.lastIndexOf('/')
+            if (slash > 0) {
+              await createDir(normalized.slice(0, slash))
+            }
+            await createFile(normalized)
+          } else {
+            throw e
+          }
+        }
+      }
+      await onOpenByPath(normalized)
+      await refreshTree()
+      return normalized
+    },
+    [collectWorkspaceFiles, onOpenByPath, refreshTree, tree],
+  )
+
+  const runAutoLongWrite = useCallback(async () => {
+    if (!workspaceRoot || !isTauriApp()) return
+    if (!activeFile) return
+    if (autoLongWriteRunning) return
+    if (chatMessagesRef.current.some((m) => m.streaming)) return
+
+    let targetPath = activeFile.path
+    let chapterAdvances = 0
+    let reachedTarget = false
+    let stalledRounds = 0
+    let autoTaskCursor: NovelTask | null = null
+    let lastAssistantText = ''
+    autoLongWriteStopRef.current = false
+    setAutoLongWriteRunning(true)
+    setAutoLongWriteStatus('Auto running...')
+
+    try {
+      for (let round = 1; round <= AUTO_LONG_WRITE_MAX_ROUNDS; round += 1) {
+        if (autoLongWriteStopRef.current) break
+        if (activePath !== targetPath) {
+          setAutoLongWriteStatus('Auto stopped: active file changed.')
+          break
+        }
+
+        const fallbackContent = openFiles.find((f) => f.path === targetPath)?.content ?? ''
+        if (writerMode !== 'normal') {
+          await ensurePlanningArtifacts(writerMode)
+          let queue = await novelPlannerService.loadRunQueue()
+          setPlannerTasks(queue)
+          const runningOnPath = queue.find(
+            (task) => task.scope === targetPath && (task.status === 'running' || task.status === 'todo' || task.status === 'retry'),
+          )
+          const nextExecutable = novelPlannerService.getNextExecutableTask(queue)
+          const selectedTask = runningOnPath ?? nextExecutable
+          if (!selectedTask) {
+            reachedTarget = true
+            break
+          }
+
+          if (selectedTask.scope !== targetPath) {
+            const switched = await ensureAutoStoryFile(selectedTask.scope)
+            if (!switched) {
+              reachedTarget = true
+              break
+            }
+            chapterAdvances += 1
+            targetPath = switched
+            setAutoLongWriteStatus(`Auto task switch -> ${selectedTask.id} @ ${switched}`)
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 220))
+            continue
+          }
+
+          autoTaskCursor = selectedTask
+          if (selectedTask.status !== 'running') {
+            queue = await novelPlannerService.updateTask(writerMode, selectedTask.id, (task) => ({
+              ...task,
+              status: 'running',
+              last_error: undefined,
+            }))
+            setPlannerTasks(queue)
+          }
+          await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, selectedTask.id, null)
+        } else {
+          autoTaskCursor = null
+        }
+        const currentCount = await getLatestFileCharCount(targetPath, fallbackContent)
+        const targetCount = Math.max(0, autoTaskCursor?.target_words ?? chapterWordTarget)
+        if (targetCount > 0 && currentCount >= targetCount) {
+          if (autoTaskCursor) {
+            setAutoLongWriteStatus(`Auto validating ${autoTaskCursor.id}...`)
+            const finalPrompt =
+              `Task completion check.\n` +
+              `Task: ${autoTaskCursor.id} ${autoTaskCursor.title}\n` +
+              `Target file: #file:${targetPath}\n` +
+              `Target words: ${targetCount}\n` +
+              `If task is complete, output exactly: TASK_DONE: ${autoTaskCursor.id}\n` +
+              `Then provide a 2-3 sentence summary.\n` +
+              `If not complete, first apply missing edits to file, then output TASK_DONE tag and summary.`
+            const finalStreamId = await onSendChat(finalPrompt, { hideUserEcho: true, skipModeWrap: true })
+            if (!finalStreamId) {
+              throw new Error(`ä»»åŠ¡ ${autoTaskCursor.id} å®Œæˆç¡®è®¤å¯åŠ¨å¤±è´¥`)
+            }
+            try {
+              await waitForStreamCompletion(finalStreamId)
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e)
+              if (/cancel/i.test(msg)) break
+              throw e
+            }
+            const finalAssistantText = (streamOutputRef.current.get(finalStreamId) ?? lastAssistantText).trim()
+            streamOutputRef.current.delete(finalStreamId)
+            streamAssistantGroupRef.current.delete(finalStreamId)
+            streamAssistantIdRef.current.delete(finalStreamId)
+            manualCancelledStreamsRef.current.delete(finalStreamId)
+            streamStartedAtRef.current.delete(finalStreamId)
+            streamLastTokenAtRef.current.delete(finalStreamId)
+
+            let queue = await novelPlannerService.loadRunQueue()
+            const quality = await validateTaskQuality(autoTaskCursor, finalAssistantText, queue)
+            if (!quality.ok) {
+              queue = await novelPlannerService.updateTask(writerMode, autoTaskCursor.id, (task) => ({
+                ...task,
+                status: task.retries >= 1 ? 'blocked' : 'retry',
+                retries: task.retries + 1,
+                last_error: quality.reason ?? '质量校验失败',
+              }))
+              setPlannerTasks(queue)
+              await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, autoTaskCursor.id, quality.reason ?? null)
+              const nowStatus = queue.find((task) => task.id === autoTaskCursor?.id)?.status
+              if (nowStatus === 'blocked') {
+                setAutoLongWriteStatus(`Auto blocked: ${autoTaskCursor.id} ${quality.reason ?? ''}`.trim())
+                break
+              }
+              setAutoLongWriteStatus(`Auto retry: ${autoTaskCursor.id} ${quality.reason ?? ''}`.trim())
+              continue
+            }
+
+            const summary = extractTaskSummaryFromMessage(finalAssistantText) || `Auto reached target words (${currentCount}/${targetCount})`
+            queue = await novelPlannerService.updateTask(writerMode, autoTaskCursor.id, (task) => ({
+              ...task,
+              status: 'done',
+              completed_at: new Date().toISOString(),
+              last_error: undefined,
+            }))
+            await novelPlannerService.appendContinuityEntry(autoTaskCursor, summary)
+            await novelPlannerService.setSessionTaskPointer(chatSessionIdRef.current, null, null)
+            setPlannerTasks(queue)
+            const nextTask = novelPlannerService.getNextExecutableTask(queue)
+            if (!nextTask) {
+              reachedTarget = true
+              break
+            }
+            const switched = await ensureAutoStoryFile(nextTask.scope)
+            if (!switched) {
+              reachedTarget = true
+              break
+            }
+            chapterAdvances += 1
+            targetPath = switched
+            autoTaskCursor = null
+            setAutoLongWriteStatus(`Auto task done ${nextTask.id} -> ${switched}`)
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 220))
+            continue
+          }
+          if (chapterAdvances >= AUTO_LONG_WRITE_MAX_CHAPTER_ADVANCES) {
+            setAutoLongWriteStatus('Auto paused: chapter auto-advance limit reached.')
+            break
+          }
+          const nextPath = await ensureAutoNextChapter(targetPath)
+          if (!nextPath) {
+            reachedTarget = true
+            break
+          }
+          chapterAdvances += 1
+          targetPath = nextPath
+          setAutoLongWriteStatus(`Auto advanced to ${nextPath} (chapter ${chapterAdvances + 1})`)
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 220))
+          continue
+        }
+
+        const gap = targetCount > 0 ? Math.max(0, targetCount - currentCount) : 1200
+        const chunkChars = Math.max(AUTO_LONG_WRITE_MIN_CHARS, Math.min(AUTO_LONG_WRITE_MAX_CHARS, gap > 0 ? gap : 1200))
+        const progressLabel = targetCount > 0 ? `${currentCount}/${targetCount}` : `${currentCount}`
+        setAutoLongWriteStatus(`Auto round ${round} - ${progressLabel}`)
+
+        const modeGuard =
+          writerMode === 'normal'
+            ? 'Use current chapter context and referenced files only.'
+            : writerMode === 'plan'
+              ? 'Follow the major outline and chapter pacing strictly.'
+              : 'Follow the detailed outline tasks and beat continuity strictly.'
+
+        const prompt =
+          `Auto long-form writing task.\n` +
+          `Current chapter file: #file:${targetPath}\n` +
+          `Current length: ${currentCount} chars.\n` +
+          `Mode: ${writerMode}.\n` +
+          (targetCount > 0 ? `Target length: ${targetCount} chars.\n` : '') +
+          (autoTaskCursor ? `Task: ${autoTaskCursor.id} ${autoTaskCursor.title}\n` : '') +
+          `Write and apply about ${chunkChars} new chars directly into the file.\n` +
+          `Requirements:\n` +
+          `1) Must use file-edit tool to modify project files directly (no insert button flow).\n` +
+          `2) Keep plot logic consistent with existing chapters and avoid contradictions.\n` +
+          `3) ${modeGuard}\n` +
+          `4) No duplicate paragraphs; continue exactly from the current ending.\n` +
+          `5) Return a one-line progress summary after applying edits.`
+
+        const streamId = await onSendChat(prompt, { hideUserEcho: true })
+        if (!streamId) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 160))
+          continue
+        }
+
+        try {
+          await waitForStreamCompletion(streamId)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          if (/cancel/i.test(msg)) {
+            break
+          }
+          throw e
+        }
+        lastAssistantText = (streamOutputRef.current.get(streamId) ?? '').trim()
+        streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
+
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 280))
+        const nextCount = await getLatestFileCharCount(targetPath, fallbackContent)
+        if (nextCount <= currentCount + 20) {
+          stalledRounds += 1
+          if (stalledRounds >= 3) {
+            setAutoLongWriteStatus('Auto paused: no measurable file growth.')
+            break
+          }
+        } else {
+          stalledRounds = 0
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setAutoLongWriteStatus('Auto failed.')
+    } finally {
+      const stoppedByUser = autoLongWriteStopRef.current
+      if (reachedTarget) {
+        setAutoLongWriteStatus(
+          writerMode === 'normal' ? 'Auto completed: chapter target reached.' : 'Auto completed: planner queue reached target.',
+        )
+      } else if (stoppedByUser) {
+        setAutoLongWriteStatus('Auto stopped.')
+      }
+      autoLongWriteStopRef.current = false
+      setAutoLongWriteRunning(false)
+      setAutoLongWriteEnabled(false)
+      window.setTimeout(() => {
+        setAutoLongWriteStatus('')
+      }, 3500)
+    }
+  }, [
+    activeFile,
+    activePath,
+    autoLongWriteRunning,
+    chapterWordTarget,
+    ensureAutoNextChapter,
+    ensureAutoStoryFile,
+    ensurePlanningArtifacts,
+    extractTaskSummaryFromMessage,
+    getLatestFileCharCount,
+    onSendChat,
+    openFiles,
+    validateTaskQuality,
+    waitForStreamCompletion,
+    workspaceRoot,
+    writerMode,
+  ])
+
+  useEffect(() => {
+    if (!autoLongWriteEnabled) return
+    if (!workspaceRoot || !isTauriApp()) return
+    if (!activeFile) return
+    if (autoLongWriteRunning) return
+    if (chatMessages.some((m) => m.streaming)) return
+    void runAutoLongWrite()
+  }, [activeFile, autoLongWriteEnabled, autoLongWriteRunning, chatMessages, runAutoLongWrite, workspaceRoot])
 
   const onWriterModeChange = useCallback(
     async (mode: WriterMode) => {
@@ -1676,7 +2626,7 @@ function App() {
   const onGeneratePlanAndTasks = useCallback(async () => {
     if (!workspaceRoot || !isTauriApp()) return
     if (writerMode === 'normal') {
-      await message('普通模式不生成大纲与任务，请切换为 Plan 或 Spec。', { title: '提示' })
+      await message('\u666e\u901a\u6a21\u5f0f\u4e0d\u751f\u6210\u5927\u7eb2\u4e0e\u7ec6\u7eb2\uff0c\u8bf7\u5207\u6362\u5230\u5927\u7eb2\u6a21\u5f0f\u6216\u7ec6\u7eb2\u6a21\u5f0f\u3002', { title: '\u63d0\u793a' })
       return
     }
     setPlannerBusy(true)
@@ -1696,7 +2646,7 @@ function App() {
       if (activePath !== MASTER_PLAN_RELATIVE_PATH) {
         await onOpenByPath(MASTER_PLAN_RELATIVE_PATH)
       }
-      if ((plannerState?.auto_run ?? true) && tasks.length > 0) {
+      if (tasks.length > 0) {
         void runPlannerQueue(chatInput)
       }
     } catch (e) {
@@ -1704,13 +2654,13 @@ function App() {
     } finally {
       setPlannerBusy(false)
     }
-  }, [activePath, chapterWordTarget, chatInput, onOpenByPath, plannerState, workspaceRoot, writerMode])
+  }, [activePath, chapterWordTarget, chatInput, onOpenByPath, workspaceRoot, writerMode])
 
   const runPlannerQueue = useCallback(
     async (userInstruction = '') => {
       if (!workspaceRoot || !isTauriApp()) return
       if (writerMode === 'normal') {
-        setPlannerLastRunError('普通模式不执行任务队列')
+        setPlannerLastRunError('\u666e\u901a\u6a21\u5f0f\u4e0d\u6267\u884c\u7ec6\u7eb2\u961f\u5217')
         return
       }
       if (plannerQueueRunning) return
@@ -1747,6 +2697,11 @@ function App() {
           await waitForStreamCompletion(streamId)
           const latestAssistant = streamOutputRef.current.get(streamId) ?? ''
           streamOutputRef.current.delete(streamId)
+          streamAssistantGroupRef.current.delete(streamId)
+          streamAssistantIdRef.current.delete(streamId)
+          manualCancelledStreamsRef.current.delete(streamId)
+          streamStartedAtRef.current.delete(streamId)
+          streamLastTokenAtRef.current.delete(streamId)
 
           const quality = await validateTaskQuality(next, latestAssistant, tasks)
           if (!quality.ok) {
@@ -1799,20 +2754,6 @@ function App() {
       tree,
       activePath,
     ],
-  )
-
-  const stopPlannerQueue = useCallback(() => {
-    plannerStopRef.current = true
-    setPlannerQueueRunning(false)
-  }, [])
-
-  const onPlannerAutoRunChange = useCallback(
-    async (nextAutoRun: boolean) => {
-      if (!workspaceRoot || !isTauriApp()) return
-      const session = await novelPlannerService.setSessionAutoRun(chatSessionIdRef.current, nextAutoRun)
-      setPlannerState(session)
-    },
-    [workspaceRoot],
   )
 
   // --- DiffView Handlers ---
@@ -2267,6 +3208,7 @@ function App() {
   useEffect(() => {
     if (!isTauriApp()) return
     const unlistenFns: Array<() => void> = []
+    let disposed = false
     const normalizeStreamId = (v: unknown): string | null => {
       if (typeof v === 'string' && v) return v
       return null
@@ -2285,43 +3227,135 @@ function App() {
       if (typeof payload === 'object') return payload as Record<string, unknown>
       return null
     }
-    void listen('ai_stream_token', (event) => {
-      const p = parsePayload(event.payload)
+    const subscribe = (eventName: string, handler: (payload: unknown) => void) => {
+      void listen(eventName, (event) => {
+        if (disposed) return
+        handler(event.payload)
+      })
+        .then((unlisten) => {
+          if (disposed) {
+            unlisten()
+            return
+          }
+          unlistenFns.push(unlisten)
+        })
+        .catch((e) => {
+          if (!disposed) {
+            console.error(`[ai-events] subscribe failed for ${eventName}`, e)
+          }
+        })
+    }
+
+    subscribe('ai_stream_start', (rawPayload) => {
+      const p = parsePayload(rawPayload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
+      const now = Date.now()
+      streamStartedAtRef.current.set(streamId, now)
+      streamLastTokenAtRef.current.set(streamId, now)
+    })
+
+    subscribe('ai_stream_token', (rawPayload) => {
+      const p = parsePayload(rawPayload)
+      if (!p) return
+      const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
+      if (!streamId) return
+      const now = Date.now()
+      if (!streamStartedAtRef.current.has(streamId)) {
+        streamStartedAtRef.current.set(streamId, now)
+      }
+      streamLastTokenAtRef.current.set(streamId, now)
       const token = typeof p.token === 'string' ? p.token : ''
       if (!token) return
       const prevText = streamOutputRef.current.get(streamId) ?? ''
-      streamOutputRef.current.set(streamId, `${prevText}${token}`)
+      const merged = appendStreamTextWithOverlap(prevText, token)
+      if (!merged.appended) return
+      streamOutputRef.current.set(streamId, merged.next)
       setChatMessages((prev) =>
-        prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, content: `${m.content}${token}` } : m)),
+        prev.map((m) =>
+          m.role === 'assistant' && m.streamId === streamId ? { ...m, content: `${m.content}${merged.appended}` } : m,
+        ),
       )
-    }).then((u) => unlistenFns.push(u))
+    })
 
-    void listen('ai_stream_done', (event) => {
-      const p = parsePayload(event.payload)
+    subscribe('ai_stream_done', (rawPayload) => {
+      const p = parsePayload(rawPayload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
-      setChatMessages((prev) => prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, streaming: false } : m)))
+      const cancelled = p.cancelled === true
+      const streamVersionGroupId = streamAssistantGroupRef.current.get(streamId)
+      if (cancelled) {
+        streamFailuresRef.current.add(streamId)
+      }
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.role === 'assistant' && m.streamId === streamId
+            ? (() => {
+                const groupId = m.versionGroupId ?? streamVersionGroupId ?? m.id
+                const mergedCancelled = cancelled || m.cancelled
+                const registered = upsertAssistantVersion(groupId, {
+                  content: m.content,
+                  changeSet: m.changeSet,
+                  cancelled: mergedCancelled,
+                  timestamp: Date.now(),
+                })
+                return {
+                  ...m,
+                  streaming: false,
+                  cancelled: mergedCancelled,
+                  versionGroupId: groupId,
+                  versionIndex: registered.index,
+                  versionCount: registered.count,
+                }
+              })()
+            : m,
+        ),
+      )
+      setStreamPhaseById((prev) => {
+        if (!(streamId in prev)) return prev
+        const next = { ...prev }
+        delete next[streamId]
+        return next
+      })
       const waiter = streamWaitersRef.current.get(streamId)
       if (waiter) {
         streamWaitersRef.current.delete(streamId)
         if (streamFailuresRef.current.has(streamId)) {
           streamFailuresRef.current.delete(streamId)
-          waiter.reject(new Error('AI 任务执行失败'))
+          waiter.reject(new Error(cancelled ? 'AI generation cancelled' : 'AI task failed'))
         } else {
           waiter.resolve()
         }
       }
+      const finishedGroupId = streamAssistantGroupRef.current.get(streamId)
+      const hasOutput = (streamOutputRef.current.get(streamId) ?? '').trim().length > 0
+      if (finishedGroupId && hasOutput) {
+        versionGroupAutoRetryCountRef.current.delete(finishedGroupId)
+      }
       window.setTimeout(() => {
         streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
       }, 30000)
-    }).then((u) => unlistenFns.push(u))
+    })
 
-    void listen('ai_change_set', (event) => {
-      const p = parsePayload(event.payload)
+    subscribe('ai_stream_status', (rawPayload) => {
+      const p = parsePayload(rawPayload)
+      if (!p) return
+      const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
+      if (!streamId) return
+      const phase = typeof p.phase === 'string' ? p.phase : ''
+      if (!phase) return
+      setStreamPhaseById((prev) => ({ ...prev, [streamId]: phase }))
+    })
+
+    subscribe('ai_change_set', (rawPayload) => {
+      const p = parsePayload(rawPayload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
@@ -2336,11 +3370,7 @@ function App() {
       const primaryChangeSet = imported[0]?.changeSet
       if (primaryChangeSet) {
         setChatMessages((prev) =>
-          prev.map((m) =>
-            m.role === 'assistant' && m.streamId === streamId
-              ? { ...m, changeSet: primaryChangeSet }
-              : m
-          )
+          prev.map((m) => (m.role === 'assistant' && m.streamId === streamId ? { ...m, changeSet: primaryChangeSet } : m)),
         )
       }
 
@@ -2363,14 +3393,14 @@ function App() {
       } else if (primaryChangeSet) {
         onOpenDiffView(primaryChangeSet.id)
       }
-    }).then((u) => unlistenFns.push(u))
+    })
 
-    void listen('ai_error', (event) => {
-      const p = parsePayload(event.payload)
+    subscribe('ai_error', (rawPayload) => {
+      const p = parsePayload(rawPayload)
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
-      const message = typeof p.message === 'string' ? p.message : 'AI 调用失败'
+      const message = typeof p.message === 'string' ? p.message : 'AI call failed'
       const stage = typeof p.stage === 'string' ? p.stage : ''
       const provider = typeof p.provider === 'string' ? p.provider : ''
       const extra = [provider ? `provider=${provider}` : '', stage ? `stage=${stage}` : ''].filter(Boolean).join(' ')
@@ -2381,6 +3411,12 @@ function App() {
             : m,
         ),
       )
+      setStreamPhaseById((prev) => {
+        if (!(streamId in prev)) return prev
+        const next = { ...prev }
+        delete next[streamId]
+        return next
+      })
       streamFailuresRef.current.add(streamId)
       const waiter = streamWaitersRef.current.get(streamId)
       if (waiter) {
@@ -2390,13 +3426,19 @@ function App() {
       }
       window.setTimeout(() => {
         streamOutputRef.current.delete(streamId)
+        streamAssistantGroupRef.current.delete(streamId)
+        streamAssistantIdRef.current.delete(streamId)
+        manualCancelledStreamsRef.current.delete(streamId)
+        streamStartedAtRef.current.delete(streamId)
+        streamLastTokenAtRef.current.delete(streamId)
       }, 1000)
-    }).then((u) => unlistenFns.push(u))
+    })
 
     return () => {
+      disposed = true
       for (const u of unlistenFns) u()
     }
-  }, [appSettings, diffContext, onOpenDiffView, refreshTree])
+  }, [appSettings, diffContext, onOpenDiffView, refreshTree, upsertAssistantVersion])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -2699,8 +3741,8 @@ function App() {
                       onChange={(e) => setWorkspaceInput(e.target.value)}
                       placeholder="或输入路径"
                     />
-                  )}
-                </div>
+	                  )}
+	                  </div>
               )}
             </div>
             {workspaceRoot ? (
@@ -2863,22 +3905,24 @@ function App() {
             })
           }}
         />
-        <div className="editor-tabs-actions">
-          <button className="icon-button" disabled={!workspaceRoot} onClick={() => void onNewChapter()} title="新建章节">
-            <AppIcon name="add" size={14} />
-          </button>
-          <button className="icon-button" disabled={!activeFile || !activeFile.dirty} onClick={() => void onSaveActive()} title="保存">
-            <AppIcon name="save" size={15} />
-          </button>
-          <button
-            className="icon-button"
-            disabled={!activeFile}
-            onClick={() => setShowPreview((v) => !v)}
-            title="预览"
-          >
-            <AppIcon name="preview" size={15} />
-          </button>
-        </div>
+        {activeFile ? (
+          <div className="editor-tabs-actions">
+            <button className="icon-button" disabled={!workspaceRoot} onClick={() => void onNewChapter()} title="新建章节">
+              <AppIcon name="add" size={14} />
+            </button>
+            <button className="icon-button" disabled={!activeFile || !activeFile.dirty} onClick={() => void onSaveActive()} title="保存">
+              <AppIcon name="save" size={15} />
+            </button>
+            <button
+              className="icon-button"
+              disabled={!activeFile}
+              onClick={() => setShowPreview((v) => !v)}
+              title="预览"
+            >
+              <AppIcon name="preview" size={15} />
+            </button>
+          </div>
+        ) : null}
         <div className="editor-content">
           {activeFile ? (
             <>
@@ -2971,180 +4015,64 @@ function App() {
                 <div className="ai-header">
                   <div className="ai-title-row">
                     <span>AI 对话</span>
-                    <button
-                      className="icon-button ai-new-session-btn"
-                      onClick={() => {
-                        const nextSessionId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-                        chatSessionIdRef.current = nextSessionId
-                        setChatMessages([])
-                        void loadPlannerSession().catch((e) => {
-                          setPlannerLastRunError(e instanceof Error ? e.message : String(e))
-                        })
-                      }}
-                      title="新建对话"
-                    >
-                      新会话
-                    </button>
-                  </div>
-                  <div className="ai-config-row">
-                    <select
-                      className="ai-select"
-                      value={appSettings?.active_agent_id ?? ''}
-                      onChange={(e) => {
-                        const id = e.target.value
-                        if (!appSettings) return
-                        const prev = appSettings
-                        const next = { ...appSettings, active_agent_id: id }
-                        setAppSettingsState(next)
-                        void persistAppSettings(next, prev)
-                      }}
-                    >
-                      {agentsList.length === 0 ? <option value="">无智能体</option> : null}
-                      {agentsList.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="ai-config-row">
-                    <select
-                      className="ai-select"
-                      value={effectiveProviderId}
-                      onChange={(e) => {
-                        const active = e.target.value
-                        if (!appSettings) return
-                        const prev = appSettings
-                        const next = { ...appSettings, active_provider_id: active }
-                        setAppSettingsState(next)
-                        void persistAppSettings(next, prev)
-                      }}
-                    >
-                      {appSettings?.providers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="ai-config-row">
-                    <select
-                      className="ai-select"
-                      value={writerMode}
-                      onChange={(e) => void onWriterModeChange(e.target.value as WriterMode)}
-                    >
-                      <option value="normal">Normal 模式（无大纲）</option>
-                      <option value="plan">Plan 模式（粗纲）</option>
-                      <option value="spec">Spec 模式（粗纲+任务）</option>
-                    </select>
-                  </div>
-                  <div className="ai-planner-actions">
-                    <button
-                      className="icon-button"
-                      disabled={plannerBusy || writerMode === 'normal'}
-                      onClick={() => void onGeneratePlanAndTasks()}
-                      title="生成粗纲和任务队列"
-                    >
-                      生成规划
-                    </button>
-                    <button
-                      className="icon-button"
-                      disabled={writerMode === 'normal'}
-                      onClick={() => void onOpenByPath(MASTER_PLAN_RELATIVE_PATH)}
-                      title="打开设计文档"
-                    >
-                      设计文档
-                    </button>
-                    <button
-                      className="icon-button"
-                      disabled={writerMode === 'normal'}
-                      onClick={() => void onOpenByPath('.novel/tasks/run-queue.md')}
-                      title="打开任务队列"
-                    >
-                      Tasks
-                    </button>
-                    <button
-                      className="icon-button"
-                      disabled={plannerBusy || writerMode === 'normal' || plannerQueueRunning}
-                      onClick={() => void runPlannerQueue(chatInput)}
-                      title="执行任务队列"
-                    >
-                      自动执行
-                    </button>
-                    <button
-                      className="icon-button"
-                      disabled={!plannerQueueRunning}
-                      onClick={stopPlannerQueue}
-                      title="停止任务队列"
-                    >
-                      停止
-                    </button>
-                    <label className="planner-auto-run">
-                      <input
-                        type="checkbox"
-                        checked={plannerState?.auto_run ?? writerMode !== 'normal'}
-                        disabled={writerMode === 'normal' || plannerQueueRunning}
-                        onChange={(e) => void onPlannerAutoRunChange(e.target.checked)}
-                      />
-                      自动续跑
-                    </label>
-                  </div>
-                  {writerMode !== 'normal' ? (
-                    <div className="planner-progress-line">
-                      <span>任务 {plannerTaskStats.done}/{plannerTaskStats.total}</span>
-                      <span>待执行 {plannerTaskStats.todo}</span>
-                      <span>运行中 {plannerTaskStats.running}</span>
-                      {plannerTaskStats.blocked > 0 ? <span>阻塞 {plannerTaskStats.blocked}</span> : null}
+                    <div className="ai-title-actions">
+                      <button
+                        className="icon-button ai-new-session-btn"
+                        onClick={() => {
+                          const nextSessionId =
+                            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+                              ? crypto.randomUUID()
+                              : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+	                          chatSessionIdRef.current = nextSessionId
+	                          setChatMessages([])
+	                          setChatAutoScroll(true)
+	                          void loadPlannerSession().catch((e) => {
+	                            setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+	                          })
+                        }}
+                        title="新建对话"
+                      >
+                        新会话
+                      </button>
                     </div>
-                  ) : null}
-                  {plannerCurrentTask ? (
-                    <div className="planner-current-task">
-                      当前任务：{plannerCurrentTask.id} {plannerCurrentTask.title}
-                    </div>
-                  ) : null}
+                  </div>
+                  <div className="ai-mode-brief">
+                    {writerMode === 'normal' ? '\u666e\u901a\u6a21\u5f0f' : writerMode === 'plan' ? '\u5927\u7eb2\u6a21\u5f0f' : '\u7ec6\u7eb2\u6a21\u5f0f'}
+                  </div>
                   {plannerLastRunError ? <div className="planner-error-text">{plannerLastRunError}</div> : null}
                 </div>
 
-                {writerMode !== 'normal' && plannerTasks.length > 0 ? (
-                  <div className="planner-task-board">
-                    {plannerTasks.slice(0, 8).map((task) => (
-                      <div key={task.id} className={`planner-task-item is-${task.status}`}>
-                        <div className="planner-task-main">
-                          <span className="planner-task-id">{task.id}</span>
-                          <span className="planner-task-title">{task.title}</span>
-                        </div>
-                        <div className="planner-task-meta">
-                          <span>V{task.volume}</span>
-                          <span>{task.target_words} 字</span>
-                          <span>{task.status}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {plannerTasks.length > 8 ? (
-                      <div className="planner-task-more">
-                        还有 {plannerTasks.length - 8} 个任务，打开 `run-queue.md` 查看全部
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <div className="ai-messages">
+	                <div className="ai-messages-wrap">
+	                  <div
+	                    className="ai-messages"
+	                    ref={aiMessagesRef}
+	                    onScroll={() => {
+	                      const panel = aiMessagesRef.current
+	                      if (!panel) return
+	                      const threshold = 24
+	                      const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight <= threshold
+	                      setChatAutoScroll(atBottom)
+	                    }}
+	                  >
                   {chatMessages.length === 0 ? (
                     <div className="ai-empty-state">
                       <div>嗨，我是你的写作助手。</div>
-                      <div className="ai-empty-state-sub">
-                        当前模式：{writerMode.toUpperCase()}。我可以帮你续写情节、规划大纲并按任务自动写作。
+                                            <div className="ai-empty-state-sub">
+                        {'\u5f53\u524d\u6a21\u5f0f\uff1a'}
+                        {writerMode.toUpperCase()}
+                        {'\u3002\u53ef\u7ee7\u7eed\u5267\u60c5\uff0c\u6216\u5207\u6362\u5230\u5927\u7eb2\u6a21\u5f0f/\u7ec6\u7eb2\u6a21\u5f0f\u8fdb\u884c\u89c4\u5212\u3002'}
                       </div>
                     </div>
                   ) : (
-                    chatMessages.map((m) => (
-                      <div key={m.id} className={m.role === 'user' ? 'message user' : 'message assistant'}>
+	                    chatMessages.map((m) => (
+	                      <div key={m.id} className={m.role === 'user' ? 'message user' : 'message assistant'}>
                         <div className="message-meta">
                           {m.role === 'user' ? (
                             '你'
                           ) : (
                             <span className="ai-meta">
                               AI
+                              {m.cancelled ? <span className="ai-cancelled-tag">{'已停止'}</span> : null}
                               {m.streaming ? (
                                 <span className="ai-dot-pulse" aria-hidden="true">
                                   <span />
@@ -3155,13 +4083,34 @@ function App() {
                             </span>
                           )}
                         </div>
-                        <div className="message-content" onContextMenu={(e) => openChatContextMenu(e, m.content)}>
+                        {m.role === 'assistant' && !m.streaming && (m.versionCount ?? 0) > 1 ? (
+                          <div className="assistant-version-switch">
+                            <button
+                              className="icon-button assistant-version-btn"
+                              onClick={() => onSwitchAssistantVersion(m.id, -1)}
+                              title={'\u4e0a\u4e00\u7248'}
+                            >
+                              {'<'}
+                            </button>
+                            <span className="assistant-version-label">
+                              {(typeof m.versionIndex === 'number' ? m.versionIndex + 1 : m.versionCount)}/{m.versionCount}
+                            </span>
+                            <button
+                              className="icon-button assistant-version-btn"
+                              onClick={() => onSwitchAssistantVersion(m.id, 1)}
+                              title={'\u4e0b\u4e00\u7248'}
+                            >
+                              {'>'}
+                            </button>
+                          </div>
+                        ) : null}
+	                        <div className="message-content" onContextMenu={(e) => openChatContextMenu(e, m)}>
                           {m.content || (m.role === 'assistant' && m.streaming ? '正在思考…' : '')}
                         </div>
                         {m.role === 'assistant' && m.streaming ? (
                           <div className="ai-processing-indicator">
                             <div className="ai-processing-spinner" />
-                            <span>AI 正在处理文件...</span>
+                            <span>{getStreamPhaseLabel(m.streamId)}</span>
                           </div>
                         ) : null}
                         {m.role === 'assistant' && m.changeSet && m.changeSet.modifications.length > 0 ? (
@@ -3187,44 +4136,172 @@ function App() {
                             </div>
                           </div>
                         ) : null}
-                        {m.role === 'assistant' && m.content ? (
-                          <div className="ai-actions">
-                            <button className="icon-button" disabled={!activeFile} onClick={() => insertAtCursor(m.content)} title="插入">
-                              插入
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ))
-                  )}
-                </div>
+	                      </div>
+	                    ))
+	                  )}
+	                  </div>
+	                  {!chatAutoScroll ? (
+	                    <button
+	                      className="chat-scroll-bottom-btn"
+	                      onClick={() => {
+	                        setChatAutoScroll(true)
+	                        scrollChatToBottom(true)
+	                      }}
+	                    >
+	                      {'\u56de\u5230\u5e95\u90e8'}
+	                    </button>
+	                  ) : null}
+	                </div>
 
-                <div className="ai-input-area">
-                  <div className="ai-actions ai-input-tools">
-                    <button className="icon-button" disabled={!activeFile} onClick={() => onQuoteSelection()} title="引用选区">
-                      引用
-                    </button>
-                    <button className="icon-button" disabled={!activeFile} onClick={() => void onSmartComplete()} title="智能补全">
-                      续写
-                    </button>
-                    <div className="spacer" />
-                    <button className="primary-button" disabled={busy || !chatInput.trim()} onClick={() => void onSendChat()}>
-                      发送
-                    </button>
+	                <div className="ai-input-area">
+                  <div className="ai-input-topbar">
+                    <div className="ai-actions ai-input-tools">
+                      <button className="icon-button" disabled={!activeFile} onClick={() => onQuoteSelection()} title="引用选区">
+                        引用
+                      </button>
+                      <button className="icon-button" disabled={!activeFile} onClick={() => void onSmartComplete()} title="智能补全">
+                        续写
+                      </button>
+                    </div>
+                    <label className={`ai-auto-switch ${autoLongWriteEnabled ? 'active' : ''}`} title="Auto continuous long-form writing">
+                      <input
+                        type="checkbox"
+                        checked={autoLongWriteEnabled}
+                        disabled={autoToggleDisabled}
+	                        onChange={(e) => {
+	                          const next = e.target.checked
+	                          setAutoLongWriteEnabled(next)
+	                          autoLongWriteStopRef.current = !next
+	                          setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
+	                          if (!next && activeStreamId) {
+	                            void onStopChat()
+	                          }
+	                        }}
+	                      />
+                      <span className="ai-auto-switch-track">
+                        <span className="ai-auto-switch-knob" />
+                      </span>
+                      <span className="ai-auto-switch-text">Auto</span>
+                    </label>
+	                    <select className="ai-select ai-mode-select" value={writerMode} onChange={(e) => void onWriterModeChange(e.target.value as WriterMode)}>
+	                      <option value="normal">{'\u666e\u901a\u6a21\u5f0f'}</option>
+	                      <option value="plan">{'\u5927\u7eb2\u6a21\u5f0f'}</option>
+	                      <option value="spec">{'\u7ec6\u7eb2\u6a21\u5f0f'}</option>
+	                    </select>
+	                  </div>
+	                  {autoLongWriteStatus ? <div className="ai-auto-status">{autoLongWriteStatus}</div> : null}
+		                  <textarea
+	                    ref={chatInputRef}
+	                    className="ai-textarea"
+	                    value={chatInput}
+	                    onChange={(e) => setChatInput(e.target.value)}
+	                    onKeyDown={(e) => {
+		                      if (e.key === 'Escape' && showStopAction) {
+		                        e.preventDefault()
+		                        void onStopChat()
+		                        return
+		                      }
+	                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+	                        e.preventDefault()
+		                        if (showStopAction) {
+		                          void onStopChat()
+		                        } else {
+		                          void onSendChat()
+		                        }
+	                        return
+	                      }
+	                      if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+	                        const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number }
+	                        if (nativeEvent.isComposing || nativeEvent.keyCode === 229) {
+	                          return
+	                        }
+	                        e.preventDefault()
+		                        if (showStopAction) {
+		                          void onStopChat()
+		                        } else {
+		                          void onSendChat()
+		                        }
+	                      }
+	                    }}
+		                    placeholder={
+		                      '\u8f93\u5165\u6307\u4ee4... \u652f\u6301 #\u9009\u533a #\u5f53\u524d\u6587\u4ef6 #file:\u8def\u5f84\uff0c\u53ef\u7528 /plan /spec \u5207\u6362\u6a21\u5f0f\uff0c/auto on|off \u63a7\u5236\u81ea\u52a8\u8fde\u7eed\u751f\u6210\uff08Enter \u53d1\u9001\uff0cShift+Enter \u6362\u884c\uff09'
+		                    }
+		                  />
+                  <div className="ai-composer-footer">
+                    <div className="ai-composer-selects">
+                      <select
+                        className="ai-select ai-select-compact"
+                        value={appSettings?.active_agent_id ?? ''}
+                        onChange={(e) => {
+                          const id = e.target.value
+                          if (!appSettings) return
+                          const prev = appSettings
+                          const next = { ...appSettings, active_agent_id: id }
+                          setAppSettingsState(next)
+                          void persistAppSettings(next, prev)
+                        }}
+                      >
+                        {agentsList.length === 0 ? <option value="">无智能体</option> : null}
+                        {agentsList.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="ai-select ai-select-compact"
+                        value={effectiveProviderId}
+                        onChange={(e) => {
+                          const active = e.target.value
+                          if (!appSettings) return
+                          const prev = appSettings
+                          const next = { ...appSettings, active_provider_id: active }
+                          setAppSettingsState(next)
+                          void persistAppSettings(next, prev)
+                        }}
+                      >
+                        {appSettings?.providers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="ai-composer-main-actions">
+                      {!isChatStreaming && canRegenerateLatest ? (
+                        <button
+                          className="icon-button ai-regenerate-btn"
+                          onClick={() => void onRegenerateAssistant(latestCompletedAssistant?.id)}
+                          title={'\u91cd\u65b0\u751f\u6210\u4e0a\u6761\u56de\u590d'}
+                        >
+                          <AppIcon name="refresh" size={13} />
+                        </button>
+                      ) : null}
+                      {!isChatStreaming && canRegenerateLatest ? (
+                        <button
+                          className="icon-button ai-candidates-btn"
+                          onClick={() => void onGenerateAssistantCandidates(latestCompletedAssistant?.id, 2)}
+                          title={'\u751f\u6210\u989d\u5916\u5019\u9009\u56de\u590d'}
+                        >
+                          <AppIcon name="add" size={13} />
+                        </button>
+                      ) : null}
+	                      {showStopAction ? (
+	                        <button
+	                          className="primary-button chat-stop-button"
+	                          disabled={!activeStreamId && !autoLongWriteRunning}
+	                          onClick={() => void onStopChat()}
+	                          title={'\u505c\u6b62\u751f\u6210'}
+	                        >
+	                          <AppIcon name="stop" size={13} />
+	                        </button>
+	                      ) : (
+	                        <button className="primary-button" disabled={busy || !chatInput.trim() || autoLongWriteRunning} onClick={() => void onSendChat()}>
+	                          {'\u53d1\u9001'}
+	                        </button>
+	                      )}
+                    </div>
                   </div>
-                  <textarea
-                    ref={chatInputRef}
-                    className="ai-textarea"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.ctrlKey && e.key === 'Enter') {
-                        e.preventDefault()
-                        void onSendChat()
-                      }
-                    }}
-                    placeholder="输入指令..."
-                  />
                 </div>
               </>
             ) : null}
@@ -4049,8 +5126,50 @@ function App() {
           >
             复制该条消息
           </button>
-        </div>
-      ) : null}
+	          <button
+	            className={
+	              !isChatStreaming &&
+	              chatContextMenu.role === 'assistant' &&
+              chatContextMenu.messageId === latestCompletedAssistantId
+                ? 'context-menu-item'
+                : 'context-menu-item disabled'
+            }
+            disabled={
+              isChatStreaming ||
+              chatContextMenu.role !== 'assistant' ||
+              chatContextMenu.messageId !== latestCompletedAssistantId
+            }
+            onClick={() =>
+              void onRegenerateAssistant(chatContextMenu.messageId).finally(() => {
+                setChatContextMenu(null)
+              })
+            }
+	          >
+	            {'\u91cd\u65b0\u751f\u6210\u56de\u590d'}
+	          </button>
+	          <button
+	            className={
+	              !isChatStreaming &&
+	              chatContextMenu.role === 'assistant' &&
+	              chatContextMenu.messageId === latestCompletedAssistantId
+	                ? 'context-menu-item'
+	                : 'context-menu-item disabled'
+	            }
+	            disabled={
+	              isChatStreaming ||
+	              chatContextMenu.role !== 'assistant' ||
+	              chatContextMenu.messageId !== latestCompletedAssistantId
+	            }
+	            onClick={() =>
+	              void onGenerateAssistantCandidates(chatContextMenu.messageId, 2).finally(() => {
+	                setChatContextMenu(null)
+	              })
+	            }
+	          >
+	            {'\u751f\u6210 2 \u4e2a\u5019\u9009'}
+	          </button>
+	        </div>
+	      ) : null}
 
       {explorerContextMenu ? (
         <div className="context-menu" style={{ left: explorerContextMenu.x, top: explorerContextMenu.y }}>
@@ -4265,11 +5384,27 @@ function App() {
               },
             },
             { id: 'smartComplete', label: '智能补全', category: 'AI', action: () => void onSmartComplete() },
-            { id: 'modeNormal', label: '切换 Normal 模式', category: 'AI规划', action: () => void onWriterModeChange('normal') },
-            { id: 'modePlan', label: '切换 Plan 模式', category: 'AI规划', action: () => void onWriterModeChange('plan') },
-            { id: 'modeSpec', label: '切换 Spec 模式', category: 'AI规划', action: () => void onWriterModeChange('spec') },
-            { id: 'generatePlan', label: '生成规划文档', category: 'AI规划', action: () => void onGeneratePlanAndTasks() },
-            { id: 'runQueue', label: '执行任务队列', category: 'AI规划', action: () => void runPlannerQueue(chatInput) },
+            {
+              id: 'toggleAutoLongWrite',
+              label: autoLongWriteEnabled ? '关闭 Auto 连续生成' : '开启 Auto 连续生成',
+              category: 'AI',
+	              action: () => {
+	                const next = !autoLongWriteEnabled
+	                setAutoLongWriteEnabled(next)
+	                autoLongWriteStopRef.current = !next
+	                setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
+	                if (!next && activeStreamId) {
+	                  void onStopChat()
+	                }
+	              },
+	            },
+            { id: 'regenerateReply', label: '\u91cd\u65b0\u751f\u6210\u56de\u590d', category: 'AI', action: () => void onRegenerateAssistant(latestCompletedAssistantId ?? undefined) },
+            { id: 'candidateReplies', label: '\u751f\u6210 2 \u4e2a\u5019\u9009\u56de\u590d', category: 'AI', action: () => void onGenerateAssistantCandidates(latestCompletedAssistantId ?? undefined, 2) },
+            { id: 'modeNormal', label: '\u5207\u6362\u666e\u901a\u6a21\u5f0f', category: '\u0041\u0049\u89C4\u5212', action: () => void onWriterModeChange('normal') },
+            { id: 'modePlan', label: '\u5207\u6362\u5927\u7eb2\u6a21\u5f0f', category: '\u0041\u0049\u89C4\u5212', action: () => void onWriterModeChange('plan') },
+            { id: 'modeSpec', label: '\u5207\u6362\u7ec6\u7eb2\u6a21\u5f0f', category: '\u0041\u0049\u89C4\u5212', action: () => void onWriterModeChange('spec') },
+            { id: 'generatePlan', label: '\u751F\u6210\u5927\u7EB2\u4E0E\u7EC6\u7EB2', category: '\u0041\u0049\u89C4\u5212', action: () => void onGeneratePlanAndTasks() },
+            { id: 'runQueue', label: '\u6267\u884C\u7EC6\u7EB2\u961F\u5217', category: '\u0041\u0049\u89C4\u5212', action: () => void runPlannerQueue(chatInput) },
             {
               id: 'gitCommit',
               label: 'Git 提交',
@@ -4303,3 +5438,19 @@ function App() {
 }
 
 export default App
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

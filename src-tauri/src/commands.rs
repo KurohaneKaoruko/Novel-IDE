@@ -13,11 +13,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tauri::AppHandle;
 use tauri::Emitter;
+use tauri::Manager;
 use tauri::State;
 use notify::{EventKind, RecursiveMode, Watcher};
+use futures_util::StreamExt;
 
 #[tauri::command]
 pub fn ping() -> &'static str {
@@ -769,6 +773,180 @@ fn format_status(st: git2::Status) -> String {
   }
 }
 
+fn emit_stream_status(window: &tauri::Window, stream_id: &str, phase: &str) {
+  let _ = window.emit(
+    "ai_stream_status",
+    serde_json::json!({
+      "streamId": stream_id,
+      "phase": phase
+    }),
+  );
+}
+
+fn emit_stream_done(window: &tauri::Window, stream_id: &str, cancelled: bool) {
+  let _ = window.emit(
+    "ai_stream_done",
+    serde_json::json!({
+      "streamId": stream_id,
+      "cancelled": cancelled
+    }),
+  );
+}
+
+fn clear_stream_task(app: &AppHandle, stream_id: &str) {
+  let app_state = app.state::<AppState>();
+  let mut tasks = match app_state.ai_stream_tasks.lock() {
+    Ok(v) => v,
+    Err(_) => return,
+  };
+  tasks.remove(stream_id);
+}
+
+#[tauri::command]
+pub fn chat_cancel_stream(
+  window: tauri::Window,
+  state: State<'_, AppState>,
+  stream_id: String,
+) -> Result<(), String> {
+  let handle = {
+    let mut tasks = state
+      .ai_stream_tasks
+      .lock()
+      .map_err(|_| "stream tasks lock poisoned".to_string())?;
+    tasks.remove(&stream_id)
+  };
+  if let Some(task) = handle {
+    task.abort();
+  }
+  emit_stream_done(&window, &stream_id, true);
+  Ok(())
+}
+
+#[derive(Clone)]
+struct LiveStreamSession {
+  window: tauri::Window,
+  stream_id: String,
+  emitted_any: Arc<AtomicBool>,
+}
+
+impl LiveStreamSession {
+  fn new(window: tauri::Window, stream_id: String) -> Self {
+    Self {
+      window,
+      stream_id,
+      emitted_any: Arc::new(AtomicBool::new(false)),
+    }
+  }
+
+  fn emit_token(&self, token: &str) {
+    if token.is_empty() {
+      return;
+    }
+    self.emitted_any.store(true, Ordering::Relaxed);
+    let _ = self.window.emit(
+      "ai_stream_token",
+      serde_json::json!({
+        "streamId": self.stream_id,
+        "token": token
+      }),
+    );
+  }
+
+  fn has_emitted(&self) -> bool {
+    self.emitted_any.load(Ordering::Relaxed)
+  }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiveEmitMode {
+  Unknown,
+  Emit,
+  Suppress,
+}
+
+struct LiveEmitGate {
+  mode: LiveEmitMode,
+  probe: String,
+}
+
+fn action_prefix_state(text: &str) -> (bool, bool) {
+  let trimmed = text.trim_start();
+  if trimmed.is_empty() {
+    return (false, false);
+  }
+  let mut head = String::new();
+  for ch in trimmed.chars().take(7) {
+    head.push(ch.to_ascii_uppercase());
+  }
+  let action = "ACTION:";
+  let is_possible_prefix = action.starts_with(head.as_str());
+  let is_full = head == action;
+  (is_possible_prefix, is_full)
+}
+
+impl LiveEmitGate {
+  fn new() -> Self {
+    Self {
+      mode: LiveEmitMode::Unknown,
+      probe: String::new(),
+    }
+  }
+
+  fn push(&mut self, session: Option<&LiveStreamSession>, text: &str) {
+    if text.is_empty() {
+      return;
+    }
+    match self.mode {
+      LiveEmitMode::Emit => {
+        if let Some(s) = session {
+          s.emit_token(text);
+        }
+      }
+      LiveEmitMode::Suppress => {}
+      LiveEmitMode::Unknown => {
+        self.probe.push_str(text);
+        let (action_prefix_possible, action_prefix_full) = action_prefix_state(&self.probe);
+        if action_prefix_full {
+          self.mode = LiveEmitMode::Suppress;
+          self.probe.clear();
+          return;
+        }
+        if action_prefix_possible {
+          return;
+        }
+        self.mode = LiveEmitMode::Emit;
+        if let Some(s) = session {
+          s.emit_token(&self.probe);
+        }
+        self.probe.clear();
+      }
+    }
+  }
+
+  fn finalize(&mut self, session: Option<&LiveStreamSession>) {
+    if self.probe.is_empty() {
+      return;
+    }
+    let (_, action_prefix_full) = action_prefix_state(&self.probe);
+    if self.mode != LiveEmitMode::Suppress && !action_prefix_full {
+      if let Some(s) = session {
+        s.emit_token(&self.probe);
+      }
+    }
+    self.probe.clear();
+  }
+}
+
+fn sse_take_line(buffer: &mut String) -> Option<String> {
+  let pos = buffer.find('\n')?;
+  let mut line = buffer[..pos].to_string();
+  if line.ends_with('\r') {
+    line.pop();
+  }
+  buffer.drain(..=pos);
+  Some(line)
+}
+
 #[tauri::command]
 pub fn chat_generate_stream(
   app: AppHandle,
@@ -781,23 +959,30 @@ pub fn chat_generate_stream(
 ) -> Result<(), String> {
   let app = app.clone();
   let workspace_root = get_workspace_root(&state)?;
+  let stream_id_for_task = stream_id.clone();
+  let window_for_task = window.clone();
+  let app_for_task = app.clone();
+  let live_session = LiveStreamSession::new(window_for_task.clone(), stream_id_for_task.clone());
+  let live_session_for_task = live_session.clone();
 
-  tauri::async_runtime::spawn(async move {
-    let payload_start = serde_json::json!({ "streamId": stream_id });
-    let _ = window.emit("ai_stream_start", payload_start);
+  let task = tauri::async_runtime::spawn(async move {
+    let payload_start = serde_json::json!({ "streamId": stream_id_for_task });
+    let _ = window_for_task.emit("ai_stream_start", payload_start);
+    emit_stream_status(&window_for_task, &stream_id_for_task, "initializing");
 
     let settings = match app_settings::load(&app) {
       Ok(v) => v,
       Err(e) => {
-        let _ = window.emit(
+        let _ = window_for_task.emit(
           "ai_error",
           serde_json::json!({
-            "streamId": stream_id,
+            "streamId": stream_id_for_task,
             "stage": "settings",
             "message": e
           }),
         );
-        let _ = window.emit("ai_stream_done", serde_json::json!({ "streamId": stream_id }));
+        clear_stream_task(&app_for_task, &stream_id_for_task);
+        emit_stream_done(&window_for_task, &stream_id_for_task, false);
         return;
       }
     };
@@ -822,11 +1007,12 @@ pub fn chat_generate_stream(
       Ok(p) => p.clone(),
       Err(e) => {
         eprintln!("ai_error: {}", e);
-        let _ = window.emit(
+        let _ = window_for_task.emit(
           "ai_error",
-          serde_json::json!({ "streamId": stream_id, "stage": "settings", "message": e }),
+          serde_json::json!({ "streamId": stream_id_for_task, "stage": "settings", "message": e }),
         );
-        let _ = window.emit("ai_stream_done", serde_json::json!({ "streamId": stream_id }));
+        clear_stream_task(&app_for_task, &stream_id_for_task);
+        emit_stream_done(&window_for_task, &stream_id_for_task, false);
         return;
       }
     };
@@ -834,12 +1020,14 @@ pub fn chat_generate_stream(
     let workspace_root_clone = workspace_root.clone();
     let mut runtime = agent_system::AgentRuntime::new(workspace_root);
     let start = Instant::now();
+    emit_stream_status(&window_for_task, &stream_id_for_task, "thinking");
     let (mut response, perf) = match runtime
       .run_react(messages, agent_system.clone(), ai_edit_apply_mode, |msgs| {
         let provider_cfg = current_provider.clone();
         let client = client.clone();
         let app = app.clone();
         let agent_temp = agent_temp;
+        let live = live_session_for_task.clone();
         async move {
           let mut system = String::new();
           for m in msgs.iter().filter(|m| m.role == "system") {
@@ -852,22 +1040,26 @@ pub fn chat_generate_stream(
           
           match provider_cfg.kind {
             app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
+              emit_stream_status(&live.window, &live.stream_id, "responding");
               call_openai_unbounded(
                 &app,
                 &client,
                 &provider_cfg, // pass full provider config
                 &filtered,
                 system.as_str(),
-                agent_temp
+                agent_temp,
+                Some(&live),
               ).await
             },
             app_settings::ProviderKind::Anthropic => {
+              emit_stream_status(&live.window, &live.stream_id, "responding");
               call_anthropic_unbounded(
                 &app,
                 &client,
                 &provider_cfg,
                 &filtered,
-                system.as_str()
+                system.as_str(),
+                Some(&live),
               ).await
             },
           }
@@ -889,21 +1081,21 @@ pub fn chat_generate_stream(
           "agent"
         };
         let payload = serde_json::json!({
-          "streamId": stream_id,
+          "streamId": stream_id_for_task,
           "provider": current_provider.id,
           "stage": stage,
           "message": e
         });
-        let _ = window.emit("ai_error", payload);
-        let payload_done = serde_json::json!({ "streamId": stream_id });
-        let _ = window.emit("ai_stream_done", payload_done);
+        let _ = window_for_task.emit("ai_error", payload);
+        clear_stream_task(&app_for_task, &stream_id_for_task);
+        emit_stream_done(&window_for_task, &stream_id_for_task, false);
         return;
       }
     };
-    let _ = window.emit(
+    let _ = window_for_task.emit(
       "ai_perf",
       serde_json::json!({
-        "streamId": stream_id,
+        "streamId": stream_id_for_task,
         "elapsed_ms": start.elapsed().as_millis(),
         "steps": perf.steps,
         "model_ms": perf.model_ms,
@@ -920,10 +1112,10 @@ pub fn chat_generate_stream(
       Ok(Some(cs)) => {
         // Emit the ChangeSet to the frontend
         let payload = serde_json::json!({
-          "streamId": stream_id,
+          "streamId": stream_id_for_task,
           "changeSet": cs
         });
-        let _ = window.emit("ai_change_set", payload);
+        let _ = window_for_task.emit("ai_change_set", payload);
         Some(cs)
       }
       Ok(None) => None,
@@ -933,30 +1125,80 @@ pub fn chat_generate_stream(
       }
     };
 
-    let step_chars = 48usize;
-    let mut buf = String::new();
-    let mut count = 0usize;
-    for ch in response.chars() {
-      buf.push(ch);
-      count += 1;
-      if count >= step_chars {
-        let payload = serde_json::json!({ "streamId": stream_id, "token": buf });
-        let _ = window.emit("ai_stream_token", payload);
-        buf = String::new();
-        count = 0;
-        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    if !live_session_for_task.has_emitted() {
+      emit_stream_status(&window_for_task, &stream_id_for_task, "responding");
+      let step_chars = 48usize;
+      let mut buf = String::new();
+      let mut count = 0usize;
+      for ch in response.chars() {
+        buf.push(ch);
+        count += 1;
+        if count >= step_chars {
+          let payload = serde_json::json!({ "streamId": stream_id_for_task, "token": buf });
+          let _ = window_for_task.emit("ai_stream_token", payload);
+          buf = String::new();
+          count = 0;
+          tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        }
+      }
+      if !buf.is_empty() {
+        let payload = serde_json::json!({ "streamId": stream_id_for_task, "token": buf });
+        let _ = window_for_task.emit("ai_stream_token", payload);
       }
     }
-    if !buf.is_empty() {
-      let payload = serde_json::json!({ "streamId": stream_id, "token": buf });
-      let _ = window.emit("ai_stream_token", payload);
-    }
 
-    let payload_done = serde_json::json!({ "streamId": stream_id });
-    let _ = window.emit("ai_stream_done", payload_done);
+    clear_stream_task(&app_for_task, &stream_id_for_task);
+    emit_stream_done(&window_for_task, &stream_id_for_task, false);
   });
 
+  {
+    let mut tasks = state
+      .ai_stream_tasks
+      .lock()
+      .map_err(|_| "stream tasks lock poisoned".to_string())?;
+    if let Some(prev) = tasks.insert(stream_id, task) {
+      prev.abort();
+    }
+  }
+
   Ok(())
+}
+
+fn append_chunk_with_overlap(full_text: &mut String, chunk: &str) -> (usize, String) {
+  const MAX_OVERLAP_CHARS: usize = 4096;
+  if chunk.is_empty() {
+    return (0, String::new());
+  }
+  if full_text.is_empty() {
+    full_text.push_str(chunk);
+    return (0, chunk.to_string());
+  }
+
+  let mut tail = full_text
+    .chars()
+    .rev()
+    .take(MAX_OVERLAP_CHARS)
+    .collect::<Vec<char>>();
+  tail.reverse();
+  let head = chunk.chars().take(MAX_OVERLAP_CHARS).collect::<Vec<char>>();
+  let max_overlap = tail.len().min(head.len());
+
+  let mut overlap = 0usize;
+  for len in (1..=max_overlap).rev() {
+    if tail[tail.len() - len..] == head[..len] {
+      overlap = len;
+      break;
+    }
+  }
+
+  if overlap == 0 {
+    full_text.push_str(chunk);
+    return (0, chunk.to_string());
+  }
+
+  let suffix = chunk.chars().skip(overlap).collect::<String>();
+  full_text.push_str(&suffix);
+  (overlap, suffix)
 }
 
 async fn call_openai_unbounded(
@@ -966,6 +1208,7 @@ async fn call_openai_unbounded(
   messages: &[ChatMessage],
   system_prompt: &str,
   temperature_override: Option<f32>,
+  live_stream: Option<&LiveStreamSession>,
 ) -> Result<String, String> {
   let api_key = match secrets::get_api_key(app, &cfg.id) {
     Ok(Some(v)) => v,
@@ -992,67 +1235,184 @@ async fn call_openai_unbounded(
       .map(|m| serde_json::json!({"role": m.role, "content": m.content})),
   );
 
-  const MAX_CONTINUATIONS: usize = 8;
+  const MAX_CONTINUATIONS: usize = 64;
   const FALLBACK_CHUNK_MAX_TOKENS: u32 = 32000;
   const CONTINUE_PROMPT: &str =
     "Continue from exactly where you stopped. Do not repeat prior text.";
 
   let mut full_text = String::new();
+  let mut gate = LiveEmitGate::new();
+  let mut stream_supported = true;
   for round in 0..=MAX_CONTINUATIONS {
     let mut use_fallback_chunk_limit = false;
-    let value: serde_json::Value = loop {
-      let mut body = serde_json::json!({
-        "model": cfg.model_name,
-        "messages": out_messages,
-        "temperature": temperature,
-        "stream": false
-      });
-      if use_fallback_chunk_limit {
-        body["max_tokens"] = serde_json::json!(FALLBACK_CHUNK_MAX_TOKENS);
-      }
+    let (chunk, finish_reason, stream_applied): (String, Option<String>, bool) = loop {
+      if stream_supported {
+        let mut body = serde_json::json!({
+          "model": cfg.model_name,
+          "messages": out_messages,
+          "temperature": temperature,
+          "stream": true
+        });
+        if use_fallback_chunk_limit {
+          body["max_tokens"] = serde_json::json!(FALLBACK_CHUNK_MAX_TOKENS);
+        }
+        let resp = client
+          .post(url.as_str())
+          .bearer_auth(api_key.trim())
+          .json(&body)
+          .send()
+          .await
+          .map_err(|e| format!("request failed: {e}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+          let raw = resp.text().await.map_err(|e| format!("decode failed: {e}"))?;
+          let lowered = raw.to_lowercase();
+          let looks_like_missing_max_tokens = status.is_client_error()
+            && !use_fallback_chunk_limit
+            && lowered.contains("max_tokens");
+          if looks_like_missing_max_tokens {
+            use_fallback_chunk_limit = true;
+            continue;
+          }
+          let stream_unsupported = lowered.contains("stream")
+            && (lowered.contains("not support")
+              || lowered.contains("unsupported")
+              || lowered.contains("invalid")
+              || lowered.contains("unknown"));
+          if stream_unsupported {
+            stream_supported = false;
+            continue;
+          }
+          return Err(format!("http {status}: {raw}"));
+        }
 
-      let resp = client
-        .post(url.as_str())
-        .bearer_auth(api_key.trim())
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        let mut sse_buf = String::new();
+        let mut round_unique = String::new();
+        let mut finish_reason: Option<String> = None;
+        let mut body_stream = resp.bytes_stream();
+        while let Some(item) = body_stream.next().await {
+          let bytes = item.map_err(|e| format!("stream read failed: {e}"))?;
+          sse_buf.push_str(&String::from_utf8_lossy(&bytes));
+          while let Some(line) = sse_take_line(&mut sse_buf) {
+            if let Some(data) = line.strip_prefix("data:") {
+              let data = data.trim();
+              if data.is_empty() || data == "[DONE]" {
+                continue;
+              }
+              let value: serde_json::Value =
+                serde_json::from_str(data).map_err(|e| format!("stream parse failed: {e}; data={data}"))?;
+              if let Some(reason) = value["choices"][0]["finish_reason"].as_str() {
+                finish_reason = Some(reason.to_string());
+              }
+              if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
+                let (_, unique_piece) = append_chunk_with_overlap(&mut full_text, content);
+                if !unique_piece.is_empty() {
+                  round_unique.push_str(unique_piece.as_str());
+                  gate.push(live_stream, unique_piece.as_str());
+                }
+              }
+            }
+          }
+        }
+        if !sse_buf.trim().is_empty() {
+          let line = sse_buf.trim();
+          if let Some(data) = line.strip_prefix("data:") {
+            let data = data.trim();
+            if !data.is_empty() && data != "[DONE]" {
+              let value: serde_json::Value =
+                serde_json::from_str(data).map_err(|e| format!("stream parse failed: {e}; data={data}"))?;
+              if let Some(reason) = value["choices"][0]["finish_reason"].as_str() {
+                finish_reason = Some(reason.to_string());
+              }
+              if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
+                let (_, unique_piece) = append_chunk_with_overlap(&mut full_text, content);
+                if !unique_piece.is_empty() {
+                  round_unique.push_str(unique_piece.as_str());
+                  gate.push(live_stream, unique_piece.as_str());
+                }
+              }
+            }
+          }
+        }
+        if round_unique.is_empty() && finish_reason.is_none() {
+          stream_supported = false;
+          continue;
+        }
+        break (round_unique, finish_reason, true);
+      } else {
+        let mut body = serde_json::json!({
+          "model": cfg.model_name,
+          "messages": out_messages,
+          "temperature": temperature,
+          "stream": false
+        });
+        if use_fallback_chunk_limit {
+          body["max_tokens"] = serde_json::json!(FALLBACK_CHUNK_MAX_TOKENS);
+        }
 
-      let status = resp.status();
-      let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
-      if status.is_success() {
-        break value;
-      }
+        let resp = client
+          .post(url.as_str())
+          .bearer_auth(api_key.trim())
+          .json(&body)
+          .send()
+          .await
+          .map_err(|e| format!("request failed: {e}"))?;
 
-      let looks_like_missing_max_tokens = status.is_client_error()
-        && !use_fallback_chunk_limit
-        && value.to_string().to_lowercase().contains("max_tokens");
-      if looks_like_missing_max_tokens {
-        use_fallback_chunk_limit = true;
-        continue;
+        let status = resp.status();
+        let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
+        if status.is_success() {
+          let chunk = value["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "missing choices[0].message.content".to_string())?;
+          let finish_reason = value["choices"][0]["finish_reason"].as_str().map(|s| s.to_string());
+          break (chunk, finish_reason, false);
+        }
+
+        let looks_like_missing_max_tokens = status.is_client_error()
+          && !use_fallback_chunk_limit
+          && value.to_string().to_lowercase().contains("max_tokens");
+        if looks_like_missing_max_tokens {
+          use_fallback_chunk_limit = true;
+          continue;
+        }
+        return Err(format!("http {status}: {value}"));
       }
-      return Err(format!("http {status}: {value}"));
     };
 
-    let chunk = value["choices"][0]["message"]["content"]
-      .as_str()
-      .map(|s| s.to_string())
-      .ok_or_else(|| "missing choices[0].message.content".to_string())?;
-    let finish_reason = value["choices"][0]["finish_reason"].as_str();
+    if stream_applied && chunk.is_empty() && finish_reason.is_none() {
+      stream_supported = false;
+      continue;
+    }
 
-    full_text.push_str(chunk.as_str());
-    if finish_reason != Some("length") {
+    let unique_chunk = if stream_applied {
+      chunk
+    } else {
+      let (overlap, unique_chunk) = append_chunk_with_overlap(&mut full_text, chunk.as_str());
+      if overlap > 0 {
+        eprintln!(
+          "continuation overlap dedup provider={} round={} overlap_chars={}",
+          cfg.id, round, overlap
+        );
+      }
+      gate.push(live_stream, unique_chunk.as_str());
+      unique_chunk
+    };
+
+    if finish_reason.as_deref() != Some("length") {
+      gate.finalize(live_stream);
       return Ok(full_text);
     }
     if round == MAX_CONTINUATIONS {
       full_text.push_str("\n\n[output may be truncated after repeated continuations]");
+      gate.push(live_stream, "\n\n[output may be truncated after repeated continuations]");
+      gate.finalize(live_stream);
       return Ok(full_text);
     }
 
     out_messages.push(serde_json::json!({
       "role": "assistant",
-      "content": chunk
+      "content": unique_chunk
     }));
     out_messages.push(serde_json::json!({
       "role": "user",
@@ -1060,6 +1420,7 @@ async fn call_openai_unbounded(
     }));
   }
 
+  gate.finalize(live_stream);
   Ok(full_text)
 }
 
@@ -1069,6 +1430,7 @@ async fn call_anthropic_unbounded(
   cfg: &app_settings::ModelProvider,
   messages: &[ChatMessage],
   system_prompt: &str,
+  live_stream: Option<&LiveStreamSession>,
 ) -> Result<String, String> {
   let api_key = match secrets::get_api_key(app, &cfg.id) {
     Ok(Some(v)) => v,
@@ -1083,61 +1445,168 @@ async fn call_anthropic_unbounded(
     .iter()
     .map(|m| serde_json::json!({"role": m.role, "content": m.content}))
     .collect();
+  let base = cfg.base_url.trim_end_matches('/');
+  let endpoint = if base.is_empty() {
+    "https://api.anthropic.com/v1/messages".to_string()
+  } else if base.ends_with("/messages") {
+    base.to_string()
+  } else {
+    format!("{base}/messages")
+  };
 
-  const MAX_CONTINUATIONS: usize = 8;
+  const MAX_CONTINUATIONS: usize = 64;
   const CHUNK_MAX_TOKENS: u32 = 32000;
   const CONTINUE_PROMPT: &str =
     "Continue from exactly where you stopped. Do not repeat prior text.";
 
   let mut full_text = String::new();
+  let mut gate = LiveEmitGate::new();
+  let mut stream_supported = true;
   for round in 0..=MAX_CONTINUATIONS {
-    let body = serde_json::json!({
-      "model": cfg.model_name,
-      "max_tokens": CHUNK_MAX_TOKENS,
-      "system": system_prompt,
-      "messages": out_messages
-    });
+    let (chunk, stop_reason, stream_applied): (String, Option<String>, bool) = if stream_supported {
+      let body = serde_json::json!({
+        "model": cfg.model_name,
+        "max_tokens": CHUNK_MAX_TOKENS,
+        "system": system_prompt,
+        "messages": out_messages,
+        "stream": true
+      });
 
-    let resp = client
-      .post("https://api.anthropic.com/v1/messages")
-      .header("x-api-key", api_key.trim())
-      .header("anthropic-version", "2023-06-01")
-      .json(&body)
-      .send()
-      .await
-      .map_err(|e| format!("request failed: {e}"))?;
+      let resp = client
+        .post(endpoint.as_str())
+        .header("x-api-key", api_key.trim())
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
 
-    let status = resp.status();
-    let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
-    if !status.is_success() {
-      return Err(format!("http {status}: {value}"));
+      let status = resp.status();
+      if !status.is_success() {
+        let raw = resp.text().await.map_err(|e| format!("decode failed: {e}"))?;
+        let lowered = raw.to_lowercase();
+        let stream_unsupported = lowered.contains("stream")
+          && (lowered.contains("not support")
+            || lowered.contains("unsupported")
+            || lowered.contains("invalid")
+            || lowered.contains("unknown"));
+        if stream_unsupported {
+          stream_supported = false;
+          continue;
+        }
+        return Err(format!("http {status}: {raw}"));
+      }
+
+      let mut sse_buf = String::new();
+      let mut round_unique = String::new();
+      let mut stop_reason: Option<String> = None;
+      let mut body_stream = resp.bytes_stream();
+      while let Some(item) = body_stream.next().await {
+        let bytes = item.map_err(|e| format!("stream read failed: {e}"))?;
+        sse_buf.push_str(&String::from_utf8_lossy(&bytes));
+        while let Some(line) = sse_take_line(&mut sse_buf) {
+          if let Some(data) = line.strip_prefix("data:") {
+            let data = data.trim();
+            if data.is_empty() || data == "[DONE]" {
+              continue;
+            }
+            let value: serde_json::Value =
+              serde_json::from_str(data).map_err(|e| format!("stream parse failed: {e}; data={data}"))?;
+            match value["type"].as_str().unwrap_or_default() {
+              "content_block_delta" => {
+                if let Some(text) = value["delta"]["text"].as_str() {
+                  let (_, unique_piece) = append_chunk_with_overlap(&mut full_text, text);
+                  if !unique_piece.is_empty() {
+                    round_unique.push_str(unique_piece.as_str());
+                    gate.push(live_stream, unique_piece.as_str());
+                  }
+                }
+              }
+              "message_delta" => {
+                if let Some(reason) = value["delta"]["stop_reason"].as_str() {
+                  stop_reason = Some(reason.to_string());
+                }
+              }
+              _ => {}
+            }
+          }
+        }
+      }
+      if round_unique.is_empty() && stop_reason.is_none() {
+        stream_supported = false;
+        continue;
+      }
+      (round_unique, stop_reason, true)
+    } else {
+      let body = serde_json::json!({
+        "model": cfg.model_name,
+        "max_tokens": CHUNK_MAX_TOKENS,
+        "system": system_prompt,
+        "messages": out_messages
+      });
+
+      let resp = client
+        .post(endpoint.as_str())
+        .header("x-api-key", api_key.trim())
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+
+      let status = resp.status();
+      let value: serde_json::Value = resp.json().await.map_err(|e| format!("decode failed: {e}"))?;
+      if !status.is_success() {
+        return Err(format!("http {status}: {value}"));
+      }
+
+      let chunk = value["content"]
+        .as_array()
+        .map(|arr| {
+          arr
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("")
+        })
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "missing content[].text".to_string())?;
+      let stop_reason = value["stop_reason"].as_str().map(|s| s.to_string());
+      (chunk, stop_reason, false)
+    };
+
+    if stream_applied && chunk.is_empty() && stop_reason.is_none() {
+      stream_supported = false;
+      continue;
     }
 
-    let chunk = value["content"]
-      .as_array()
-      .map(|arr| {
-        arr
-          .iter()
-          .filter_map(|part| part["text"].as_str())
-          .collect::<Vec<_>>()
-          .join("")
-      })
-      .filter(|s| !s.is_empty())
-      .ok_or_else(|| "missing content[].text".to_string())?;
-    let stop_reason = value["stop_reason"].as_str();
-
-    full_text.push_str(chunk.as_str());
-    if stop_reason != Some("max_tokens") {
+    let unique_chunk = if stream_applied {
+      chunk
+    } else {
+      let (overlap, unique_chunk) = append_chunk_with_overlap(&mut full_text, chunk.as_str());
+      if overlap > 0 {
+        eprintln!(
+          "continuation overlap dedup provider={} round={} overlap_chars={}",
+          cfg.id, round, overlap
+        );
+      }
+      gate.push(live_stream, unique_chunk.as_str());
+      unique_chunk
+    };
+    if stop_reason.as_deref() != Some("max_tokens") {
+      gate.finalize(live_stream);
       return Ok(full_text);
     }
     if round == MAX_CONTINUATIONS {
       full_text.push_str("\n\n[output may be truncated after repeated continuations]");
+      gate.push(live_stream, "\n\n[output may be truncated after repeated continuations]");
+      gate.finalize(live_stream);
       return Ok(full_text);
     }
 
     out_messages.push(serde_json::json!({
       "role": "assistant",
-      "content": chunk
+      "content": unique_chunk
     }));
     out_messages.push(serde_json::json!({
       "role": "user",
@@ -1145,6 +1614,7 @@ async fn call_anthropic_unbounded(
     }));
   }
 
+  gate.finalize(live_stream);
   Ok(full_text)
 }
 
@@ -1179,7 +1649,8 @@ pub async fn ai_assistance_generate(
         current_provider,
         &messages,
         "",
-        None
+        None,
+        None,
       ).await
     },
     app_settings::ProviderKind::Anthropic => {
@@ -1188,7 +1659,8 @@ pub async fn ai_assistance_generate(
         &client,
         current_provider,
         &messages,
-        ""
+        "",
+        None,
       ).await
     }
   }
@@ -1495,6 +1967,7 @@ pub async fn risk_scan_content(
         &messages,
         system_prompt,
         Some(0.2),
+        None,
       )
       .await?
     }
@@ -1505,6 +1978,7 @@ pub async fn risk_scan_content(
         &current_provider,
         &messages,
         system_prompt,
+        None,
       )
       .await?
     }

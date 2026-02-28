@@ -53,6 +53,7 @@ fn main() {
       commands::git_commit,
       commands::git_log,
       commands::chat_generate_stream,
+      commands::chat_cancel_stream,
       commands::ai_assistance_generate,
       commands::risk_scan_content,
       commands::get_skills,

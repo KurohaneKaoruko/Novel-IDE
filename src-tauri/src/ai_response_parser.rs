@@ -3,7 +3,7 @@ use crate::modification_types::{
     ModificationType,
 };
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Parse AI response text to extract file modification instructions
 /// 
@@ -44,7 +44,7 @@ fn parse_file_edits(
     let mut file_modifications = Vec::new();
 
     for cap in file_edit_regex.captures_iter(response) {
-        let file_path = cap.get(1)
+        let requested_path = cap.get(1)
             .ok_or("Missing file path")?
             .as_str()
             .to_string();
@@ -53,17 +53,21 @@ fn parse_file_edits(
             .ok_or("Missing edit content")?
             .as_str();
 
-        // Read original file content
-        let full_path = workspace_root.join(&file_path);
-        let original_content = std::fs::read_to_string(&full_path)
-            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+        // Enforce project-scoped relative paths only.
+        let rel_path = crate::commands::validate_relative_path(&requested_path)
+            .map_err(|e| format!("Invalid file path {}: {}", requested_path, e))?;
+        let full_path = workspace_root.join(&rel_path);
+        let checked_path = ensure_inside_workspace(workspace_root, &full_path)
+            .map_err(|e| format!("Forbidden file path {}: {}", requested_path, e))?;
+        let original_content = std::fs::read_to_string(&checked_path)
+            .map_err(|e| format!("Failed to read file {}: {}", requested_path, e))?;
 
         // Parse modifications within this file
         let modifications = parse_modifications(edit_content)?;
 
         if !modifications.is_empty() {
             file_modifications.push(FileModification {
-                file_path,
+                file_path: rel_path.to_string_lossy().replace('\\', "/"),
                 original_content,
                 modifications,
                 status: FileModificationStatus::Pending,
@@ -72,6 +76,17 @@ fn parse_file_edits(
     }
 
     Ok(file_modifications)
+}
+
+fn ensure_inside_workspace(workspace_root: &Path, target: &Path) -> Result<PathBuf, String> {
+    let canonical_root = std::fs::canonicalize(workspace_root)
+        .map_err(|e| format!("canonicalize workspace failed: {}", e))?;
+    let canonical_target = std::fs::canonicalize(target)
+        .map_err(|e| format!("canonicalize target failed: {}", e))?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err("path escapes current workspace".to_string());
+    }
+    Ok(canonical_target)
 }
 
 fn parse_modifications(edit_content: &str) -> Result<Vec<Modification>, String> {

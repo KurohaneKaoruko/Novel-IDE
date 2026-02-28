@@ -112,18 +112,11 @@
 }
 
 .settings-select {
-  padding: 6px 12px;
-  border: 1px solid var(--border-subtle, #ddd);
-  border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary, #333);
-  font-size: 13px;
-  cursor: pointer;
-  outline: none;
+  min-width: 136px;
 }
 
 .settings-select:focus {
-  border-color: var(--accent-primary, #d0d0d0);
+  outline: none;
 }
 
 .settings-input {
