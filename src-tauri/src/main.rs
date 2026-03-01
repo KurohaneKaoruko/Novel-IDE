@@ -45,6 +45,7 @@ fn main() {
       commands::set_app_settings,
       commands::get_api_key_status,
       commands::set_api_key,
+      commands::test_provider_connectivity,
       commands::get_agents,
       commands::set_agents,
       commands::export_agents,

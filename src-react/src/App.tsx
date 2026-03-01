@@ -36,6 +36,7 @@ import {
   setLaunchMode,
   saveChatSession,
   setWorkspace,
+  testProviderConnectivity,
   writeText,
   type Agent,
   type AiEditApplyMode,
@@ -45,6 +46,7 @@ import {
   type GitStatusItem,
   type LaunchMode,
   type ModelProvider,
+  type ProviderConnectivityResult,
   type ProjectItem,
   type ProjectSource,
 } from './tauri'
@@ -282,6 +284,14 @@ type AssistantReplayContext = {
   versionGroupId: string
 }
 
+type SettingsTabKey = 'general' | 'editor' | 'models' | 'agents'
+
+type ProviderProbeViewResult = {
+  kind: 'ok' | 'error'
+  text: string
+  detail?: string
+}
+
 type RollbackTurnState = {
   userId: string
   assistantId: string
@@ -293,6 +303,85 @@ type RollbackTurnState = {
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
 const FIRST_TOKEN_RETRY_TIMEOUT_MS = 35_000
 const AUTO_RETRY_MAX_PER_GROUP = 1
+const STREAM_MANUAL_CANCEL_GRACE_MS = 6_000
+const STREAM_PRETOKEN_HARD_TIMEOUT_MS = 360_000
+const STREAM_IDLE_HARD_TIMEOUT_MS = 120_000
+const STREAM_TOTAL_HARD_TIMEOUT_MS = 900_000
+
+function shortText(text: string, max = 180): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= max) return trimmed
+  return `${trimmed.slice(0, max)}...`
+}
+
+function formatProviderProbeErrorMessage(rawMessage: string): string {
+  const raw = rawMessage.trim()
+  if (!raw) return '连通性检测失败，请稍后重试。'
+  const lower = raw.toLowerCase()
+  const statusMatch = lower.match(/\bhttp\s+(\d{3})\b/)
+  const statusCode = statusMatch ? Number(statusMatch[1]) : null
+
+  if (lower.includes('api key not found') || lower.includes('keyring')) {
+    return '未找到可用 API Key，请先填写并保存 API Key。'
+  }
+  if (statusCode === 400) {
+    if (lower.includes('model') && lower.includes('not found')) {
+      return '模型不存在（HTTP 400），请检查 Model ID。'
+    }
+    return '请求参数无效（HTTP 400），请检查 Base URL 与 Model ID。'
+  }
+  if (statusCode === 401 || statusCode === 403) {
+    return `鉴权失败（HTTP ${statusCode}），请检查 API Key 是否正确且有权限。`
+  }
+  if (statusCode === 404) {
+    return '接口地址不存在（HTTP 404），请检查 Base URL 是否正确。'
+  }
+  if (statusCode === 408) {
+    return '请求超时（HTTP 408），请稍后重试。'
+  }
+  if (statusCode === 409) {
+    return '请求冲突（HTTP 409），请稍后重试。'
+  }
+  if (statusCode === 422) {
+    return '请求格式正确但无法处理（HTTP 422），请检查模型和参数。'
+  }
+  if (statusCode === 429) {
+    return '请求过于频繁或额度不足（HTTP 429），请检查限流和余额。'
+  }
+  if (statusCode && statusCode >= 500) {
+    return `模型服务暂时不可用（HTTP ${statusCode}），请稍后重试。`
+  }
+  if (lower.includes('timed out') || lower.includes('timeout')) {
+    return '连接超时，请检查网络后重试。'
+  }
+  if (lower.includes('dns') || lower.includes('name or service not known') || lower.includes('failed to lookup address information')) {
+    return '域名解析失败，请检查 Base URL 是否可访问。'
+  }
+  if (lower.includes('connection refused')) {
+    return '连接被拒绝，请确认服务地址和端口是否正确。'
+  }
+  if (lower.includes('certificate') || lower.includes('tls')) {
+    return 'TLS 证书校验失败，请检查 HTTPS 证书配置。'
+  }
+  if (lower.includes('model') && lower.includes('not found')) {
+    return '模型不存在，请检查 Model ID 是否正确。'
+  }
+
+  return `连通性检测失败：${shortText(raw, 220)}`
+}
+
+function formatProviderProbeSuccessMessage(result: ProviderConnectivityResult): string {
+  const status = Number.isFinite(result.status_code) ? result.status_code : 200
+  const latency = Math.max(1, Math.round(result.latency_ms))
+  return `连通成功 · HTTP ${status} · ${latency}ms`
+}
+
+function formatProviderProbeDetail(rawMessage: string): string | undefined {
+  const text = rawMessage.trim()
+  if (!text) return undefined
+  return text.length > 1200 ? `${text.slice(0, 1200)}...` : text
+}
 
 function App() {
   // Diff Context
@@ -347,6 +436,8 @@ function App() {
   const [editingProviderPreset, setEditingProviderPreset] = useState<string>(COMMON_PROVIDER_PRESETS[0]?.key ?? CUSTOM_PROVIDER_PRESET_KEY)
   const [editingCustomProviderApiFormat, setEditingCustomProviderApiFormat] = useState<CustomProviderApiFormat>('openai')
   const [isNewProvider, setIsNewProvider] = useState(true)
+  const [providerProbeRunning, setProviderProbeRunning] = useState(false)
+  const [providerProbeResult, setProviderProbeResult] = useState<ProviderProbeViewResult | null>(null)
 
   // ... (rest of App component)
   const [explorerContextMenu, setExplorerContextMenu] = useState<ExplorerContextMenuState | null>(null)
@@ -422,6 +513,7 @@ function App() {
   // Settings & Agents
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('general')
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [agentsList, setAgentsList] = useState<Agent[]>([])
   const [agentEditorId, setAgentEditorId] = useState<string>('')
@@ -1347,6 +1439,8 @@ function App() {
       setEditingCustomProviderApiFormat('openai')
     }
     setIsNewProvider(true)
+    setProviderProbeResult(null)
+    setProviderProbeRunning(false)
     setShowModelModal(true)
   }, [newId])
 
@@ -1356,6 +1450,8 @@ function App() {
     setEditingProviderPreset(presetKey)
     setEditingCustomProviderApiFormat(provider.kind === 'Anthropic' ? 'claude' : 'openai')
     setIsNewProvider(false)
+    setProviderProbeResult(null)
+    setProviderProbeRunning(false)
     setShowModelModal(true)
   }, [])
 
@@ -1400,6 +1496,43 @@ function App() {
     },
     [editingProviderPreset],
   )
+
+  const onProbeProviderConnectivity = useCallback(async () => {
+    const normalizedProvider: ModelProvider = {
+      id: editingProvider.id?.trim() || `probe-${Date.now()}`,
+      name: editingProvider.name?.trim() ?? '',
+      kind: editingProvider.kind ?? 'OpenAICompatible',
+      api_key: '',
+      base_url: editingProvider.base_url?.trim() ?? '',
+      model_name: editingProvider.model_name?.trim() ?? '',
+    }
+    if (!normalizedProvider.base_url || !normalizedProvider.model_name) {
+      setProviderProbeResult({ kind: 'error', text: 'Please fill in Base URL and Model ID first.' })
+      return
+    }
+
+    setProviderProbeRunning(true)
+    setProviderProbeResult(null)
+    try {
+      const rawKey = (editingProvider.api_key ?? '').trim()
+      const result: ProviderConnectivityResult = await testProviderConnectivity(normalizedProvider, rawKey || null)
+      setProviderProbeResult({
+        kind: 'ok',
+        text: formatProviderProbeSuccessMessage(result),
+        detail: formatProviderProbeDetail(result.message),
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setProviderProbeResult({
+        kind: 'error',
+        text: formatProviderProbeErrorMessage(msg),
+        detail: formatProviderProbeDetail(msg),
+      })
+    } finally {
+      setProviderProbeRunning(false)
+    }
+  }, [editingProvider])
+
 
   const getSelectionText = useCallback((): string => {
     const editor = editorRef.current
@@ -1503,6 +1636,15 @@ function App() {
       setAgentsSnapshot(agentsList)
     }
   }, [agentsList, agentsSnapshot, appSettings, settingsSnapshot, showSettings])
+
+  useEffect(() => {
+    if (!showSettings) return
+    setSettingsTab('general')
+  }, [showSettings])
+
+  useEffect(() => {
+    setProviderProbeResult(null)
+  }, [editingProvider.base_url, editingProvider.model_name, editingProvider.kind, editingProvider.api_key])
 
   const saveAndCloseSettings = useCallback(async () => {
     if (!appSettings) return
@@ -1839,6 +1981,41 @@ function App() {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [activeStreamId])
+  const forceFinalizeStream = useCallback(
+    (streamId: string, message: string, cancelled = false) => {
+      setChatMessages((prev) => {
+        let changed = false
+        const next = prev.map((m) => {
+          if (m.role !== 'assistant' || m.streamId !== streamId || !m.streaming) return m
+          changed = true
+          const nextContent = m.content.trim() ? `${m.content}\n\n${message}` : message
+          return {
+            ...m,
+            content: nextContent,
+            streaming: false,
+            cancelled: cancelled || m.cancelled,
+          }
+        })
+        return changed ? next : prev
+      })
+      setStreamPhaseById((prev) => {
+        if (!(streamId in prev)) return prev
+        const next = { ...prev }
+        delete next[streamId]
+        return next
+      })
+      const waiter = streamWaitersRef.current.get(streamId)
+      if (waiter) {
+        streamWaitersRef.current.delete(streamId)
+        waiter.reject(new Error(message))
+      }
+      streamFailuresRef.current.delete(streamId)
+      window.setTimeout(() => {
+        cleanupStreamRefs(streamRefs, streamId)
+      }, 0)
+    },
+    [streamRefs],
+  )
   const onRollbackLastTurn = useCallback(async () => {
     const history = chatMessagesRef.current
     const stack = rollbackTurnStackRef.current
@@ -2003,6 +2180,33 @@ function App() {
     }, FIRST_TOKEN_RETRY_TIMEOUT_MS)
     return () => window.clearTimeout(timer)
   }, [activeStreamId, maybeAutoRetryNoTokenStream])
+  useEffect(() => {
+    if (!isTauriApp()) return
+    const timer = window.setInterval(() => {
+      const now = Date.now()
+      const activeStreams = chatMessagesRef.current.filter((m): m is ChatItem & { streamId: string } => {
+        return m.role === 'assistant' && m.streaming === true && typeof m.streamId === 'string' && m.streamId.length > 0
+      })
+      for (const item of activeStreams) {
+        const streamId = item.streamId
+        const startedAt = streamStartedAtRef.current.get(streamId) ?? now
+        const lastTokenAt = streamLastTokenAtRef.current.get(streamId) ?? startedAt
+        const idleMs = now - lastTokenAt
+        const totalMs = now - startedAt
+        const hasOutput = (streamOutputRef.current.get(streamId) ?? '').trim().length > 0
+        const idleTimeoutMs = hasOutput ? STREAM_IDLE_HARD_TIMEOUT_MS : STREAM_PRETOKEN_HARD_TIMEOUT_MS
+
+        if (manualCancelledStreamsRef.current.has(streamId) && idleMs >= STREAM_MANUAL_CANCEL_GRACE_MS) {
+          forceFinalizeStream(streamId, 'AI generation cancelled.', true)
+          continue
+        }
+        if (idleMs >= idleTimeoutMs || totalMs >= STREAM_TOTAL_HARD_TIMEOUT_MS) {
+          forceFinalizeStream(streamId, 'AI request timed out and was auto-stopped. Please retry.')
+        }
+      }
+    }, 5_000)
+    return () => window.clearInterval(timer)
+  }, [forceFinalizeStream])
 
   const resolveAssistantReplayContext = useCallback(
     (assistantMessageId?: string): AssistantReplayContext | null => {
@@ -2934,6 +3138,7 @@ function App() {
       if (!streamId) return
       const phase = typeof p.phase === 'string' ? p.phase : ''
       if (!phase) return
+      streamLastTokenAtRef.current.set(streamId, Date.now())
       setStreamPhaseById((prev) => ({ ...prev, [streamId]: phase }))
     })
 
@@ -3774,14 +3979,14 @@ function App() {
       {/* Settings Modal */}
       {showSettings ? (
         <div className="modal-overlay" onClick={requestCloseSettings}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+	          <div className="modal-content settings-modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>设置</h2>
               <button className="close-btn" onClick={requestCloseSettings}>
                 ×
               </button>
             </div>
-            <div className="modal-body">
+	            <div className="modal-body settings-modal-body">
               {!appSettings ? (
                 <div className="settings-load-state">
                   <div className="settings-load-message">设置加载失败或尚未加载完成。</div>
@@ -3795,9 +4000,26 @@ function App() {
                     </button>
                   </div>
                 </div>
-              ) : (
-                <div className="settings-form settings-page">
-                <div className="settings-section">
+	              ) : (
+	                <div className="settings-layout">
+	                  <aside className="settings-nav">
+	                    <button className={`settings-nav-item ${settingsTab === 'general' ? 'active' : ''}`} onClick={() => setSettingsTab('general')}>
+	                      通用
+	                    </button>
+	                    <button className={`settings-nav-item ${settingsTab === 'editor' ? 'active' : ''}`} onClick={() => setSettingsTab('editor')}>
+	                      编辑器
+	                    </button>
+	                    <button className={`settings-nav-item ${settingsTab === 'models' ? 'active' : ''}`} onClick={() => setSettingsTab('models')}>
+	                      模型配置
+	                    </button>
+	                    <button className={`settings-nav-item ${settingsTab === 'agents' ? 'active' : ''}`} onClick={() => setSettingsTab('agents')}>
+	                      智能体
+	                    </button>
+	                  </aside>
+	                  <div className="settings-content">
+	                <div className="settings-form settings-page">
+	                {settingsTab === 'general' ? (
+	                <div className="settings-section">
                   <h3 className="settings-section-title">通用</h3>
                   <div className="form-group settings-inline-row">
                     <label className="settings-inline-label">Markdown 输出</label>
@@ -3975,10 +4197,12 @@ function App() {
                       重置界面设置
                     </button>
                   </div>
-                </div>
+	                </div>
+	                ) : null}
 
-                {/* Editor Configuration Section */}
-                <div className="settings-section">
+	                {/* Editor Configuration Section */}
+	                {settingsTab === 'editor' ? (
+	                <div className="settings-section">
                   <h3 className="settings-section-title">编辑器配置</h3>
 
                   {/* Font Family */}
@@ -4098,8 +4322,10 @@ function App() {
                       重置为默认值
                     </button>
                   </div>
-                </div>
-                <div className="settings-section">
+	                </div>
+	                ) : null}
+	                {settingsTab === 'models' ? (
+	                <div className="settings-section">
                   <div className="settings-section-head">
                     <h3 className="settings-section-title settings-section-title-inline">模型配置</h3>
                     <button
@@ -4186,9 +4412,10 @@ function App() {
                       </div>
                     ))}
                   </div>
-                </div>
-
-                <div className="settings-section">
+	                </div>
+	                ) : null}
+	                {settingsTab === 'agents' ? (
+	                <div className="settings-section">
                   <h3 className="settings-section-title">智能体管理</h3>
 
                   {/* Built-in Agents */}
@@ -4304,14 +4531,17 @@ function App() {
                         <div className="form-group">
                           <label>章节目标字数</label>
                           <div className="settings-spacer-text">此项为项目级设置，请在上方“章节目标字数”中调整。</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-              )}
-            </div>
+	                        </div>
+	                      </div>
+	                    </div>
+	                  )}
+	                </div>
+	                ) : null}
+	              </div>
+	            </div>
+	          </div>
+	        )}
+	      </div>
             <div className="modal-footer">
               {appSettings ? (
                 <button
@@ -4401,13 +4631,33 @@ function App() {
                     }
                   />
                 </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="primary-button"
-                disabled={!editingProvider.name?.trim() || !editingProvider.base_url?.trim() || !editingProvider.model_name?.trim()}
-                onClick={() => {
+	                {providerProbeResult ? (
+	                  <div className={`settings-connectivity-result ${providerProbeResult.kind === 'ok' ? 'ok' : 'error'}`}>
+	                    <div>{providerProbeResult.text}</div>
+	                    {providerProbeResult.detail && providerProbeResult.detail !== providerProbeResult.text ? (
+	                      <details className="settings-connectivity-detail">
+	                        <summary>查看详情</summary>
+	                        <pre>{providerProbeResult.detail}</pre>
+	                      </details>
+	                    ) : null}
+	                  </div>
+	                ) : null}
+	              </div>
+	            </div>
+	            <div className="modal-footer">
+	              <button
+	                className="btn btn-secondary"
+	                disabled={providerProbeRunning || !editingProvider.base_url?.trim() || !editingProvider.model_name?.trim()}
+	                onClick={() => {
+	                  void onProbeProviderConnectivity()
+	                }}
+	              >
+	                {providerProbeRunning ? '检测中...' : '检测连通性'}
+	              </button>
+	              <button
+	                className="primary-button"
+	                disabled={providerProbeRunning || !editingProvider.name?.trim() || !editingProvider.base_url?.trim() || !editingProvider.model_name?.trim()}
+	                onClick={() => {
                   if (!appSettings) return
                   void (async () => {
                     const prev = appSettings

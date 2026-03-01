@@ -1684,6 +1684,140 @@ body {
   gap: 14px;
 }
 
+.settings-modal-content {
+  width: min(1100px, 94vw);
+  max-width: 94vw;
+}
+
+.settings-modal-body {
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-layout {
+  display: flex;
+  min-height: 560px;
+  max-height: calc(85vh - 140px);
+}
+
+.settings-nav {
+  width: 180px;
+  flex-shrink: 0;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.settings-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-nav-item.active {
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--border-subtle));
+  color: var(--text-primary);
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-xl);
+  overflow-y: auto;
+}
+
+.settings-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-content::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.settings-connectivity-result {
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+}
+
+.settings-connectivity-result.ok {
+  background: color-mix(in srgb, #2ea043 18%, transparent);
+  border-color: color-mix(in srgb, #2ea043 55%, var(--border-subtle));
+  color: #9be9a8;
+}
+
+.settings-connectivity-result.error {
+  background: color-mix(in srgb, #f85149 16%, transparent);
+  border-color: color-mix(in srgb, #f85149 55%, var(--border-subtle));
+  color: #ffb4ae;
+}
+
+.settings-connectivity-detail {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: 6px;
+}
+
+.settings-connectivity-detail summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 11px;
+  user-select: none;
+}
+
+.settings-connectivity-detail pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 900px) {
+  .settings-layout {
+    flex-direction: column;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .settings-nav {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .settings-nav-item {
+    width: auto;
+  }
+
+  .settings-content {
+    padding: 12px;
+  }
+}
+
 .settings-section {
   margin-bottom: 4px;
   padding: 14px;

@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::Manager;
@@ -1007,6 +1007,148 @@ pub fn set_api_key(
   secrets::set_api_key(&app, pid, key)
 }
 
+#[derive(Serialize)]
+pub struct ProviderConnectivityResult {
+  pub ok: bool,
+  pub status_code: u16,
+  pub latency_ms: u128,
+  pub message: String,
+}
+
+fn resolve_provider_api_key(
+  app: &AppHandle,
+  provider: &app_settings::ModelProvider,
+  override_key: Option<String>,
+) -> Result<String, String> {
+  if let Some(raw) = override_key {
+    let trimmed = raw.trim().to_string();
+    if !trimmed.is_empty() {
+      return Ok(trimmed);
+    }
+  }
+  match secrets::get_api_key(app, provider.id.trim()) {
+    Ok(Some(v)) if !v.trim().is_empty() => Ok(v),
+    Ok(_) => {
+      let fallback = provider.api_key.trim().to_string();
+      if fallback.is_empty() {
+        Err(format!("api key not found for provider={}", provider.id))
+      } else {
+        Ok(fallback)
+      }
+    }
+    Err(e) => Err(format!("keyring read failed: {e}")),
+  }
+}
+
+async fn probe_provider_connectivity(
+  client: &reqwest::Client,
+  provider: &app_settings::ModelProvider,
+  api_key: &str,
+) -> Result<ProviderConnectivityResult, String> {
+  let started = Instant::now();
+  match provider.kind {
+    app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
+      let base = provider.base_url.trim().trim_end_matches('/');
+      if base.is_empty() {
+        return Err("base_url is empty".to_string());
+      }
+      let url = format!("{base}/chat/completions");
+      let body = serde_json::json!({
+        "model": provider.model_name,
+        "messages": [{"role":"user","content":"Reply with OK."}],
+        "max_tokens": 8,
+        "temperature": 0.0,
+        "stream": false
+      });
+      let resp = client
+        .post(url.as_str())
+        .bearer_auth(api_key.trim())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+      let status = resp.status();
+      if status.is_success() {
+        return Ok(ProviderConnectivityResult {
+          ok: true,
+          status_code: status.as_u16(),
+          latency_ms: started.elapsed().as_millis(),
+          message: "Provider reachable and model responded.".to_string(),
+        });
+      }
+      let raw = resp.text().await.unwrap_or_else(|_| String::new());
+      let snippet = if raw.chars().count() > 260 {
+        format!("{}...", raw.chars().take(260).collect::<String>())
+      } else {
+        raw
+      };
+      Err(format!("http {}: {}", status.as_u16(), snippet))
+    }
+    app_settings::ProviderKind::Anthropic => {
+      let base = provider.base_url.trim().trim_end_matches('/');
+      let endpoint = if base.is_empty() {
+        "https://api.anthropic.com/v1/messages".to_string()
+      } else if base.ends_with("/messages") {
+        base.to_string()
+      } else {
+        format!("{base}/messages")
+      };
+      let body = serde_json::json!({
+        "model": provider.model_name,
+        "max_tokens": 16,
+        "messages": [{"role":"user","content":"Reply with OK."}]
+      });
+      let resp = client
+        .post(endpoint.as_str())
+        .header("x-api-key", api_key.trim())
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+      let status = resp.status();
+      if status.is_success() {
+        return Ok(ProviderConnectivityResult {
+          ok: true,
+          status_code: status.as_u16(),
+          latency_ms: started.elapsed().as_millis(),
+          message: "Provider reachable and model responded.".to_string(),
+        });
+      }
+      let raw = resp.text().await.unwrap_or_else(|_| String::new());
+      let snippet = if raw.chars().count() > 260 {
+        format!("{}...", raw.chars().take(260).collect::<String>())
+      } else {
+        raw
+      };
+      Err(format!("http {}: {}", status.as_u16(), snippet))
+    }
+  }
+}
+
+#[allow(non_snake_case)]
+#[tauri::command]
+pub async fn test_provider_connectivity(
+  app: AppHandle,
+  provider: app_settings::ModelProvider,
+  apiKey: Option<String>,
+  api_key: Option<String>,
+) -> Result<ProviderConnectivityResult, String> {
+  if provider.id.trim().is_empty() {
+    return Err("provider id is empty".to_string());
+  }
+  if provider.base_url.trim().is_empty() {
+    return Err("base_url is empty".to_string());
+  }
+  if provider.model_name.trim().is_empty() {
+    return Err("model_name is empty".to_string());
+  }
+  let merged_key = apiKey.or(api_key);
+  let key = resolve_provider_api_key(&app, &provider, merged_key)?;
+  let client = build_http_client()?;
+  probe_provider_connectivity(&client, &provider, key.as_str()).await
+}
+
 #[tauri::command]
 pub fn get_agents(app: AppHandle) -> Result<Vec<agents::Agent>, String> {
   agents::load(&app)
@@ -1412,6 +1554,15 @@ fn sse_take_line(buffer: &mut String) -> Option<String> {
   Some(line)
 }
 
+fn build_http_client() -> Result<reqwest::Client, String> {
+  reqwest::Client::builder()
+    .connect_timeout(Duration::from_secs(15))
+    .timeout(Duration::from_secs(300))
+    .pool_idle_timeout(Duration::from_secs(90))
+    .build()
+    .map_err(|e| format!("http client build failed: {e}"))
+}
+
 #[tauri::command]
 pub fn chat_generate_stream(
   app: AppHandle,
@@ -1462,7 +1613,20 @@ pub fn chat_generate_stream(
     let agent_system = agent.map(|a| a.system_prompt.clone()).unwrap_or_default();
     let agent_temp = agent.map(|a| a.temperature);
     let ai_edit_apply_mode = settings.ai_edit_apply_mode.clone();
-    let client = reqwest::Client::new();
+    let client = match build_http_client() {
+      Ok(v) => v,
+      Err(e) => {
+        let payload = serde_json::json!({
+          "streamId": stream_id_for_task,
+          "stage": "provider",
+          "message": e
+        });
+        let _ = window_for_task.emit("ai_error", payload);
+        clear_stream_task(&app_for_task, &stream_id_for_task);
+        emit_stream_done(&window_for_task, &stream_id_for_task, false);
+        return;
+      }
+    };
 
     let active_provider_id = settings.active_provider_id.clone();
     let providers = settings.providers.clone();
@@ -2091,7 +2255,7 @@ pub async fn ai_assistance_generate(
   prompt: String,
 ) -> Result<String, String> {
   let settings = app_settings::load(&app)?;
-  let client = reqwest::Client::new();
+  let client = build_http_client()?;
   
   let active_provider_id = settings.active_provider_id.clone();
   let providers = settings.providers.clone();
@@ -2392,7 +2556,7 @@ pub async fn risk_scan_content(
     .find(|p| p.id == settings.active_provider_id)
     .cloned()
     .ok_or_else(|| "provider not found".to_string())?;
-  let client = reqwest::Client::new();
+  let client = build_http_client()?;
   let scanned_chars = content.chars().count();
   let payload_text = trim_for_risk_scan(trimmed, 30_000);
   let snippets = collect_related_chapter_snippets(&root, file_path.as_deref());

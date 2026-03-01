@@ -214,6 +214,20 @@ export async function setApiKey(providerId: string, apiKey: string): Promise<voi
   return invoke<void>('set_api_key', { providerId, apiKey })
 }
 
+export type ProviderConnectivityResult = {
+  ok: boolean
+  status_code: number
+  latency_ms: number
+  message: string
+}
+
+export async function testProviderConnectivity(provider: ModelProvider, apiKey?: string | null): Promise<ProviderConnectivityResult> {
+  return invoke<ProviderConnectivityResult>('test_provider_connectivity', {
+    provider,
+    apiKey: apiKey ?? null,
+  })
+}
+
 export type Agent = {
   id: string
   name: string
