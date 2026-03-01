@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { Settings as SettingsIcon } from 'lucide-react'
 
 export type AppIconName =
   | 'file'
@@ -106,13 +107,6 @@ function IconPath({ name }: { name: AppIconName }) {
           <path d="M8 18h8" />
         </>
       )
-    case 'settings':
-      return (
-        <>
-          <circle cx="12" cy="12" r="3.2" />
-          <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1 1 0 0 1 0 1.4l-1.4 1.4a1 1 0 0 1-1.4 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1 1 0 0 1-1.4 0L4.3 17.8a1 1 0 0 1 0-1.4l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H3.5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1 1 0 0 1 0-1.4L5.7 4a1 1 0 0 1 1.4 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V3.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1 1 0 0 1 1.4 0l1.4 1.4a1 1 0 0 1 0 1.4l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-.2a1 1 0 0 0-.9.6z" />
-        </>
-      )
     case 'chat':
       return (
         <>
@@ -174,6 +168,16 @@ export const AppIcon = memo(function AppIcon({
   strokeWidth = 1.8,
 }: AppIconProps) {
   const classes = className ? `app-icon ${className}` : 'app-icon'
+  if (name === 'settings') {
+    return (
+      <SettingsIcon
+        aria-hidden="true"
+        className={classes}
+        size={size}
+        strokeWidth={strokeWidth}
+      />
+    )
+  }
   return (
     <svg
       aria-hidden="true"
