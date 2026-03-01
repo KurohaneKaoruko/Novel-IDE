@@ -22,6 +22,7 @@ use tauri::Manager;
 use tauri::State;
 use notify::{EventKind, RecursiveMode, Watcher};
 use futures_util::StreamExt;
+use regex::Regex;
 
 #[tauri::command]
 pub fn ping() -> &'static str {
@@ -432,6 +433,20 @@ pub struct ComposerDirectiveParseResult {
   pub matched: bool,
 }
 
+#[derive(Deserialize)]
+pub struct ResolveInlineReferencesRequest {
+  pub input: String,
+  pub selection_text: Option<String>,
+  pub active_file_path: Option<String>,
+  pub active_file_content: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ResolveInlineReferencesResult {
+  pub resolved_input: String,
+  pub blocks_added: usize,
+}
+
 fn normalize_project_writing_settings(mut v: ProjectWritingSettings) -> ProjectWritingSettings {
   v.chapter_word_target = v.chapter_word_target.clamp(0, 200_000);
   v.auto_min_chars = v.auto_min_chars.clamp(120, 20_000);
@@ -556,6 +571,142 @@ pub fn parse_composer_directive(input: String) -> ComposerDirectiveParseResult {
     content: trimmed.to_string(),
     matched: false,
   }
+}
+
+#[tauri::command]
+pub fn resolve_inline_references(
+  state: State<'_, AppState>,
+  payload: ResolveInlineReferencesRequest,
+) -> Result<ResolveInlineReferencesResult, String> {
+  let source = payload.input.trim().to_string();
+  if !source.contains('#') {
+    return Ok(ResolveInlineReferencesResult {
+      resolved_input: source,
+      blocks_added: 0,
+    });
+  }
+
+  let selection_regex = Regex::new(r"#(?:选区|selection)\b").map_err(|e| format!("selection regex invalid: {e}"))?;
+  let current_file_regex =
+    Regex::new(r"#(?:当前文件|current_file|current)\b").map_err(|e| format!("current file regex invalid: {e}"))?;
+  let file_prefix_regex = Regex::new(r"#(?:文件|file):([^\s#]+)").map_err(|e| format!("file prefix regex invalid: {e}"))?;
+  let file_path_regex =
+    Regex::new(r"#([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,16})").map_err(|e| format!("file path regex invalid: {e}"))?;
+
+  let mut blocks: Vec<String> = Vec::new();
+  let mut file_refs: Vec<String> = Vec::new();
+  let mut seen_file_refs: HashSet<String> = HashSet::new();
+  let mut cleaned = source.clone();
+
+  let mut push_block = |title: String, body: String| {
+    let normalized = body.trim().to_string();
+    let final_body = if normalized.is_empty() { "(empty)".to_string() } else { normalized };
+    blocks.push(format!("[{title}]\n{final_body}"));
+  };
+
+  if selection_regex.is_match(source.as_str()) {
+    let selected = payload.selection_text.unwrap_or_default().trim().to_string();
+    let body = if selected.is_empty() {
+      "(no selection detected; select text in editor first)".to_string()
+    } else {
+      selected
+    };
+    push_block("selection".to_string(), body);
+    cleaned = selection_regex.replace_all(cleaned.as_str(), "").to_string();
+  }
+
+  if current_file_regex.is_match(source.as_str()) {
+    if let Some(path) = payload.active_file_path.as_ref() {
+      let content = payload.active_file_content.unwrap_or_default();
+      push_block(format!("current file {path}"), content);
+    } else {
+      push_block("current file".to_string(), "(no active file)".to_string());
+    }
+    cleaned = current_file_regex.replace_all(cleaned.as_str(), "").to_string();
+  }
+
+  for captures in file_prefix_regex.captures_iter(source.as_str()) {
+    let Some(value) = captures.get(1) else {
+      continue;
+    };
+    let reference = value.as_str().trim().replace('\\', "/");
+    if reference.is_empty() {
+      continue;
+    }
+    let key = reference.to_lowercase();
+    if seen_file_refs.insert(key) {
+      file_refs.push(reference);
+    }
+  }
+
+  for captures in file_path_regex.captures_iter(source.as_str()) {
+    let Some(value) = captures.get(1) else {
+      continue;
+    };
+    let reference = value.as_str().trim().replace('\\', "/");
+    if reference.is_empty() {
+      continue;
+    }
+    let key = reference.to_lowercase();
+    if seen_file_refs.insert(key) {
+      file_refs.push(reference);
+    }
+  }
+
+  cleaned = file_prefix_regex.replace_all(cleaned.as_str(), "").to_string();
+  cleaned = file_path_regex.replace_all(cleaned.as_str(), "").to_string();
+  cleaned = cleaned.trim().to_string();
+
+  let root = get_workspace_root(&state).ok();
+  for reference in file_refs {
+    let normalized_ref = reference.trim_start_matches("./").trim_start_matches('/');
+    if normalized_ref.is_empty() {
+      continue;
+    }
+    if root.is_none() {
+      push_block(
+        format!("file {normalized_ref}"),
+        "(project files are unavailable in current environment)".to_string(),
+      );
+      continue;
+    }
+    let relative = match validate_relative_path(normalized_ref) {
+      Ok(value) => value,
+      Err(err) => {
+        push_block(format!("file {normalized_ref}"), format!("read failed: {err}"));
+        continue;
+      }
+    };
+    let Some(root_path) = root.as_ref() else {
+      continue;
+    };
+    let absolute = root_path.join(relative);
+    match fs::read_to_string(&absolute) {
+      Ok(content) => push_block(format!("file {normalized_ref}"), content),
+      Err(err) => push_block(format!("file {normalized_ref}"), format!("read failed: {err}")),
+    }
+  }
+
+  if blocks.is_empty() {
+    return Ok(ResolveInlineReferencesResult {
+      resolved_input: source,
+      blocks_added: 0,
+    });
+  }
+
+  let resolved_input = if cleaned.is_empty() {
+    format!(
+      "Please continue writing based on the following references.\n\n{}",
+      blocks.join("\n\n")
+    )
+  } else {
+    format!("{cleaned}\n\n[References]\n{}", blocks.join("\n\n"))
+  };
+
+  Ok(ResolveInlineReferencesResult {
+    resolved_input,
+    blocks_added: blocks.len(),
+  })
 }
 
 #[tauri::command]

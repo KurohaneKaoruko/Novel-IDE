@@ -68,6 +68,11 @@ export type ComposerDirectiveParseResult = {
   matched: boolean
 }
 
+export type InlineReferencesResolveResult = {
+  resolved_input: string
+  blocks_added: number
+}
+
 export type NovelTaskQualityTask = {
   id: string
   target_words: number
@@ -137,6 +142,22 @@ export async function setProjectWritingSettings(settings: ProjectWritingSettings
 
 export async function parseComposerDirective(input: string): Promise<ComposerDirectiveParseResult> {
   return invoke<ComposerDirectiveParseResult>('parse_composer_directive', { input })
+}
+
+export async function resolveInlineReferences(
+  input: string,
+  selectionText?: string | null,
+  activeFilePath?: string | null,
+  activeFileContent?: string | null,
+): Promise<InlineReferencesResolveResult> {
+  return invoke<InlineReferencesResolveResult>('resolve_inline_references', {
+    payload: {
+      input,
+      selection_text: selectionText ?? null,
+      active_file_path: activeFilePath ?? null,
+      active_file_content: activeFileContent ?? null,
+    },
+  })
 }
 
 export async function validateNovelTaskQuality(

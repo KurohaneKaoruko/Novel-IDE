@@ -33,6 +33,7 @@ fn main() {
       commands::get_project_writing_settings,
       commands::set_project_writing_settings,
       commands::parse_composer_directive,
+      commands::resolve_inline_references,
       commands::validate_novel_task_quality,
       commands::read_text,
       commands::write_text,

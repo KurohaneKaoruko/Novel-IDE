@@ -56,6 +56,7 @@ import { runPlannerQueueWorkflow } from './services/plannerQueueWorkflow'
 import { cleanupStreamRefs, type StreamMapRefs } from './services/streamRefs'
 import { parseComposerInput } from './services/chatComposer'
 import { appendStreamTextWithOverlap, formatElapsedLabel } from './services/chatStreamText'
+import { resolveInlineReferencesInput } from './services/inlineReferences'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
@@ -75,6 +76,7 @@ import { logError } from './utils/errorLogger'
 import { RecoveryDialog } from './components/RecoveryDialog'
 import { ProjectPickerPage } from './components/ProjectPickerPage'
 import { AppIcon } from './components/icons/AppIcon'
+import { AIChatPanel } from './components/chat/AIChatPanel'
 import {
   COMMON_PROVIDER_PRESETS,
   CUSTOM_PROVIDER_PRESET_KEY,
@@ -479,6 +481,15 @@ function App() {
     if (!panel) return
     panel.scrollTo({ top: panel.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
   }, [])
+  const onChatScrollToBottom = useCallback(() => {
+    setChatAutoScroll(true)
+    scrollChatToBottom(true)
+  }, [scrollChatToBottom])
+  const chatAgentOptions = useMemo(() => agentsList.map((agent) => ({ id: agent.id, name: agent.name })), [agentsList])
+  const chatProviderOptions = useMemo(
+    () => (appSettings?.providers ?? []).map((provider) => ({ id: provider.id, name: provider.name })),
+    [appSettings],
+  )
   const upsertAssistantVersion = useCallback((groupId: string, version: AssistantVersion): { index: number; count: number } => {
     const map = assistantVersionsRef.current
     const list = map.get(groupId) ?? []
@@ -762,6 +773,19 @@ function App() {
     const queue = await novelPlannerService.loadRunQueue()
     setPlannerTasks(queue)
   }, [workspaceRoot])
+
+  const onNewChatSession = useCallback(() => {
+    const nextSessionId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    chatSessionIdRef.current = nextSessionId
+    setChatMessages([])
+    setChatAutoScroll(true)
+    void loadPlannerSession().catch((e) => {
+      setPlannerLastRunError(e instanceof Error ? e.message : String(e))
+    })
+  }, [loadPlannerSession])
 
   const ensurePlanningArtifacts = useCallback(
     async (mode: WriterMode, instruction?: string) => {
@@ -1345,87 +1369,6 @@ function App() {
     return ''
   }, [])
 
-  const resolveInlineReferences = useCallback(
-    async (input: string): Promise<string> => {
-      const source = input.trim()
-      if (!source.includes('#')) return source
-
-      const selectionRegex = /#(?:选区|selection)\b/gi
-      const currentFileRegex = /#(?:当前文件|current_file|current)\b/gi
-      const filePrefixRegex = /#(?:文件|file):([^\s#]+)/gi
-      const filePathRegex = /#([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]{1,16})/g
-
-      const blocks: string[] = []
-      const fileRefs: string[] = []
-      const seenFileRefs = new Set<string>()
-      let cleaned = source
-
-      const pushBlock = (title: string, body: string) => {
-        const normalized = body.trim()
-        blocks.push(`[${title}]\n${normalized || '(empty)'}`)
-      }
-
-      if (selectionRegex.test(source)) {
-        const selected = getSelectionText().trim()
-        pushBlock('选区', selected || '(未检测到选区，请先在编辑器中选中文本)')
-        cleaned = cleaned.replace(selectionRegex, '').trim()
-      }
-
-      if (currentFileRegex.test(source)) {
-        if (activeFile) {
-          pushBlock(`当前文件 ${activeFile.path}`, activeFile.content)
-        } else {
-          pushBlock('当前文件', '(当前没有打开文件)')
-        }
-        cleaned = cleaned.replace(currentFileRegex, '').trim()
-      }
-
-      for (const match of source.matchAll(filePrefixRegex)) {
-        const ref = (match[1] ?? '').trim().replace(/\\/g, '/')
-        if (!ref) continue
-        const key = ref.toLowerCase()
-        if (seenFileRefs.has(key)) continue
-        seenFileRefs.add(key)
-        fileRefs.push(ref)
-      }
-
-      for (const match of source.matchAll(filePathRegex)) {
-        const ref = (match[1] ?? '').trim().replace(/\\/g, '/')
-        if (!ref) continue
-        const key = ref.toLowerCase()
-        if (seenFileRefs.has(key)) continue
-        seenFileRefs.add(key)
-        fileRefs.push(ref)
-      }
-
-      cleaned = cleaned.replace(filePrefixRegex, '').replace(filePathRegex, '').trim()
-
-      if (fileRefs.length > 0) {
-        for (const ref of fileRefs) {
-          const rel = ref.replace(/^\.?\//, '')
-          if (!rel) continue
-          if (!workspaceRoot || !isTauriApp()) {
-            pushBlock(`文件 ${rel}`, '(当前环境无法读取项目文件)')
-            continue
-          }
-          try {
-            const content = await readText(rel)
-            pushBlock(`文件 ${rel}`, content)
-          } catch (e) {
-            pushBlock(`文件 ${rel}`, `读取失败: ${e instanceof Error ? e.message : String(e)}`)
-          }
-        }
-      }
-
-      if (blocks.length === 0) return source
-      if (!cleaned) {
-        return `请基于以下引用继续写作。\n\n${blocks.join('\n\n')}`
-      }
-      return `${cleaned}\n\n[引用]\n${blocks.join('\n\n')}`
-    },
-    [activeFile, getSelectionText, workspaceRoot],
-  )
-
   const copyText = useCallback(async (text: string) => {
     const value = text ?? ''
     if (!value) return
@@ -1469,6 +1412,26 @@ function App() {
       }
     },
     [reloadAppSettings, showErrorDialog],
+  )
+  const onChatAgentChange = useCallback(
+    (id: string) => {
+      if (!appSettings) return
+      const prev = appSettings
+      const next = { ...appSettings, active_agent_id: id }
+      setAppSettingsState(next)
+      void persistAppSettings(next, prev)
+    },
+    [appSettings, persistAppSettings],
+  )
+  const onChatProviderChange = useCallback(
+    (id: string) => {
+      if (!appSettings) return
+      const prev = appSettings
+      const next = { ...appSettings, active_provider_id: id }
+      setAppSettingsState(next)
+      void persistAppSettings(next, prev)
+    },
+    [appSettings, persistAppSettings],
   )
 
   const settingsDirty = useMemo(() => {
@@ -1664,7 +1627,13 @@ function App() {
 
       let referencedContent = content
       try {
-        referencedContent = await resolveInlineReferences(content)
+        referencedContent = await resolveInlineReferencesInput({
+          input: content,
+          selectionText: getSelectionText(),
+          activeFile: activeFile ? { path: activeFile.path, content: activeFile.content } : null,
+          isTauriRuntime: isTauriApp(),
+          workspaceRoot,
+        })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
@@ -1794,9 +1763,9 @@ function App() {
       buildPromptByMode,
       chatInput,
       ensurePlanningArtifacts,
+      getSelectionText,
       newId,
       refreshPlannerQueue,
-      resolveInlineReferences,
       workspaceRoot,
       writerMode,
     ],
@@ -1814,6 +1783,17 @@ function App() {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [activeStreamId])
+  const onToggleAutoLongWrite = useCallback(
+    (next: boolean) => {
+      setAutoLongWriteEnabled(next)
+      autoLongWriteStopRef.current = !next
+      setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
+      if (!next && activeStreamId) {
+        void onStopChat()
+      }
+    },
+    [activeStreamId, onStopChat],
+  )
 
   const maybeAutoRetryNoTokenStream = useCallback(
     async (streamId: string) => {
@@ -3461,299 +3441,48 @@ function App() {
         {activeRightTab ? (
           <aside className="right-panel-content">
             {activeRightTab === 'chat' ? (
-              <>
-                <div className="ai-header">
-                  <div className="ai-title-row">
-                    <span>AI 对话</span>
-                    <div className="ai-title-actions">
-                      <button
-                        className="icon-button ai-new-session-btn"
-                        onClick={() => {
-                          const nextSessionId =
-                            typeof crypto !== 'undefined' && 'randomUUID' in crypto
-                              ? crypto.randomUUID()
-                              : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-	                          chatSessionIdRef.current = nextSessionId
-	                          setChatMessages([])
-	                          setChatAutoScroll(true)
-	                          void loadPlannerSession().catch((e) => {
-	                            setPlannerLastRunError(e instanceof Error ? e.message : String(e))
-	                          })
-                        }}
-                        title="新建对话"
-                      >
-                        新会话
-                      </button>
-                    </div>
-                  </div>
-                  <div className="ai-mode-brief">
-                    {writerMode === 'normal' ? '\u666e\u901a\u6a21\u5f0f' : writerMode === 'plan' ? '\u5927\u7eb2\u6a21\u5f0f' : '\u7ec6\u7eb2\u6a21\u5f0f'}
-                  </div>
-                  {plannerLastRunError ? <div className="planner-error-text">{plannerLastRunError}</div> : null}
-                </div>
-
-	                <div className="ai-messages-wrap">
-	                  <div
-	                    className="ai-messages"
-	                    ref={aiMessagesRef}
-	                    onScroll={() => {
-	                      const panel = aiMessagesRef.current
-	                      if (!panel) return
-	                      const threshold = 24
-	                      const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight <= threshold
-	                      setChatAutoScroll(atBottom)
-	                    }}
-	                  >
-                  {chatMessages.length === 0 ? (
-                    <div className="ai-empty-state">
-                      <div>嗨，我是你的写作助手。</div>
-                                            <div className="ai-empty-state-sub">
-                        {'\u5f53\u524d\u6a21\u5f0f\uff1a'}
-                        {writerMode.toUpperCase()}
-                        {'\u3002\u53ef\u7ee7\u7eed\u5267\u60c5\uff0c\u6216\u5207\u6362\u5230\u5927\u7eb2\u6a21\u5f0f/\u7ec6\u7eb2\u6a21\u5f0f\u8fdb\u884c\u89c4\u5212\u3002'}
-                      </div>
-                    </div>
-                  ) : (
-	                    chatMessages.map((m) => (
-	                      <div key={m.id} className={m.role === 'user' ? 'message user' : 'message assistant'}>
-                        <div className="message-meta">
-                          {m.role === 'user' ? (
-                            '你'
-                          ) : (
-                            <span className="ai-meta">
-                              AI
-                              {m.cancelled ? <span className="ai-cancelled-tag">{'已停止'}</span> : null}
-                              {m.streaming ? (
-                                <span className="ai-dot-pulse" aria-hidden="true">
-                                  <span />
-                                  <span />
-                                  <span />
-                                </span>
-                              ) : null}
-                            </span>
-                          )}
-                        </div>
-                        {m.role === 'assistant' && !m.streaming && (m.versionCount ?? 0) > 1 ? (
-                          <div className="assistant-version-switch">
-                            <button
-                              className="icon-button assistant-version-btn"
-                              onClick={() => onSwitchAssistantVersion(m.id, -1)}
-                              title={'\u4e0a\u4e00\u7248'}
-                            >
-                              {'<'}
-                            </button>
-                            <span className="assistant-version-label">
-                              {(typeof m.versionIndex === 'number' ? m.versionIndex + 1 : m.versionCount)}/{m.versionCount}
-                            </span>
-                            <button
-                              className="icon-button assistant-version-btn"
-                              onClick={() => onSwitchAssistantVersion(m.id, 1)}
-                              title={'\u4e0b\u4e00\u7248'}
-                            >
-                              {'>'}
-                            </button>
-                          </div>
-                        ) : null}
-	                        <div className="message-content" onContextMenu={(e) => openChatContextMenu(e, m)}>
-                          {m.content || (m.role === 'assistant' && m.streaming ? '正在思考…' : '')}
-                        </div>
-                        {m.role === 'assistant' && m.streaming ? (
-                          <div className="ai-processing-indicator">
-                            <div className="ai-processing-spinner" />
-                            <span>{getStreamPhaseLabel(m.streamId)}</span>
-                          </div>
-                        ) : null}
-                        {m.role === 'assistant' && m.changeSet && m.changeSet.modifications.length > 0 ? (
-                          <div className="file-modifications">
-                            <div className="file-modifications-header">
-                              <span>修改了 {m.changeSet.filePath.split('/').pop()}</span>
-                            </div>
-                            <div className="file-modifications-list">
-                              <div
-                                className="file-modification-item"
-                                onClick={() => onOpenDiffView(m.changeSet!.id)}
-                                title="点击查看差异"
-                              >
-                                <div className="file-modification-name">
-                                  <span className="file-name">{m.changeSet.filePath.split('/').pop()}</span>
-                                </div>
-                                <div className="file-modification-path">{m.changeSet.filePath}</div>
-                                <div className="file-modification-stats">
-                                  {m.changeSet.stats.additions > 0 && <span className="stat-add">+{m.changeSet.stats.additions}</span>}
-                                  {m.changeSet.stats.deletions > 0 && <span className="stat-delete">-{m.changeSet.stats.deletions}</span>}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-	                      </div>
-	                    ))
-	                  )}
-	                  </div>
-	                  {!chatAutoScroll ? (
-	                    <button
-	                      className="chat-scroll-bottom-btn"
-	                      onClick={() => {
-	                        setChatAutoScroll(true)
-	                        scrollChatToBottom(true)
-	                      }}
-	                    >
-	                      {'\u56de\u5230\u5e95\u90e8'}
-	                    </button>
-	                  ) : null}
-	                </div>
-
-	                <div className="ai-input-area">
-                  <div className="ai-input-topbar">
-                    <div className="ai-actions ai-input-tools">
-                      <button className="icon-button" disabled={!activeFile} onClick={() => onQuoteSelection()} title="引用选区">
-                        引用
-                      </button>
-                      <button className="icon-button" disabled={!activeFile} onClick={() => void onSmartComplete()} title="智能补全">
-                        续写
-                      </button>
-                    </div>
-                    <label className={`ai-auto-switch ${autoLongWriteEnabled ? 'active' : ''}`} title="Auto continuous long-form writing">
-                      <input
-                        type="checkbox"
-                        checked={autoLongWriteEnabled}
-                        disabled={autoToggleDisabled}
-	                        onChange={(e) => {
-	                          const next = e.target.checked
-	                          setAutoLongWriteEnabled(next)
-	                          autoLongWriteStopRef.current = !next
-	                          setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
-	                          if (!next && activeStreamId) {
-	                            void onStopChat()
-	                          }
-	                        }}
-	                      />
-                      <span className="ai-auto-switch-track">
-                        <span className="ai-auto-switch-knob" />
-                      </span>
-                      <span className="ai-auto-switch-text">Auto</span>
-                    </label>
-	                    <select className="ai-select ai-mode-select" value={writerMode} onChange={(e) => void onWriterModeChange(e.target.value as WriterMode)}>
-	                      <option value="normal">{'\u666e\u901a\u6a21\u5f0f'}</option>
-	                      <option value="plan">{'\u5927\u7eb2\u6a21\u5f0f'}</option>
-	                      <option value="spec">{'\u7ec6\u7eb2\u6a21\u5f0f'}</option>
-	                    </select>
-	                  </div>
-	                  {autoLongWriteStatus ? <div className="ai-auto-status">{autoLongWriteStatus}</div> : null}
-		                  <textarea
-	                    ref={chatInputRef}
-	                    className="ai-textarea"
-	                    value={chatInput}
-	                    onChange={(e) => setChatInput(e.target.value)}
-	                    onKeyDown={(e) => {
-		                      if (e.key === 'Escape' && showStopAction) {
-		                        e.preventDefault()
-		                        void onStopChat()
-		                        return
-		                      }
-	                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-	                        e.preventDefault()
-		                        if (showStopAction) {
-		                          void onStopChat()
-		                        } else {
-		                          void onSendChat()
-		                        }
-	                        return
-	                      }
-	                      if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-	                        const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number }
-	                        if (nativeEvent.isComposing || nativeEvent.keyCode === 229) {
-	                          return
-	                        }
-	                        e.preventDefault()
-		                        if (showStopAction) {
-		                          void onStopChat()
-		                        } else {
-		                          void onSendChat()
-		                        }
-	                      }
-	                    }}
-		                    placeholder={
-		                      '\u8f93\u5165\u6307\u4ee4... \u652f\u6301 #\u9009\u533a #\u5f53\u524d\u6587\u4ef6 #file:\u8def\u5f84\uff0c\u53ef\u7528 /plan /spec \u5207\u6362\u6a21\u5f0f\uff0c/auto on|off \u63a7\u5236\u81ea\u52a8\u8fde\u7eed\u751f\u6210\uff08Enter \u53d1\u9001\uff0cShift+Enter \u6362\u884c\uff09'
-		                    }
-		                  />
-                  <div className="ai-composer-footer">
-                    <div className="ai-composer-selects">
-                      <select
-                        className="ai-select ai-select-compact"
-                        value={appSettings?.active_agent_id ?? ''}
-                        onChange={(e) => {
-                          const id = e.target.value
-                          if (!appSettings) return
-                          const prev = appSettings
-                          const next = { ...appSettings, active_agent_id: id }
-                          setAppSettingsState(next)
-                          void persistAppSettings(next, prev)
-                        }}
-                      >
-                        {agentsList.length === 0 ? <option value="">无智能体</option> : null}
-                        {agentsList.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className="ai-select ai-select-compact"
-                        value={effectiveProviderId}
-                        onChange={(e) => {
-                          const active = e.target.value
-                          if (!appSettings) return
-                          const prev = appSettings
-                          const next = { ...appSettings, active_provider_id: active }
-                          setAppSettingsState(next)
-                          void persistAppSettings(next, prev)
-                        }}
-                      >
-                        {appSettings?.providers.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="ai-composer-main-actions">
-                      {!isChatStreaming && canRegenerateLatest ? (
-                        <button
-                          className="icon-button ai-regenerate-btn"
-                          onClick={() => void onRegenerateAssistant(latestCompletedAssistant?.id)}
-                          title={'\u91cd\u65b0\u751f\u6210\u4e0a\u6761\u56de\u590d'}
-                        >
-                          <AppIcon name="refresh" size={13} />
-                        </button>
-                      ) : null}
-                      {!isChatStreaming && canRegenerateLatest ? (
-                        <button
-                          className="icon-button ai-candidates-btn"
-                          onClick={() => void onGenerateAssistantCandidates(latestCompletedAssistant?.id, 2)}
-                          title={'\u751f\u6210\u989d\u5916\u5019\u9009\u56de\u590d'}
-                        >
-                          <AppIcon name="add" size={13} />
-                        </button>
-                      ) : null}
-	                      {showStopAction ? (
-	                        <button
-	                          className="primary-button chat-stop-button"
-	                          disabled={!activeStreamId && !autoLongWriteRunning}
-	                          onClick={() => void onStopChat()}
-	                          title={'\u505c\u6b62\u751f\u6210'}
-	                        >
-	                          <AppIcon name="stop" size={13} />
-	                        </button>
-	                      ) : (
-	                        <button className="primary-button" disabled={busy || !chatInput.trim() || autoLongWriteRunning} onClick={() => void onSendChat()}>
-	                          {'\u53d1\u9001'}
-	                        </button>
-	                      )}
-                    </div>
-                  </div>
-                </div>
-              </>
+              <AIChatPanel
+                writerMode={writerMode}
+                plannerLastRunError={plannerLastRunError}
+                onNewSession={onNewChatSession}
+                chatMessages={chatMessages}
+                messagesRef={aiMessagesRef}
+                onAutoScrollChange={setChatAutoScroll}
+                chatAutoScroll={chatAutoScroll}
+                onScrollToBottom={onChatScrollToBottom}
+                onSwitchAssistantVersion={onSwitchAssistantVersion}
+                onOpenMessageContextMenu={openChatContextMenu}
+                getStreamPhaseLabel={getStreamPhaseLabel}
+                onOpenDiffView={onOpenDiffView}
+                canUseEditorActions={!!activeFile}
+                onQuoteSelection={onQuoteSelection}
+                onSmartComplete={onSmartComplete}
+                autoLongWriteEnabled={autoLongWriteEnabled}
+                autoToggleDisabled={autoToggleDisabled}
+                onToggleAutoLongWrite={onToggleAutoLongWrite}
+                autoLongWriteStatus={autoLongWriteStatus}
+                onWriterModeChange={(mode) => void onWriterModeChange(mode)}
+                chatInput={chatInput}
+                chatInputRef={chatInputRef}
+                onChatInputChange={setChatInput}
+                showStopAction={showStopAction}
+                canStop={!!activeStreamId || autoLongWriteRunning}
+                onStopChat={onStopChat}
+                onSendChat={onSendChat}
+                busy={busy}
+                autoLongWriteRunning={autoLongWriteRunning}
+                isChatStreaming={isChatStreaming}
+                canRegenerateLatest={canRegenerateLatest}
+                latestCompletedAssistantId={latestCompletedAssistant?.id}
+                onRegenerateAssistant={onRegenerateAssistant}
+                onGenerateAssistantCandidates={onGenerateAssistantCandidates}
+                activeAgentId={appSettings?.active_agent_id ?? ''}
+                agents={chatAgentOptions}
+                onActiveAgentChange={onChatAgentChange}
+                activeProviderId={effectiveProviderId}
+                providers={chatProviderOptions}
+                onActiveProviderChange={onChatProviderChange}
+              />
             ) : null}
 
             {activeRightTab === 'graph' ? (
