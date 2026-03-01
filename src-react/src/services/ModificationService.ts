@@ -234,6 +234,25 @@ export class ModificationService {
   }
 
   /**
+   * Roll back an entire change set to its original file snapshot.
+   * This is used by one-click "revert last AI turn" behavior.
+   * @param changeSetId - The ID of the change set
+   * @throws Error if change set not found or rollback fails
+   */
+  async rollbackChangeSet(changeSetId: string): Promise<void> {
+    const changeSet = this.changeSets.get(changeSetId);
+    if (!changeSet) {
+      throw new Error(`ChangeSet with id ${changeSetId} not found`);
+    }
+
+    await this.rollbackFile(changeSetId, changeSet.filePath);
+    for (const mod of changeSet.modifications) {
+      mod.status = 'rejected';
+    }
+    changeSet.status = 'rejected';
+  }
+
+  /**
    * Get the status of a change set
    * @param changeSetId - The ID of the change set
    * @returns ChangeSetStatus object

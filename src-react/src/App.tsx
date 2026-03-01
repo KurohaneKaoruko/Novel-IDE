@@ -282,6 +282,14 @@ type AssistantReplayContext = {
   versionGroupId: string
 }
 
+type RollbackTurnState = {
+  userId: string
+  assistantId: string
+  streamId: string
+  userContent: string
+  changeSetIds: string[]
+}
+
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
 const FIRST_TOKEN_RETRY_TIMEOUT_MS = 35_000
 const AUTO_RETRY_MAX_PER_GROUP = 1
@@ -366,6 +374,7 @@ function App() {
   const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState | null>(null)
   const [editorContextMenu, setEditorContextMenu] = useState<EditorContextMenuState | null>(null)
   const chatMessagesRef = useRef<ChatItem[]>([])
+  const rollbackTurnStackRef = useRef<RollbackTurnState[]>([])
   const chatSessionIdRef = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   )
@@ -470,6 +479,16 @@ function App() {
   const canRegenerateLatest = !!latestCompletedAssistant && !isChatStreaming
   const autoToggleDisabled = !activeFile || plannerQueueRunning || (!autoLongWriteEnabled && isChatStreaming)
   const showStopAction = isChatStreaming || autoLongWriteRunning
+  const canRollbackLastTurn = useMemo(() => {
+    const stack = rollbackTurnStackRef.current
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      const turn = stack[i]
+      const hasUser = chatMessages.some((m) => m.id === turn.userId && m.role === 'user')
+      const hasAssistant = chatMessages.some((m) => m.id === turn.assistantId && m.role === 'assistant')
+      if (hasUser && hasAssistant) return true
+    }
+    return false
+  }, [chatMessages])
   useEffect(() => {
     if (!isChatStreaming) return
     const timer = window.setInterval(() => {
@@ -806,6 +825,7 @@ function App() {
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`
     chatSessionIdRef.current = nextSessionId
     setChatMessages([])
+    rollbackTurnStackRef.current = []
     setChatAutoScroll(true)
     void loadPlannerSession().catch((e) => {
       setPlannerLastRunError(e instanceof Error ? e.message : String(e))
@@ -1699,6 +1719,15 @@ function App() {
       streamAssistantIdRef.current.set(streamId, assistantId)
       streamStartedAtRef.current.set(streamId, startedAt)
       streamLastTokenAtRef.current.set(streamId, startedAt)
+      if (!options?.hideUserEcho && !options?.useExistingLastUser) {
+        rollbackTurnStackRef.current.push({
+          userId: user.id,
+          assistantId,
+          streamId,
+          userContent: user.content,
+          changeSetIds: [],
+        })
+      }
 
       if (options?.hideUserEcho) {
         if (options?.sourceMessages) {
@@ -1810,6 +1839,84 @@ function App() {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [activeStreamId])
+  const onRollbackLastTurn = useCallback(async () => {
+    const history = chatMessagesRef.current
+    const stack = rollbackTurnStackRef.current
+    let rollbackIndex = -1
+    let rollbackTurn: RollbackTurnState | null = null
+    let assistantMessage: ChatItem | null = null
+
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      const candidate = stack[i]
+      const user = history.find((m) => m.id === candidate.userId && m.role === 'user')
+      const assistant = history.find((m) => m.id === candidate.assistantId && m.role === 'assistant')
+      if (!user || !assistant) {
+        stack.splice(i, 1)
+        continue
+      }
+      rollbackIndex = i
+      rollbackTurn = candidate
+      assistantMessage = assistant
+      break
+    }
+
+    if (!rollbackTurn || !assistantMessage) return
+
+    if (isTauriApp()) {
+      manualCancelledStreamsRef.current.add(rollbackTurn.streamId)
+      try {
+        const { chatCancelStream } = await import('./tauriChat')
+        await chatCancelStream(rollbackTurn.streamId)
+      } catch {}
+    }
+
+    cleanupStreamRefs(streamRefs, rollbackTurn.streamId)
+    streamWaitersRef.current.delete(rollbackTurn.streamId)
+    streamFailuresRef.current.delete(rollbackTurn.streamId)
+    setStreamPhaseById((prev) => {
+      if (!(rollbackTurn.streamId in prev)) return prev
+      const next = { ...prev }
+      delete next[rollbackTurn.streamId]
+      return next
+    })
+
+    const rollbackIds = Array.from(new Set(rollbackTurn.changeSetIds)).reverse()
+    if (rollbackIds.length > 0) {
+      const removableCount = rollbackIds.filter((id) => diffContext.changeSets.has(id)).length
+      const shouldCloseDiffPanel = diffContext.changeSets.size <= removableCount
+      try {
+        for (const changeSetId of rollbackIds) {
+          await modificationService.rollbackChangeSet(changeSetId)
+        }
+        for (const changeSetId of rollbackIds) {
+          diffContext.removeChangeSet(changeSetId)
+          modificationService.deleteChangeSet(changeSetId)
+        }
+        setActiveDiffTab((prev) => (prev && rollbackIds.includes(prev) ? null : prev))
+        if (shouldCloseDiffPanel) {
+          setShowDiffPanel(false)
+        }
+        await refreshTree()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+        return
+      }
+    }
+
+    if (assistantMessage.versionGroupId) {
+      assistantVersionsRef.current.delete(assistantMessage.versionGroupId)
+      versionGroupAutoRetryCountRef.current.delete(assistantMessage.versionGroupId)
+    }
+    setChatMessages((prev) => prev.filter((m) => m.id !== rollbackTurn.userId && m.id !== rollbackTurn.assistantId))
+    setChatInput(rollbackTurn.userContent)
+    setChatAutoScroll(true)
+    if (rollbackIndex >= 0) {
+      stack.splice(rollbackIndex, 1)
+    }
+    window.setTimeout(() => {
+      chatInputRef.current?.focus()
+    }, 0)
+  }, [diffContext, refreshTree, streamRefs])
   const onToggleAutoLongWrite = useCallback(
     (next: boolean) => {
       setAutoLongWriteEnabled(next)
@@ -2837,6 +2944,14 @@ function App() {
       if (!streamId) return
       const imported = parseBackendChangeSets(p.changeSet)
       if (imported.length === 0) return
+      const rollbackTurn = rollbackTurnStackRef.current.find((turn) => turn.streamId === streamId)
+      if (rollbackTurn) {
+        const mergedIds = new Set(rollbackTurn.changeSetIds)
+        for (const item of imported) {
+          mergedIds.add(item.changeSet.id)
+        }
+        rollbackTurn.changeSetIds = Array.from(mergedIds)
+      }
 
       for (const item of imported) {
         modificationService.registerImportedChangeSet(item.changeSet, item.originalContent)
@@ -3506,6 +3621,8 @@ function App() {
                 chatInput={chatInput}
                 chatInputRef={chatInputRef}
                 onChatInputChange={setChatInput}
+                canRollbackLastTurn={canRollbackLastTurn}
+                onRollbackLastTurn={onRollbackLastTurn}
                 showStopAction={showStopAction}
                 canStop={!!activeStreamId || autoLongWriteRunning}
                 onStopChat={onStopChat}

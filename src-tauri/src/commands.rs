@@ -1496,7 +1496,6 @@ pub fn chat_generate_stream(
         let client = client.clone();
         let app = app.clone();
         let agent_temp = agent_temp;
-        let live = live_session_for_task.clone();
         async move {
           let mut system = String::new();
           for m in msgs.iter().filter(|m| m.role == "system") {
@@ -1509,7 +1508,6 @@ pub fn chat_generate_stream(
           
           match provider_cfg.kind {
             app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
-              emit_stream_status(&live.window, &live.stream_id, "responding");
               call_openai_unbounded(
                 &app,
                 &client,
@@ -1517,18 +1515,17 @@ pub fn chat_generate_stream(
                 &filtered,
                 system.as_str(),
                 agent_temp,
-                Some(&live),
+                None,
               ).await
             },
             app_settings::ProviderKind::Anthropic => {
-              emit_stream_status(&live.window, &live.stream_id, "responding");
               call_anthropic_unbounded(
                 &app,
                 &client,
                 &provider_cfg,
                 &filtered,
                 system.as_str(),
-                Some(&live),
+                None,
               ).await
             },
           }

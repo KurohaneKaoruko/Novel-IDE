@@ -97,33 +97,170 @@ function cleanMarkdown(raw: string): string {
   return text
 }
 
+function toMarkdownFromJsonValue(value: unknown, depth = 0, title?: string): string {
+  const heading = (level: number, text: string) => `${'#'.repeat(Math.min(6, Math.max(1, level)))} ${text}`
+  const lines: string[] = []
+  if (title) {
+    lines.push(heading(depth === 0 ? 2 : depth + 2, title))
+  }
+  if (value === null || value === undefined) {
+    lines.push('- （空）')
+    return lines.join('\n')
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    lines.push(`- ${String(value)}`)
+    return lines.join('\n')
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      lines.push('- （空列表）')
+      return lines.join('\n')
+    }
+    for (const item of value) {
+      if (item === null || item === undefined) {
+        lines.push('- （空）')
+        continue
+      }
+      if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+        lines.push(`- ${String(item)}`)
+        continue
+      }
+      if (isRecord(item) || Array.isArray(item)) {
+        lines.push('-')
+        const nested = toMarkdownFromJsonValue(item, depth + 1)
+        for (const nestedLine of nested.split('\n')) {
+          lines.push(`  ${nestedLine}`)
+        }
+        continue
+      }
+      lines.push(`- ${String(item)}`)
+    }
+    return lines.join('\n')
+  }
+  if (isRecord(value)) {
+    const entries = Object.entries(value)
+    if (entries.length === 0) {
+      lines.push('- （空对象）')
+      return lines.join('\n')
+    }
+    for (const [k, v] of entries) {
+      if (v === null || v === undefined) {
+        lines.push(`- **${k}**: （空）`)
+        continue
+      }
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        lines.push(`- **${k}**: ${String(v)}`)
+        continue
+      }
+      lines.push(heading(depth + 3, k))
+      lines.push(toMarkdownFromJsonValue(v, depth + 1))
+    }
+    return lines.join('\n')
+  }
+  lines.push(`- ${String(value)}`)
+  return lines.join('\n')
+}
+
+function normalizePlanBody(raw: string): string {
+  const cleaned = cleanMarkdown(raw).trim()
+  if (!cleaned) return ''
+  const maybeJson = (() => {
+    const text = cleaned.trim()
+    if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+      return text
+    }
+    return null
+  })()
+  if (!maybeJson) return cleaned
+  try {
+    const parsed: unknown = JSON.parse(maybeJson)
+    const converted = toMarkdownFromJsonValue(parsed)
+    const normalized = converted.trim()
+    if (!normalized) return cleaned
+    return `# 规划大纲（自动转换）\n\n${normalized}`
+  } catch {
+    return cleaned
+  }
+}
+
 function toJsonFrontMatter(meta: Record<string, unknown>, body: string): string {
   const safeBody = body.trim()
   return `---\n${JSON.stringify(meta, null, 2)}\n---\n\n${safeBody}\n`
 }
 
-function parseJsonFrontMatter(raw: string): { meta: Record<string, unknown>; body: string } {
+function toYamlFrontMatter(meta: Record<string, unknown>, body: string): string {
+  const safeBody = body.trim()
+  const encodeScalar = (value: unknown): string => {
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+    if (value === null || value === undefined) return 'null'
+    const text = String(value)
+    if (/^[A-Za-z0-9._-]+$/u.test(text)) return text
+    return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  }
+  const header = Object.entries(meta)
+    .map(([key, value]) => `${key}: ${encodeScalar(value)}`)
+    .join('\n')
+  return `---\n${header}\n---\n\n${safeBody}\n`
+}
+
+type FrontMatterParseResult = {
+  meta: Record<string, unknown>
+  body: string
+  format: 'none' | 'json' | 'yaml'
+}
+
+function parseFrontMatter(raw: string): FrontMatterParseResult {
   const normalized = raw.replace(/\r\n/g, '\n')
   if (!normalized.startsWith('---\n')) {
-    return { meta: {}, body: raw }
+    return { meta: {}, body: raw, format: 'none' }
   }
   const end = normalized.indexOf('\n---\n', 4)
   if (end < 0) {
-    return { meta: {}, body: raw }
+    return { meta: {}, body: raw, format: 'none' }
   }
   const headerRaw = normalized.slice(4, end).trim()
   const body = normalized.slice(end + 5).trim()
   if (!headerRaw) {
-    return { meta: {}, body }
+    return { meta: {}, body, format: 'none' }
   }
   try {
     const parsed: unknown = JSON.parse(headerRaw)
     if (isRecord(parsed)) {
-      return { meta: parsed, body }
+      return { meta: parsed, body, format: 'json' }
     }
-    return { meta: {}, body }
+    return { meta: {}, body, format: 'none' }
   } catch {
-    return { meta: {}, body }
+    const meta: Record<string, unknown> = {}
+    for (const line of headerRaw.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const idx = trimmed.indexOf(':')
+      if (idx <= 0) continue
+      const key = trimmed.slice(0, idx).trim()
+      if (!key) continue
+      const valueRaw = trimmed.slice(idx + 1).trim()
+      let value: unknown = valueRaw
+      const lower = valueRaw.toLowerCase()
+      if (/^-?\d+(?:\.\d+)?$/u.test(valueRaw)) {
+        value = Number(valueRaw)
+      } else if (lower === 'true') {
+        value = true
+      } else if (lower === 'false') {
+        value = false
+      } else if (lower === 'null') {
+        value = null
+      } else if (
+        (valueRaw.startsWith('"') && valueRaw.endsWith('"')) ||
+        (valueRaw.startsWith("'") && valueRaw.endsWith("'"))
+      ) {
+        value = valueRaw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      }
+      meta[key] = value
+    }
+    if (Object.keys(meta).length > 0) {
+      return { meta, body, format: 'yaml' }
+    }
+    return { meta: {}, body, format: 'none' }
   }
 }
 
@@ -203,7 +340,7 @@ function serializeTaskList(mode: WriterMode, tasks: NovelTask[], docId: string, 
 }
 
 function parseTaskListDocument(raw: string): RunQueueState {
-  const { meta } = parseJsonFrontMatter(raw)
+  const { meta } = parseFrontMatter(raw)
   const modeRaw = typeof meta.mode === 'string' ? meta.mode : ''
   const mode: WriterMode | null = modeRaw === 'normal' || modeRaw === 'plan' || modeRaw === 'spec' ? modeRaw : null
   const rawTasks = Array.isArray(meta.tasks) ? meta.tasks : []
@@ -226,7 +363,7 @@ function collectStoryFiles(entry: FsEntry | null, out: string[]): void {
 }
 
 function extractPlanSummary(planMarkdown: string): string {
-  const { body } = parseJsonFrontMatter(planMarkdown)
+  const { body } = parseFrontMatter(planMarkdown)
   const normalized = body
     .replace(/\r\n/g, '\n')
     .replace(/^#+\s+/gm, '')
@@ -445,9 +582,14 @@ export class NovelPlannerService {
   async ensureMasterPlan(mode: WriterMode, options: BuildPlanOptions): Promise<string> {
     const existing = await this.readMasterPlan()
     if (existing.trim()) {
-      const parsed = parseJsonFrontMatter(existing)
+      const parsed = parseFrontMatter(existing)
       const existingMode = typeof parsed.meta.mode === 'string' ? parsed.meta.mode : ''
       if (existingMode === mode) {
+        if (parsed.format === 'json') {
+          const migrated = toYamlFrontMatter(parsed.meta, parsed.body || existing)
+          await writeText(MASTER_PLAN_PATH, migrated)
+          return migrated
+        }
         return existing
       }
     }
@@ -465,7 +607,7 @@ export class NovelPlannerService {
       '- 必须包含：核心主题、主线冲突、三幕/多幕结构、角色弧线、伏笔清单、阶段目标。',
       mode === 'spec' ? '- 需要支持百万字长篇规划，分卷分阶段说明。' : '- 粗纲层级清晰，便于按阶段写作。',
       instruction ? `- 用户补充：${instruction}` : '',
-      '请直接输出 Markdown，不要输出 JSON，不要解释。',
+      '请直接输出 Markdown，不要输出 JSON（含代码块、对象、数组），不要解释。',
     ]
       .filter(Boolean)
       .join('\n')
@@ -473,7 +615,7 @@ export class NovelPlannerService {
     let body = ''
     try {
       const generated = await invoke<string>('ai_assistance_generate', { prompt })
-      body = cleanMarkdown(generated)
+      body = normalizePlanBody(generated)
     } catch {
       body = ''
     }
@@ -481,7 +623,7 @@ export class NovelPlannerService {
       body = buildFallbackPlan(mode, options.targetWords, options.chapterWordTarget, instruction)
     }
 
-    const markdown = toJsonFrontMatter(
+    const markdown = toYamlFrontMatter(
       {
         id: 'master-plan',
         mode,
@@ -653,7 +795,9 @@ export class NovelPlannerService {
     for (const path of deduped) {
       const raw = await this.readOptional(path)
       if (!raw.trim()) continue
-      snippets.push(`### ${path}\n${raw.trim().slice(0, MAX_CONTEXT_CHARS_PER_FILE)}`)
+      const parsed = parseFrontMatter(raw)
+      const content = (parsed.body.trim() || raw.trim()).slice(0, MAX_CONTEXT_CHARS_PER_FILE)
+      snippets.push(`### ${path}\n${content}`)
     }
     const summary = snippets.join('\n\n')
     return {

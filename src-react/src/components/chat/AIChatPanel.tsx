@@ -13,7 +13,6 @@ export type AIChatMessage = {
   versionIndex?: number
   versionCount?: number
 }
-
 export type AIChatOption = {
   id: string
   name: string
@@ -47,6 +46,8 @@ type AIChatPanelProps = {
   canStop: boolean
   onStopChat: () => void | Promise<unknown>
   onSendChat: () => void | Promise<unknown>
+  canRollbackLastTurn: boolean
+  onRollbackLastTurn: () => void | Promise<unknown>
   busy: boolean
   autoLongWriteRunning: boolean
   isChatStreaming: boolean
@@ -109,6 +110,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
     canStop,
     onStopChat,
     onSendChat,
+    canRollbackLastTurn,
+    onRollbackLastTurn,
     busy,
     autoLongWriteRunning,
     isChatStreaming,
@@ -125,6 +128,12 @@ export function AIChatPanel(props: AIChatPanelProps) {
   } = props
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !chatInput.trim()) {
+      if (!canRollbackLastTurn) return
+      e.preventDefault()
+      void onRollbackLastTurn()
+      return
+    }
     if (e.key === 'Escape' && showStopAction) {
       e.preventDefault()
       void onStopChat()
@@ -326,6 +335,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
             {!isChatStreaming && canRegenerateLatest ? (
               <button className="icon-button ai-candidates-btn" onClick={() => void onGenerateAssistantCandidates(latestCompletedAssistantId, 2)} title="生成额外候选回复">
                 <AppIcon name="add" size={13} />
+              </button>
+            ) : null}
+            {!showStopAction ? (
+              <button
+                className="icon-button ai-regenerate-btn"
+                disabled={!canRollbackLastTurn || busy || autoLongWriteRunning}
+                onClick={() => void onRollbackLastTurn()}
+                title="回退上一轮 AI 改动（Ctrl/Cmd+Z）"
+              >
+                {'回退'}
               </button>
             ) : null}
             {showStopAction ? (
