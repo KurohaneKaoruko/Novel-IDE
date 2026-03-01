@@ -12,6 +12,7 @@ mod secrets;
 mod state;
 mod modification_types;
 mod ai_response_parser;
+mod prompt_config;
 mod skills;
 mod mcp;
 mod book_split;

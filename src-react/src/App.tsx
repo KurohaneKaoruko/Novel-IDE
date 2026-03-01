@@ -3078,28 +3078,35 @@ function App() {
       if (!streamId) return
       const cancelled = p.cancelled === true
       const streamVersionGroupId = streamAssistantGroupRef.current.get(streamId)
+      const hasOutput = (streamOutputRef.current.get(streamId) ?? '').trim().length > 0
       if (cancelled) {
+        streamFailuresRef.current.add(streamId)
+      }
+      if (!cancelled && !hasOutput) {
         streamFailuresRef.current.add(streamId)
       }
       setChatMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && m.streamId === streamId
             ? (() => {
-                const groupId = m.versionGroupId ?? streamVersionGroupId ?? m.id
-                const mergedCancelled = cancelled || m.cancelled
-                const registered = upsertAssistantVersion(groupId, {
-                  content: m.content,
-                  changeSet: m.changeSet,
-                  cancelled: mergedCancelled,
-                  timestamp: Date.now(),
-                })
-                return {
-                  ...m,
-                  streaming: false,
-                  cancelled: mergedCancelled,
-                  versionGroupId: groupId,
-                  versionIndex: registered.index,
-                  versionCount: registered.count,
+              const groupId = m.versionGroupId ?? streamVersionGroupId ?? m.id
+              const mergedCancelled = cancelled || m.cancelled
+              const normalizedContent =
+                !mergedCancelled && !hasOutput && !m.content.trim() ? 'AI returned empty response. Please retry.' : m.content
+              const registered = upsertAssistantVersion(groupId, {
+                content: normalizedContent,
+                changeSet: m.changeSet,
+                cancelled: mergedCancelled,
+                timestamp: Date.now(),
+              })
+              return {
+                ...m,
+                content: normalizedContent,
+                streaming: false,
+                cancelled: mergedCancelled,
+                versionGroupId: groupId,
+                versionIndex: registered.index,
+                versionCount: registered.count,
                 }
               })()
             : m,
@@ -3122,7 +3129,6 @@ function App() {
         }
       }
       const finishedGroupId = streamAssistantGroupRef.current.get(streamId)
-      const hasOutput = (streamOutputRef.current.get(streamId) ?? '').trim().length > 0
       if (finishedGroupId && hasOutput) {
         versionGroupAutoRetryCountRef.current.delete(finishedGroupId)
       }
@@ -3196,9 +3202,13 @@ function App() {
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
-      const message = typeof p.message === 'string' ? p.message : 'AI call failed'
+      const rawMessage = typeof p.message === 'string' ? p.message : 'AI call failed'
       const stage = typeof p.stage === 'string' ? p.stage : ''
       const provider = typeof p.provider === 'string' ? p.provider : ''
+      const message =
+        stage === 'timeout'
+          ? 'AI request timed out and was stopped. Please retry with a smaller single task.'
+          : rawMessage
       const extra = [provider ? `provider=${provider}` : '', stage ? `stage=${stage}` : ''].filter(Boolean).join(' ')
       setChatMessages((prev) =>
         prev.map((m) =>

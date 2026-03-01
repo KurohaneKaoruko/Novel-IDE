@@ -1,4 +1,5 @@
 use crate::app_data;
+use crate::prompt_config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -105,8 +106,15 @@ fn custom_agents_from_input(agents: &[Agent], builtins: &[Agent]) -> Vec<Agent> 
   out
 }
 
+fn append_builtin_workflow_prompt(base: &str, category: &str) -> String {
+  let appendix = prompt_config::agent_prompts()
+    .builtin_workflow_appendix
+    .replace("__CATEGORY__", category.trim());
+  format!("{}\n\n{}", base.trim_end(), appendix.trim())
+}
+
 pub fn default_agents() -> Vec<Agent> {
-  vec![
+  let mut agents = vec![
     // ==================== 玄幻 ====================
     Agent {
       id: "fantasy".to_string(),
@@ -470,7 +478,11 @@ pub fn default_agents() -> Vec<Agent> {
       max_tokens: 32000,
       chapter_word_target: 3000,
     },
-  ]
+  ];
+  for agent in &mut agents {
+    agent.system_prompt = append_builtin_workflow_prompt(&agent.system_prompt, &agent.category);
+  }
+  agents
 }
 
 fn agents_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

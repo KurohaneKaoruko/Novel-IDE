@@ -1,6 +1,7 @@
 use crate::ai_types::ChatMessage;
 use crate::app_settings::AiEditApplyMode;
 use crate::commands;
+use crate::prompt_config;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -225,9 +226,7 @@ impl AgentRuntime {
       let rel = commands::validate_relative_path(fixed.as_str())?;
       let target = ctx.workspace_root.join(rel);
       if let Some(parent) = target.parent() {
-        if !parent.exists() {
-          return Err("parent directory does not exist; create it first".to_string());
-        }
+        fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
       }
       if !target.exists() {
         fs::write(&target, "").map_err(|e| format!("create file failed: {e}"))?;
@@ -273,9 +272,7 @@ impl AgentRuntime {
       let from_abs = ctx.workspace_root.join(from_rel);
       let to_abs = ctx.workspace_root.join(to_rel);
       if let Some(parent) = to_abs.parent() {
-        if !parent.exists() {
-          return Err("parent directory does not exist; create it first".to_string());
-        }
+        fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
       }
       fs::rename(from_abs, to_abs).map_err(|e| format!("rename failed: {e}"))?;
       Ok(serde_json::json!({ "ok": true }))
@@ -293,13 +290,11 @@ impl AgentRuntime {
       if path.trim().is_empty() {
         return Err("empty path".to_string());
       }
-      // 清理多余的空行：只保留单个换行，连续空行压缩为一个
       let cleaned_text = text
         .lines()
         .map(|line| line.trim_end())
         .collect::<Vec<_>>()
         .join("\n");
-      // 移除连续超过2个换行符的情况（压缩为双换行）
       let cleaned_text = cleaned_text
         .replace("\n\n\n", "\n\n");
       let fixed = ensure_default_ext(path);
@@ -315,9 +310,7 @@ impl AgentRuntime {
         commands::validate_outline(&existing, &cleaned_text)?;
       }
       if let Some(parent) = target.parent() {
-        if !parent.exists() {
-          return Err("parent directory does not exist; create it first".to_string());
-        }
+        fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
       }
       fs::write(&target, cleaned_text).map_err(|e| format!("write failed: {e}"))?;
       if rel_norm.starts_with("concept/") && rel_norm.to_lowercase().ends_with(".md") {
@@ -350,27 +343,24 @@ impl AgentRuntime {
     let mut perf = AgentPerf::default();
     let tool_list = self.tools();
     let memory_text = self.memory.render(50);
+    let prompts = prompt_config::agent_prompts();
     let mode_instruction = match edit_apply_mode {
-      AiEditApplyMode::AutoApply => {
-        "编辑模式：自动应用。需要修改文件时，优先直接调用 fs_write_text / fs_create_file / fs_rename_entry 等文件工具并完成落盘；除非用户明确要求审阅，否则不要输出 <file_edit>。"
-      }
-      AiEditApplyMode::Review => {
-        "编辑模式：审阅后应用。需要修改文件时，使用 <file_edit> 格式输出补丁，供用户在 Diff 面板审阅并决定是否应用。"
-      }
+      AiEditApplyMode::AutoApply => prompts.mode_auto_apply.trim(),
+      AiEditApplyMode::Review => prompts.mode_review.trim(),
     };
     let mut messages: Vec<ChatMessage> = Vec::new();
-    let react_prompt = format!(
-      "{sys}\n\n可用工具：{tools}\n\n当你需要调用工具时，严格使用三行格式：\\nACTION: tool_name\\nINPUT: {{...json...}}\\n然后等待 OBSERVATION。若无需工具，直接给出最终回答。\n\n文件系统规则：\n1) 所有 path 必须是相对路径，禁止绝对路径与 ..。\n2) 写文件不会自动创建父目录；若目录不存在，先用 fs_exists 检查，再用 fs_create_dir 创建。\n3) 默认扩展名：stories/ 下默认 .txt；concept/ 与 outline/ 下默认 .md；如果你需要其它格式，请显式写出扩展名。\n\n文件编辑格式（用于多行编辑）：\n当你需要修改文件的特定行时，使用以下 XML 格式：\n<file_edit path=\"相对路径\">\n  <replace lines=\"起始行-结束行\">新内容</replace>\n  <insert at=\"行号\">插入内容</insert>\n  <delete lines=\"起始行-结束行\" />\n</file_edit>\n\n示例：\n<file_edit path=\"stories/chapter-001.txt\">\n  <replace lines=\"10-15\">\n  这是替换后的新内容\n  可以是多行\n  </replace>\n</file_edit>\n\n使用此格式时，用户将在 Diff 视图中看到修改对比，并可以选择接受或拒绝每个修改。",
-      sys = agent_system_prompt.trim(),
-      tools = tool_list.join(", ")
-    );
+    let tool_list_text = tool_list.join(", ");
+    let react_prompt = prompts
+      .runtime_prompt_template
+      .replace("{{SYS}}", agent_system_prompt.trim())
+      .replace("{{TOOLS}}", tool_list_text.as_str());
     let react_prompt = format!("{react_prompt}\n\n{mode_instruction}");
     messages.push(ChatMessage {
       role: "system".to_string(),
       content: if memory_text.is_empty() {
         react_prompt
       } else {
-        format!("{react_prompt}\n\n长期记忆：\n{memory_text}")
+        format!("{react_prompt}\n\nLong-term memory:\n{memory_text}")
       },
     });
     messages.extend(base_messages);
@@ -386,7 +376,7 @@ impl AgentRuntime {
           .unwrap_or_default();
         if parse_tool_call(&last).is_some() {
           return Ok((
-            "已多次执行工具调用，但模型未输出最终回答。你可以让 AI 用一句话总结刚才的改动，或直接查看文件树确认结果。".to_string(),
+            "Model repeatedly called tools but did not produce a final answer. Ask it to summarize changes in one sentence, or inspect the file tree to verify results.".to_string(),
             perf,
           ));
         }

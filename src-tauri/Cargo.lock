@@ -2641,6 +2641,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tokio",
+ "toml 0.8.2",
  "uuid 1.20.0",
  "windows 0.58.0",
 ]

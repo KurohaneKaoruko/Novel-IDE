@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { createDir, readText, writeText, type FsEntry } from '../tauri'
+import plannerPrompts from '../config/plannerPrompts.json'
 
 export type WriterMode = 'normal' | 'plan' | 'spec'
 export type TaskStatus = 'todo' | 'running' | 'blocked' | 'done' | 'retry'
@@ -71,6 +72,14 @@ const SESSION_STATE_PATH = '.novel/state/session-state.json'
 const CONTINUITY_INDEX_PATH = '.novel/state/continuity-index.md'
 
 const MAX_CONTEXT_CHARS_PER_FILE = 2200
+const PROMPT_CONFIG = plannerPrompts
+
+function applyTemplate(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{\{([A-Z0-9_]+)\}\}/gu, (_, key: string) => {
+    const value = vars[key]
+    return value === undefined || value === null ? '' : String(value)
+  })
+}
 
 function utcNow(): string {
   return new Date().toISOString()
@@ -414,40 +423,28 @@ function buildFallbackPlan(mode: WriterMode, targetWords: number, chapterWordTar
 function makeTaskPrompt(mode: WriterMode, task: NovelTask, chapterNumber: number): string {
   const scope = task.scope
   const checks = task.acceptance_checks.map((v) => `- ${v}`).join('\n')
-  const arcTargets = task.arc_targets.length > 0 ? task.arc_targets.join('，') : '主线推进'
-  const foreshadowRefs = task.foreshadow_refs.length > 0 ? task.foreshadow_refs.join('，') : '无'
+  const arcTargets = task.arc_targets.length > 0 ? task.arc_targets.join(', ') : 'mainline progression'
+  const foreshadowRefs = task.foreshadow_refs.length > 0 ? task.foreshadow_refs.join(', ') : 'none'
+  const taskConfig = PROMPT_CONFIG.taskPrompt
   const modeInstruction =
     mode === 'spec'
-      ? '你在 Spec 模式，必须严格按照任务约束写作，并主动修改目标文件。'
-      : '你在 Plan 模式，按粗纲推进剧情，保持节奏和连贯性。'
-  return [
-    `${modeInstruction}`,
-    '',
-    `任务ID：${task.id}`,
-    `任务标题：${task.title}`,
-    `目标文件：${scope}`,
-    `卷号：${task.volume}，章节序号：${task.chapter_index}`,
-    `目标字数：${task.target_words}`,
-    `弧线目标：${arcTargets}`,
-    `伏笔引用：${foreshadowRefs}`,
-    `时间窗口：${task.timeline_window}`,
-    '',
-    '必须执行：',
-    `1. 如文件不存在请先创建，再写入完整章节文本（章节号建议使用第${chapterNumber}章）。`,
-    '2. 使用工具主动修改文件，不要只给建议。',
-    '3. 保持与既有设定一致，避免时间线与角色动机冲突。',
-    '4. 在文本结尾加入下一章钩子。',
-    '',
-    '质量门槛（平衡）：',
-    checks || '- 角色动机一致\n- 时间线连续\n- 与上一章衔接自然',
-    '',
-    '完成后请只做两件事：',
-    '1. 输出一句“TASK_DONE: <task_id>”。',
-    '2. 用 2-3 句总结本章推进点。',
-    '',
-    '任务详细说明：',
-    task.task_prompt || task.title,
-  ].join('\n')
+      ? taskConfig.modeInstructionSpec
+      : taskConfig.modeInstructionPlan
+  const body = applyTemplate(taskConfig.template, {
+    TASK_ID: task.id,
+    TASK_TITLE: task.title,
+    SCOPE: scope,
+    VOLUME: task.volume,
+    CHAPTER_INDEX: task.chapter_index,
+    TARGET_WORDS: task.target_words,
+    ARC_TARGETS: arcTargets,
+    FORESHADOW_REFS: foreshadowRefs,
+    TIMELINE_WINDOW: task.timeline_window,
+    CHAPTER_NUMBER: chapterNumber,
+    CHECKS: checks || taskConfig.defaultChecks,
+    TASK_DETAILS: task.task_prompt || task.title,
+  })
+  return [modeInstruction, '', body].join('\n')
 }
 
 export class NovelPlannerService {
@@ -599,18 +596,18 @@ export class NovelPlannerService {
   async generateMasterPlan(mode: WriterMode, options: BuildPlanOptions): Promise<string> {
     await this.ensurePlannerWorkspace()
     const instruction = (options.instruction || '').trim()
-    const prompt = [
-      `你是小说总编剧。请输出一份可执行的${mode === 'spec' ? '超详细' : '阶段化'}小说设计文档（Markdown）。`,
-      '要求：',
-      `- 总字数目标：${options.targetWords}`,
-      `- 章节目标字数：${options.chapterWordTarget}`,
-      '- 必须包含：核心主题、主线冲突、三幕/多幕结构、角色弧线、伏笔清单、阶段目标。',
-      mode === 'spec' ? '- 需要支持百万字长篇规划，分卷分阶段说明。' : '- 粗纲层级清晰，便于按阶段写作。',
-      instruction ? `- 用户补充：${instruction}` : '',
-      '请直接输出 Markdown，不要输出 JSON（含代码块、对象、数组），不要解释。',
-    ]
-      .filter(Boolean)
-      .join('\n')
+    const modeLabel = mode === 'spec' ? 'Spec' : 'Plan'
+    const planningDepth =
+      mode === 'spec'
+        ? PROMPT_CONFIG.masterPlan.depthSpec
+        : PROMPT_CONFIG.masterPlan.depthPlan
+    const prompt = applyTemplate(PROMPT_CONFIG.masterPlan.template, {
+      MODE_LABEL: modeLabel,
+      TARGET_WORDS: options.targetWords,
+      CHAPTER_WORD_TARGET: options.chapterWordTarget,
+      PLANNING_DEPTH: planningDepth,
+      EXTRA_INSTRUCTION: instruction ? `- Extra user instruction: ${instruction}` : '',
+    })
 
     let body = ''
     try {
@@ -809,42 +806,40 @@ export class NovelPlannerService {
   }
 
   buildModePrompt(mode: WriterMode, userInput: string, context: PlannerContextPack, activePath: string | null): string {
+    const modeConfig = PROMPT_CONFIG.modePrompt
     const modeHeader =
       mode === 'normal'
-        ? '写作模式：Normal（无大纲）'
+        ? modeConfig.normalHeader
         : mode === 'plan'
-          ? '写作模式：Plan（粗纲驱动）'
-          : '写作模式：Spec（粗纲 + 细纲任务驱动）'
-    const constraints = [
-      '- 必须保持剧情逻辑闭环与人物动机一致。',
-      '- 优先沿用上下文既有设定，避免自相矛盾。',
-      '- 需要修改文件时主动执行，不要只提示。',
-    ]
+          ? modeConfig.planHeader
+          : modeConfig.specHeader
+    const constraints = [...modeConfig.constraints]
     if (activePath) {
-      constraints.push(`- 当前编辑目标：${activePath}`)
+      constraints.push(`${modeConfig.activeTargetPrefix}${activePath}`)
     }
     const contextBlock = context.summary
-      ? `\n\n[上下文包]\n${context.summary}\n`
-      : '\n\n[上下文包]\n（暂无可读上下文）\n'
+      ? `\n\n${modeConfig.contextTitle}\n${context.summary}\n`
+      : `\n\n${modeConfig.contextTitle}\n${modeConfig.contextEmpty}\n`
     return [
       modeHeader,
       ...constraints,
       contextBlock,
-      '[用户请求]',
+      modeConfig.userRequestTitle,
       userInput.trim(),
     ].join('\n')
   }
 
   buildTaskExecutionPrompt(mode: WriterMode, task: NovelTask, context: PlannerContextPack, userInstruction: string): string {
+    const taskExecutionConfig = PROMPT_CONFIG.taskExecutionPrompt
     const base = makeTaskPrompt(mode, task, Number(task.id.replace(/\D+/g, '')) || 1)
     const extraInstruction = userInstruction.trim()
-      ? `\n附加要求：${userInstruction.trim()}`
+      ? `\n${taskExecutionConfig.additionalInstructionPrefix}${userInstruction.trim()}`
       : ''
     return [
       base,
       '',
-      '上下文参考：',
-      context.summary || '（暂无可用上下文）',
+      taskExecutionConfig.contextReferencesTitle,
+      context.summary || taskExecutionConfig.contextEmpty,
       extraInstruction,
     ].join('\n')
   }

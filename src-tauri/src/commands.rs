@@ -305,6 +305,9 @@ pub fn init_novel(state: State<'_, AppState>) -> Result<(), String> {
     novel_dir.join("plans"),
     novel_dir.join("tasks"),
     novel_dir.join("state"),
+    root.join("stories"),
+    root.join("concept"),
+    root.join("outline"),
   ];
 
   for d in dirs {
@@ -1654,8 +1657,10 @@ pub fn chat_generate_stream(
     let mut runtime = agent_system::AgentRuntime::new(workspace_root);
     let start = Instant::now();
     emit_stream_status(&window_for_task, &stream_id_for_task, "thinking");
-    let (mut response, perf) = match runtime
-      .run_react(messages, agent_system.clone(), ai_edit_apply_mode, |msgs| {
+    let react_timeout = Duration::from_secs(240);
+    let run_result = tokio::time::timeout(
+      react_timeout,
+      runtime.run_react(messages, agent_system.clone(), ai_edit_apply_mode, |msgs| {
         let provider_cfg = current_provider.clone();
         let client = client.clone();
         let app = app.clone();
@@ -1694,27 +1699,42 @@ pub fn chat_generate_stream(
             },
           }
         }
-      })
-      .await
-    {
-      Ok(v) => v,
-      Err(e) => {
-        eprintln!("ai_error provider={} err={}", current_provider.id, e);
-        let stage = if e.contains("api key")
-          || e.contains("keyring")
-          || e.contains("request failed")
-          || e.contains("decode failed")
-          || e.contains("http ")
-        {
-          "provider"
-        } else {
-          "agent"
-        };
+      }),
+    )
+    .await;
+    let (mut response, perf) = match run_result {
+      Ok(v) => match v {
+        Ok(v) => v,
+        Err(e) => {
+          eprintln!("ai_error provider={} err={}", current_provider.id, e);
+          let stage = if e.contains("api key")
+            || e.contains("keyring")
+            || e.contains("request failed")
+            || e.contains("decode failed")
+            || e.contains("http ")
+          {
+            "provider"
+          } else {
+            "agent"
+          };
+          let payload = serde_json::json!({
+            "streamId": stream_id_for_task,
+            "provider": current_provider.id,
+            "stage": stage,
+            "message": e
+          });
+          let _ = window_for_task.emit("ai_error", payload);
+          clear_stream_task(&app_for_task, &stream_id_for_task);
+          emit_stream_done(&window_for_task, &stream_id_for_task, false);
+          return;
+        }
+      },
+      Err(_) => {
         let payload = serde_json::json!({
           "streamId": stream_id_for_task,
           "provider": current_provider.id,
-          "stage": stage,
-          "message": e
+          "stage": "timeout",
+          "message": format!("AI runtime timed out after {} seconds", react_timeout.as_secs())
         });
         let _ = window_for_task.emit("ai_error", payload);
         clear_stream_task(&app_for_task, &stream_id_for_task);

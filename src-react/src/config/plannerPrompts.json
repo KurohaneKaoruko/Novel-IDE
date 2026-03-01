@@ -1,0 +1,32 @@
+{
+  "masterPlan": {
+    "template": "You are the chief architect for a novel IDE. Produce a {{MODE_LABEL}} master plan in Markdown only.\n\nFollow a Kiro-like planning standard:\n1. Clarify target and constraints.\n2. Build a coherent narrative architecture.\n3. Define executable progression milestones.\n4. Make the result directly usable by task decomposition.\n\nHard requirements:\n- Total target words: {{TARGET_WORDS}}\n- Chapter target words: {{CHAPTER_WORD_TARGET}}\n- Depth guidance: {{PLANNING_DEPTH}}\n- Must include: core theme, premise, conflict ladder, act/phase structure, character arcs, foreshadow setup/payoff map, and pacing checkpoints.\n- Must include risk controls: continuity risks, escalation risks, and mitigation strategy.\n- Do not output JSON or code blocks. Output plain Markdown only.\n{{EXTRA_INSTRUCTION}}\n\nRecommended section order:\n1) Project Objective\n2) Story Engine (theme/premise/conflict)\n3) Structure (3-act or multi-phase)\n4) Character Arc Matrix\n5) Foreshadow Ledger (setup -> trigger -> payoff)\n6) Milestone Roadmap (phase goals and success criteria)\n7) Continuity Guardrails\n8) Spec Handoff Notes (how to split into tasks)",
+    "depthPlan": "Design a staged high-level blueprint that can later be decomposed into executable tasks.",
+    "depthSpec": "Design for long-form execution: multi-volume progression, dependencies, and foreshadow lifecycle."
+  },
+  "taskPrompt": {
+    "modeInstructionPlan": "You are in Plan mode. Advance story by phases while preserving continuity and pacing.",
+    "modeInstructionSpec": "You are in Spec mode. Follow task constraints strictly and update target files directly.",
+    "template": "Kiro-style execution checklist:\n1. Discover: read relevant context and existing chapter files first.\n2. Decide: confirm this task is the next executable step.\n3. Execute: write/overwrite the target chapter file with complete content.\n4. Verify: ensure continuity, motivation, timeline, and foreshadow handling.\n5. Report: return TASK_DONE and a short progress summary.\n\nTask ID: {{TASK_ID}}\nTask Title: {{TASK_TITLE}}\nTarget File: {{SCOPE}}\nVolume: {{VOLUME}}, Chapter Index: {{CHAPTER_INDEX}}\nTarget Words: {{TARGET_WORDS}}\nArc Targets: {{ARC_TARGETS}}\nForeshadow Refs: {{FORESHADOW_REFS}}\nTimeline Window: {{TIMELINE_WINDOW}}\n\nRequired actions:\n1. If target file is missing, create it, then write a full chapter draft (chapter hint: {{CHAPTER_NUMBER}}).\n2. Do not stop at suggestions. You must update files with tool calls.\n3. Keep continuity with previous chapters and established concept files.\n4. End with a meaningful hook for the next chapter.\n\nAcceptance checks:\n{{CHECKS}}\n\nAfter completion, output exactly:\n1. TASK_DONE: <task_id>\n2. A 2-3 sentence progress summary.\n\nTask details:\n{{TASK_DETAILS}}",
+    "defaultChecks": "- Character motivation is consistent\n- Timeline is coherent\n- Transition from prior chapter is natural"
+  },
+  "modePrompt": {
+    "normalHeader": "Writer Mode: Normal (direct writing)",
+    "planHeader": "Writer Mode: Plan (high-level outline driven)",
+    "specHeader": "Writer Mode: Spec (plan + task-queue driven)",
+    "constraints": [
+      "- Preserve continuity and character motivation consistency.",
+      "- Reuse existing project facts before introducing new lore.",
+      "- When edits are needed, execute file updates instead of only suggesting changes."
+    ],
+    "activeTargetPrefix": "- Active editing target: ",
+    "contextTitle": "[Context Pack]",
+    "contextEmpty": "(no readable context loaded)",
+    "userRequestTitle": "[User Request]"
+  },
+  "taskExecutionPrompt": {
+    "additionalInstructionPrefix": "Additional user instruction: ",
+    "contextReferencesTitle": "Context references:",
+    "contextEmpty": "(no additional context available)"
+  }
+}
