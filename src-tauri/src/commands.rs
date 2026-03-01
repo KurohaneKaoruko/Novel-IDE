@@ -913,9 +913,35 @@ pub fn rename_entry(state: State<'_, AppState>, from_relative_path: String, to_r
   fs::rename(from, to).map_err(|e| format!("rename failed: {e}"))
 }
 
+fn normalize_active_agent_id(app: &AppHandle, settings: &mut app_settings::AppSettings) {
+  let agents_list = agents::load(app).unwrap_or_else(|_| agents::default_agents());
+  if agents_list.is_empty() {
+    settings.active_agent_id.clear();
+    return;
+  }
+  let current = settings.active_agent_id.trim();
+  let exists = !current.is_empty() && agents_list.iter().any(|a| a.id == current);
+  if exists {
+    settings.active_agent_id = current.to_string();
+    return;
+  }
+  let fallback = agents_list
+    .iter()
+    .find(|a| a.id == "general")
+    .or_else(|| agents_list.first())
+    .map(|a| a.id.clone())
+    .unwrap_or_default();
+  settings.active_agent_id = fallback;
+}
+
 #[tauri::command]
 pub fn get_app_settings(app: AppHandle) -> Result<app_settings::AppSettings, String> {
   let mut s = app_settings::load(&app)?;
+  let prev_agent_id = s.active_agent_id.clone();
+  normalize_active_agent_id(&app, &mut s);
+  if s.active_agent_id != prev_agent_id {
+    let _ = app_settings::save(&app, &s);
+  }
   // Clear keys for display security
   for p in &mut s.providers {
     p.api_key.clear();
@@ -933,6 +959,7 @@ pub fn set_app_settings(app: AppHandle, settings: app_settings::AppSettings) -> 
   if s.active_provider_id.trim().is_empty() || !s.providers.iter().any(|p| p.id == s.active_provider_id) {
     s.active_provider_id = s.providers[0].id.clone();
   }
+  normalize_active_agent_id(&app, &mut s);
 
   // Save API keys to secrets if present
   for p in &mut s.providers {
@@ -992,14 +1019,14 @@ pub fn set_agents(app: AppHandle, agents_list: Vec<agents::Agent>) -> Result<(),
 
 #[tauri::command]
 pub fn export_agents(app: AppHandle) -> Result<String, String> {
-  let list = agents::load(&app)?;
+  let list = agents::load_custom(&app)?;
   serde_json::to_string_pretty(&list).map_err(|e| format!("export agents failed: {e}"))
 }
 
 #[tauri::command]
 pub fn import_agents(app: AppHandle, json: String) -> Result<(), String> {
   let list: Vec<agents::Agent> = serde_json::from_str(&json).map_err(|e| format!("import agents failed: {e}"))?;
-  agents::save(&app, &list)
+  agents::save_custom(&app, &list)
 }
 
 #[tauri::command]
@@ -1427,7 +1454,11 @@ pub fn chat_generate_stream(
     let effective_use_markdown = use_markdown || settings.output.use_markdown;
     let agents_list = agents::load(&app).unwrap_or_else(|_| agents::default_agents());
     let effective_agent_id = agent_id.unwrap_or_else(|| settings.active_agent_id.clone());
-    let agent = agents_list.iter().find(|a| a.id == effective_agent_id);
+    let agent = agents_list
+      .iter()
+      .find(|a| a.id == effective_agent_id)
+      .or_else(|| agents_list.iter().find(|a| a.id == "general"))
+      .or_else(|| agents_list.first());
     let agent_system = agent.map(|a| a.system_prompt.clone()).unwrap_or_default();
     let agent_temp = agent.map(|a| a.temperature);
     let ai_edit_apply_mode = settings.ai_edit_apply_mode.clone();

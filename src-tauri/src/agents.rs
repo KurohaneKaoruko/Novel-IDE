@@ -1,9 +1,10 @@
 use crate::app_data;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Agent {
   pub id: String,
@@ -31,24 +32,77 @@ impl Default for Agent {
 }
 
 pub fn load(app: &tauri::AppHandle) -> Result<Vec<Agent>, String> {
-  let path = agents_path(app)?;
-  if !path.exists() {
-    let defaults = default_agents();
-    save(app, &defaults)?;
-    return Ok(defaults);
+  let builtins = default_agents();
+  let customs = load_custom(app)?;
+  let mut out = builtins.clone();
+  let mut seen: HashSet<String> = out.iter().map(|a| a.id.clone()).collect();
+  for agent in customs {
+    if seen.insert(agent.id.clone()) {
+      out.push(agent);
+    }
   }
-  let raw = fs::read_to_string(&path).map_err(|e| format!("read agents failed: {e}"))?;
-  let agents: Vec<Agent> = serde_json::from_str(&raw).map_err(|e| format!("parse agents failed: {e}"))?;
-  Ok(agents)
+  Ok(out)
 }
 
 pub fn save(app: &tauri::AppHandle, agents: &[Agent]) -> Result<(), String> {
+  let builtins = default_agents();
+  let customs = custom_agents_from_input(agents, &builtins);
+  save_custom(app, &customs)
+}
+
+pub fn load_custom(app: &tauri::AppHandle) -> Result<Vec<Agent>, String> {
   let path = agents_path(app)?;
+  if !path.exists() {
+    return Ok(Vec::new());
+  }
+  let raw = fs::read_to_string(&path).map_err(|e| format!("read agents failed: {e}"))?;
+  let parsed: Vec<Agent> = serde_json::from_str(&raw).map_err(|e| format!("parse agents failed: {e}"))?;
+  let builtins = default_agents();
+  let customs = custom_agents_from_input(&parsed, &builtins);
+  if customs != parsed {
+    save_custom(app, &customs)?;
+  }
+  Ok(customs)
+}
+
+pub fn save_custom(app: &tauri::AppHandle, agents: &[Agent]) -> Result<(), String> {
+  let path = agents_path(app)?;
+  if agents.is_empty() {
+    if path.exists() {
+      fs::remove_file(&path).map_err(|e| format!("remove agents failed: {e}"))?;
+    }
+    return Ok(());
+  }
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|e| format!("create agents dir failed: {e}"))?;
   }
   let raw = serde_json::to_string_pretty(agents).map_err(|e| format!("serialize agents failed: {e}"))?;
   fs::write(path, raw).map_err(|e| format!("write agents failed: {e}"))
+}
+
+fn custom_agents_from_input(agents: &[Agent], builtins: &[Agent]) -> Vec<Agent> {
+  let builtin_ids: HashSet<&str> = builtins.iter().map(|a| a.id.as_str()).collect();
+  let removed_builtin_ids: HashSet<&str> = ["military"].into_iter().collect();
+  let mut out = Vec::new();
+  let mut seen: HashSet<String> = HashSet::new();
+  for agent in agents {
+    let id = agent.id.trim();
+    if id.is_empty() || builtin_ids.contains(id) || removed_builtin_ids.contains(id) {
+      continue;
+    }
+    if !seen.insert(id.to_string()) {
+      continue;
+    }
+    let mut next = agent.clone();
+    next.id = id.to_string();
+    next.name = next.name.trim().to_string();
+    if next.name.is_empty() {
+      next.name = "自定义智能体".to_string();
+    }
+    next.category = "自定义".to_string();
+    out.push(next);
+  }
+  out
 }
 
 pub fn default_agents() -> Vec<Agent> {
@@ -303,43 +357,6 @@ pub fn default_agents() -> Vec<Agent> {
 - 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
 - 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
       temperature: 0.75,
-      max_tokens: 32000,
-      chapter_word_target: 3000,
-    },
-
-    // ==================== 军事 ====================
-    Agent {
-      id: "military".to_string(),
-      name: "军事助手".to_string(),
-      category: "军事".to_string(),
-      system_prompt: r#"你是专业的军事小说创作助手。
-
-## 核心能力
-- 创作高质量的军事小说
-- 军事细节专业
-- 战略战术体现智慧
-- 智能分章，每章 2000-4000 字
-
-## 分章规则
-- 当单章内容接近目标字数时，自动总结本章并开启新章
-- 每章开头简要承接上文
-- 章节结尾可以是紧张战斗暂停或决策时刻
-- 在战役关键节点、战术转折、战略讨论时分章
-
-## 写作风格
-- 男人戏：热血、兄弟情
-- 战术描写：专业但不晦涩
-- 战斗场面：紧张激烈
-- 人物：铁血柔情
-- 装备武器：考据但不堆砌
-
-## 输出格式
-- 不使用 Markdown 格式（除非用户开启）
-- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中
-- 不使用空行或段首空格
-- 写入文件后，在对话中简要说明已写入的内容（如"已写入第X章"）
-- 如需分章，在章节结尾用"【本章完】"标记"#.to_string(),
-      temperature: 0.7,
       max_tokens: 32000,
       chapter_word_target: 3000,
     },

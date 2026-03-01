@@ -49,6 +49,11 @@ type BuildTasksOptions = {
   chapterWordTarget: number
 }
 
+export type RunQueueState = {
+  mode: WriterMode | null
+  tasks: NovelTask[]
+}
+
 export type PlannerContextPack = {
   mode: WriterMode
   activePath: string | null
@@ -197,10 +202,13 @@ function serializeTaskList(mode: WriterMode, tasks: NovelTask[], docId: string, 
   return toJsonFrontMatter(meta, lines.join('\n'))
 }
 
-function parseTaskList(raw: string): NovelTask[] {
+function parseTaskListDocument(raw: string): RunQueueState {
   const { meta } = parseJsonFrontMatter(raw)
+  const modeRaw = typeof meta.mode === 'string' ? meta.mode : ''
+  const mode: WriterMode | null = modeRaw === 'normal' || modeRaw === 'plan' || modeRaw === 'spec' ? modeRaw : null
   const rawTasks = Array.isArray(meta.tasks) ? meta.tasks : []
-  return rawTasks.map(sanitizeTask).filter((v): v is NovelTask => v !== null)
+  const tasks = rawTasks.map(sanitizeTask).filter((v): v is NovelTask => v !== null)
+  return { mode, tasks }
 }
 
 function collectStoryFiles(entry: FsEntry | null, out: string[]): void {
@@ -571,10 +579,15 @@ export class NovelPlannerService {
   }
 
   async loadRunQueue(): Promise<NovelTask[]> {
+    const state = await this.loadRunQueueState()
+    return state.tasks
+  }
+
+  async loadRunQueueState(): Promise<RunQueueState> {
     await this.ensurePlannerWorkspace()
     const raw = await this.readOptional(RUN_QUEUE_PATH)
-    if (!raw.trim()) return []
-    return parseTaskList(raw)
+    if (!raw.trim()) return { mode: null, tasks: [] }
+    return parseTaskListDocument(raw)
   }
 
   async saveRunQueue(mode: WriterMode, tasks: NovelTask[]): Promise<void> {

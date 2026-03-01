@@ -375,6 +375,7 @@ function App() {
 
   // Planner / Writer Mode State
   const [writerMode, setWriterMode] = useState<WriterMode>('normal')
+  const writerModeRef = useRef<WriterMode>('normal')
   const [plannerState, setPlannerState] = useState<SessionPlannerState | null>(null)
   const [plannerTasks, setPlannerTasks] = useState<NovelTask[]>([])
   const [plannerBusy, setPlannerBusy] = useState(false)
@@ -582,6 +583,10 @@ function App() {
   }, [chatMessages])
 
   useEffect(() => {
+    writerModeRef.current = writerMode
+  }, [writerMode])
+
+  useEffect(() => {
     if (!chatAutoScroll) return
     const timer = window.setTimeout(() => {
       scrollChatToBottom()
@@ -770,9 +775,29 @@ function App() {
     const session = await novelPlannerService.getSessionState(sessionId)
     setPlannerState(session)
     setWriterMode(session.mode)
-    const queue = await novelPlannerService.loadRunQueue()
-    setPlannerTasks(queue)
-  }, [workspaceRoot])
+    writerModeRef.current = session.mode
+    if (session.mode === 'normal') {
+      const queue = await novelPlannerService.loadRunQueue()
+      setPlannerTasks(queue)
+      return
+    }
+    await novelPlannerService.ensureMasterPlan(session.mode, {
+      instruction: '',
+      targetWords: 1_200_000,
+      chapterWordTarget,
+    })
+    const queueState = await novelPlannerService.loadRunQueueState()
+    if (queueState.tasks.length > 0 && queueState.mode === session.mode) {
+      setPlannerTasks(queueState.tasks)
+      return
+    }
+    const tasks = await novelPlannerService.generateTasksFromPlan({
+      mode: session.mode,
+      targetWords: 1_200_000,
+      chapterWordTarget,
+    })
+    setPlannerTasks(tasks)
+  }, [chapterWordTarget, workspaceRoot])
 
   const onNewChatSession = useCallback(() => {
     const nextSessionId =
@@ -797,9 +822,9 @@ function App() {
         targetWords: 1_200_000,
         chapterWordTarget,
       })
-      const queue = await novelPlannerService.loadRunQueue()
-      if (queue.length > 0) {
-        setPlannerTasks(queue)
+      const queueState = await novelPlannerService.loadRunQueueState()
+      if (queueState.tasks.length > 0 && queueState.mode === mode) {
+        setPlannerTasks(queueState.tasks)
         return
       }
       const tasks = await novelPlannerService.generateTasksFromPlan({
@@ -1469,7 +1494,7 @@ function App() {
       return
     }
     try {
-      await setAgents(agentsList)
+      await setAgents(agentsList.filter((agent) => agent.category === '自定义'))
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       await showErrorDialog(`保存智能体失败：${msg}`)
@@ -1594,12 +1619,14 @@ function App() {
       const requestedMode: WriterMode | null = parsedDirective.requestedMode
       const content = requestedMode ? parsedDirective.content : rawInput
       const applyRequestedMode = async (mode: WriterMode) => {
-        if (mode === writerMode) return
+        if (mode === writerModeRef.current) return
         if (!workspaceRoot || !isTauriApp()) {
           setWriterMode(mode)
+          writerModeRef.current = mode
           return
         }
         setWriterMode(mode)
+        writerModeRef.current = mode
         const session = await novelPlannerService.setSessionMode(chatSessionIdRef.current, mode)
         setPlannerState(session)
         if (mode === 'normal') {
@@ -1639,7 +1666,7 @@ function App() {
       }
 
       let sendPayload = referencedContent
-      const modeForPrompt = requestedMode ?? writerMode
+      const modeForPrompt = requestedMode ?? writerModeRef.current
       if (requestedMode) await applyRequestedMode(requestedMode)
       if (!options?.skipModeWrap) {
         try {
@@ -2101,9 +2128,11 @@ function App() {
     async (mode: WriterMode) => {
       if (!workspaceRoot || !isTauriApp()) {
         setWriterMode(mode)
+        writerModeRef.current = mode
         return
       }
       setWriterMode(mode)
+      writerModeRef.current = mode
       const session = await novelPlannerService.setSessionMode(chatSessionIdRef.current, mode)
       setPlannerState(session)
       if (mode === 'normal') {
@@ -2484,6 +2513,18 @@ function App() {
       })
       .catch(() => setAgentsList([]))
   }, [reloadAppSettings])
+
+  useEffect(() => {
+    if (!appSettings) return
+    if (agentsList.length === 0) return
+    if (agentsList.some((agent) => agent.id === appSettings.active_agent_id)) return
+    const fallback = agentsList[0]?.id ?? ''
+    if (!fallback) return
+    const prev = appSettings
+    const next = { ...appSettings, active_agent_id: fallback }
+    setAppSettingsState(next)
+    void persistAppSettings(next, prev)
+  }, [agentsList, appSettings, persistAppSettings])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -4140,21 +4181,12 @@ function App() {
                             onChange={(e) =>
                               setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, system_prompt: e.target.value } : a)))
                             }
+                            disabled={agentsList.find((a) => a.id === agentEditorId)?.category !== '自定义'}
                           />
                         </div>
-                        <div className="form-group settings-inline-row settings-inline-gap">
-                          <label className="settings-fixed-label">分章字数</label>
-                          <input
-                            type="number"
-                            className="ai-textarea settings-agent-number"
-                            min={500}
-                            max={10000}
-                            value={agentsList.find((a) => a.id === agentEditorId)?.chapter_word_target ?? 3000}
-                            onChange={(e) =>
-                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, chapter_word_target: parseInt(e.target.value) || 3000 } : a)))
-                            }
-                          />
-                          <span className="settings-spacer-text">字/章 (0=不分章)</span>
+                        <div className="form-group">
+                          <label>章节目标字数</label>
+                          <div className="settings-spacer-text">此项为项目级设置，请在上方“章节目标字数”中调整。</div>
                         </div>
                       </div>
                     </div>
