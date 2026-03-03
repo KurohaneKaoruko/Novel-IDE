@@ -1991,7 +1991,7 @@ pub fn chat_generate_stream(
           .as_ref()
           .map(|value| compact_value_preview(value, 220))
           .unwrap_or_default();
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
           "streamId": stream_id_for_task,
           "step": tool_event.step,
           "tool": tool_event.tool,
@@ -2002,6 +2002,48 @@ pub fn chat_generate_stream(
           "observationPreview": observation_preview,
           "timestamp": Utc::now().timestamp_millis(),
         });
+        if let Some(observation) = tool_event.observation.as_ref() {
+          if let Some(obj) = payload.as_object_mut() {
+            match tool_event.tool.as_str() {
+              "fs_list_dir" => {
+                if let Some(items) = observation.get("items").and_then(|v| v.as_array()) {
+                  const MAX_ITEMS: usize = 28;
+                  let compact_items = items
+                    .iter()
+                    .take(MAX_ITEMS)
+                    .filter_map(|item| {
+                      let name = item.get("name").and_then(|v| v.as_str())?;
+                      let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("file");
+                      if name.trim().is_empty() {
+                        return None;
+                      }
+                      if kind != "dir" && kind != "file" {
+                        return None;
+                      }
+                      Some(serde_json::json!({
+                        "name": name,
+                        "kind": kind,
+                      }))
+                    })
+                    .collect::<Vec<_>>();
+                  obj.insert("listItems".to_string(), serde_json::json!(compact_items));
+                  obj.insert("listTruncated".to_string(), serde_json::json!(items.len() > MAX_ITEMS));
+                }
+              }
+              "fs_exists" => {
+                if let Some(exists) = observation.get("exists").and_then(|v| v.as_bool()) {
+                  obj.insert("exists".to_string(), serde_json::json!(exists));
+                }
+                if let Some(kind) = observation.get("kind").and_then(|v| v.as_str()) {
+                  if kind == "dir" || kind == "file" {
+                    obj.insert("existsKind".to_string(), serde_json::json!(kind));
+                  }
+                }
+              }
+              _ => {}
+            }
+          }
+        }
         let _ = window_for_task.emit("ai_agent_step", payload);
       }),
     )

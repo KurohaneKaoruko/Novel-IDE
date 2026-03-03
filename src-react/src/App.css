@@ -1435,6 +1435,52 @@ body {
   color: var(--text-secondary);
 }
 
+.message-tool-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+}
+
+.message-tool-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.message-tool-tree-kind {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.message-tool-tree-kind-dir {
+  color: var(--accent-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 35%, var(--border-subtle));
+}
+
+.message-tool-tree-kind-file {
+  color: var(--text-secondary);
+}
+
+.message-tool-tree-name {
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.message-tool-tree-more {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .message-tool-command {
   display: flex;
   align-items: center;

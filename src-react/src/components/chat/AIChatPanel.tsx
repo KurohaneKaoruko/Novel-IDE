@@ -22,6 +22,10 @@ export type AIChatToolEvent = {
   status: 'running' | 'success' | 'error'
   inputPreview: string
   observationPreview?: string
+  listItems?: Array<{ name: string; kind: 'dir' | 'file' }>
+  listTruncated?: boolean
+  exists?: boolean
+  existsKind?: 'dir' | 'file'
   timestamp: number
   startedAt?: number
   finishedAt?: number
@@ -200,6 +204,15 @@ function compactPlainText(text: string, maxChars: number): string {
 
 function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): string {
   if (toolEvent.status === 'running') return t('chat.stepInProgress')
+  if (toolEvent.tool === 'fs_exists' && typeof toolEvent.exists === 'boolean') {
+    if (!toolEvent.exists) return t('chat.outcomePathMissing')
+    if (toolEvent.existsKind === 'dir') return t('chat.outcomePathExistsDir')
+    if (toolEvent.existsKind === 'file') return t('chat.outcomePathExistsFile')
+    return t('chat.outcomePathExists')
+  }
+  if (toolEvent.tool === 'fs_list_dir' && Array.isArray(toolEvent.listItems)) {
+    return t('chat.outcomeListDir', { count: toolEvent.listItems.length })
+  }
   const raw = toolEvent.observationPreview?.trim()
   if (!raw) return t('chat.outcomeOk')
   if (raw.includes('"exists":true') || raw.includes('"exists": true')) return t('chat.outcomePathExists')
@@ -524,6 +537,21 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               <span className="message-tool-item-label">{t('chat.stepResult')}</span>{' '}
                               {buildToolOutcomeSummary(toolEvent, t)}
                             </div>
+                            {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
+                              <div className="message-tool-tree">
+                                {toolEvent.listItems.map((item, treeIdx) => (
+                                  <div key={`${item.kind}-${item.name}-${treeIdx}`} className="message-tool-tree-item">
+                                    <span className={`message-tool-tree-kind message-tool-tree-kind-${item.kind}`}>
+                                      {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
+                                    </span>
+                                    <span className="message-tool-tree-name">{item.name}</span>
+                                  </div>
+                                ))}
+                                {toolEvent.listTruncated ? (
+                                  <div className="message-tool-tree-more">{t('chat.treeMore')}</div>
+                                ) : null}
+                              </div>
+                            ) : null}
                             {expandedToolItem ? (
                               <>
                                 {toolEvent.inputPreview ? (

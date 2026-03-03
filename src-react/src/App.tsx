@@ -144,12 +144,21 @@ type ImportedChangeSet = {
   originalContent: string
 }
 
+type AgentToolListItem = {
+  name: string
+  kind: 'dir' | 'file'
+}
+
 type AgentToolActivity = {
   step: number
   tool: string
   status: 'running' | 'success' | 'error'
   inputPreview: string
   observationPreview?: string
+  listItems?: AgentToolListItem[]
+  listTruncated?: boolean
+  exists?: boolean
+  existsKind?: 'dir' | 'file'
   timestamp: number
   startedAt?: number
   finishedAt?: number
@@ -262,6 +271,10 @@ function upsertToolActivity(list: AgentToolActivity[] | undefined, incoming: Age
     ...incoming,
     inputPreview: incoming.inputPreview || current.inputPreview,
     observationPreview: incoming.observationPreview ?? current.observationPreview,
+    listItems: incoming.listItems ?? current.listItems,
+    listTruncated: incoming.listTruncated ?? current.listTruncated,
+    exists: incoming.exists ?? current.exists,
+    existsKind: incoming.existsKind ?? current.existsKind,
     startedAt: incoming.startedAt ?? current.startedAt ?? incoming.timestamp,
     finishedAt: incoming.finishedAt ?? current.finishedAt,
     durationMs: incoming.durationMs ?? current.durationMs,
@@ -3260,6 +3273,21 @@ function App() {
         phase === 'start' ? 'running' : ok === false ? 'error' : 'success'
       const inputPreview = typeof p.inputPreview === 'string' ? p.inputPreview : ''
       const observationPreview = typeof p.observationPreview === 'string' ? p.observationPreview : undefined
+      const listItems = Array.isArray(p.listItems)
+        ? p.listItems.flatMap((entry) => {
+            if (!isRecord(entry)) return []
+            const name = typeof entry.name === 'string' ? entry.name : ''
+            const kind = entry.kind === 'dir' ? 'dir' : entry.kind === 'file' ? 'file' : null
+            if (!name || !kind) return []
+            return [{ name, kind } as AgentToolListItem]
+          })
+        : undefined
+      const listTruncated =
+        p.listTruncated === true ? true : p.listTruncated === false ? false : undefined
+      const exists =
+        p.exists === true ? true : p.exists === false ? false : undefined
+      const existsKind =
+        p.existsKind === 'dir' ? 'dir' : p.existsKind === 'file' ? 'file' : undefined
       const timestamp = typeof p.timestamp === 'number' ? p.timestamp : Date.now()
       const durationMsRaw = typeof p.durationMs === 'number' ? p.durationMs : Number(p.durationMs)
       const activity: AgentToolActivity = {
@@ -3268,6 +3296,10 @@ function App() {
         status,
         inputPreview,
         observationPreview,
+        listItems,
+        listTruncated,
+        exists,
+        existsKind,
         timestamp,
         startedAt: phase === 'start' ? timestamp : undefined,
         finishedAt: phase === 'finish' ? timestamp : undefined,
