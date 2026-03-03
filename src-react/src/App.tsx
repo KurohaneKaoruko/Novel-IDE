@@ -163,6 +163,10 @@ type AgentToolActivity = {
   readLines?: number
   readChars?: number
   readPreview?: string
+  writePath?: string
+  writeLines?: number
+  writeChars?: number
+  writePreview?: string
   timestamp: number
   startedAt?: number
   finishedAt?: number
@@ -283,6 +287,10 @@ function upsertToolActivity(list: AgentToolActivity[] | undefined, incoming: Age
     readLines: incoming.readLines ?? current.readLines,
     readChars: incoming.readChars ?? current.readChars,
     readPreview: incoming.readPreview ?? current.readPreview,
+    writePath: incoming.writePath ?? current.writePath,
+    writeLines: incoming.writeLines ?? current.writeLines,
+    writeChars: incoming.writeChars ?? current.writeChars,
+    writePreview: incoming.writePreview ?? current.writePreview,
     startedAt: incoming.startedAt ?? current.startedAt ?? incoming.timestamp,
     finishedAt: incoming.finishedAt ?? current.finishedAt,
     durationMs: incoming.durationMs ?? current.durationMs,
@@ -3300,6 +3308,10 @@ function App() {
       const readLinesRaw = typeof p.readLines === 'number' ? p.readLines : Number(p.readLines)
       const readCharsRaw = typeof p.readChars === 'number' ? p.readChars : Number(p.readChars)
       const readPreview = typeof p.readPreview === 'string' ? p.readPreview : undefined
+      const writePath = typeof p.writePath === 'string' ? p.writePath : undefined
+      const writeLinesRaw = typeof p.writeLines === 'number' ? p.writeLines : Number(p.writeLines)
+      const writeCharsRaw = typeof p.writeChars === 'number' ? p.writeChars : Number(p.writeChars)
+      const writePreview = typeof p.writePreview === 'string' ? p.writePreview : undefined
       const timestamp = typeof p.timestamp === 'number' ? p.timestamp : Date.now()
       const durationMsRaw = typeof p.durationMs === 'number' ? p.durationMs : Number(p.durationMs)
       const activity: AgentToolActivity = {
@@ -3316,6 +3328,10 @@ function App() {
         readLines: Number.isFinite(readLinesRaw) ? Math.max(0, Math.floor(readLinesRaw)) : undefined,
         readChars: Number.isFinite(readCharsRaw) ? Math.max(0, Math.floor(readCharsRaw)) : undefined,
         readPreview,
+        writePath,
+        writeLines: Number.isFinite(writeLinesRaw) ? Math.max(0, Math.floor(writeLinesRaw)) : undefined,
+        writeChars: Number.isFinite(writeCharsRaw) ? Math.max(0, Math.floor(writeCharsRaw)) : undefined,
+        writePreview,
         timestamp,
         startedAt: phase === 'start' ? timestamp : undefined,
         finishedAt: phase === 'finish' ? timestamp : undefined,

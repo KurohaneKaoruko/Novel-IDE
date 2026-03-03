@@ -1528,6 +1528,53 @@ body {
   overflow: auto;
 }
 
+.message-tool-write-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  padding: 6px;
+  margin-bottom: 6px;
+}
+
+.message-tool-write-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.message-tool-write-path {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.message-tool-write-meta {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.message-tool-write-preview {
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 90%, transparent);
+  padding: 6px;
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
 .message-tool-command {
   display: flex;
   align-items: center;

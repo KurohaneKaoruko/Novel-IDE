@@ -2082,6 +2082,24 @@ pub fn chat_generate_stream(
                   obj.insert("readPreview".to_string(), serde_json::json!(preview));
                 }
               }
+              "fs_write_text" => {
+                if let Some(path) = tool_event.args.get("path").and_then(|v| v.as_str()) {
+                  obj.insert("writePath".to_string(), serde_json::json!(path));
+                }
+                if let Some(text) = tool_event
+                  .args
+                  .get("text")
+                  .and_then(|v| v.as_str())
+                  .or_else(|| tool_event.args.get("content").and_then(|v| v.as_str()))
+                {
+                  let lines = if text.is_empty() { 0usize } else { text.lines().count() };
+                  let chars = text.chars().count();
+                  let preview = compact_multiline_preview(text, 8, 420);
+                  obj.insert("writeLines".to_string(), serde_json::json!(lines));
+                  obj.insert("writeChars".to_string(), serde_json::json!(chars));
+                  obj.insert("writePreview".to_string(), serde_json::json!(preview));
+                }
+              }
               _ => {}
             }
           }

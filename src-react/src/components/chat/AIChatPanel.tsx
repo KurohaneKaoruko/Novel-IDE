@@ -30,6 +30,10 @@ export type AIChatToolEvent = {
   readLines?: number
   readChars?: number
   readPreview?: string
+  writePath?: string
+  writeLines?: number
+  writeChars?: number
+  writePreview?: string
   timestamp: number
   startedAt?: number
   finishedAt?: number
@@ -221,6 +225,12 @@ function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): st
     return t('chat.outcomeReadTextMeta', {
       lines: toolEvent.readLines ?? 0,
       chars: toolEvent.readChars,
+    })
+  }
+  if (toolEvent.tool === 'fs_write_text' && typeof toolEvent.writeChars === 'number') {
+    return t('chat.outcomeWriteTextMeta', {
+      lines: toolEvent.writeLines ?? 0,
+      chars: toolEvent.writeChars,
     })
   }
   const raw = toolEvent.observationPreview?.trim()
@@ -524,7 +534,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           const hasStructuredOutput =
                             (toolEvent.tool === 'fs_list_dir' && Array.isArray(toolEvent.listItems)) ||
                             (toolEvent.tool === 'fs_exists' && typeof toolEvent.exists === 'boolean') ||
-                            (toolEvent.tool === 'fs_read_text' && typeof toolEvent.readChars === 'number')
+                            (toolEvent.tool === 'fs_read_text' && typeof toolEvent.readChars === 'number') ||
+                            (toolEvent.tool === 'fs_write_text' && typeof toolEvent.writeChars === 'number')
 
                           return (
                           <div key={itemId} className={`message-tool-item message-tool-item-${toolEvent.status}`}>
@@ -563,6 +574,20 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                   </span>
                                 </div>
                                 <pre className="message-tool-read-preview">{toolEvent.readPreview}</pre>
+                              </div>
+                            ) : null}
+                            {toolEvent.tool === 'fs_write_text' && toolEvent.writePreview ? (
+                              <div className="message-tool-write-card">
+                                <div className="message-tool-write-head">
+                                  <span className="message-tool-write-path">{toolEvent.writePath ?? t('chat.unknownPath')}</span>
+                                  <span className="message-tool-write-meta">
+                                    {t('chat.writeMeta', {
+                                      lines: toolEvent.writeLines ?? 0,
+                                      chars: toolEvent.writeChars ?? 0,
+                                    })}
+                                  </span>
+                                </div>
+                                <pre className="message-tool-write-preview">{toolEvent.writePreview}</pre>
                               </div>
                             ) : null}
                             {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
