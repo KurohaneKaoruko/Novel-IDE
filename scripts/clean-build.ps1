@@ -35,6 +35,6 @@ Write-Host ""
 Write-Host "Build cleanup complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "You can now run:" -ForegroundColor Cyan
-Write-Host "  npm run tauri:dev   - for development" -ForegroundColor White
-Write-Host "  npm run tauri:build - for production build" -ForegroundColor White
+Write-Host "  pnpm run tauri:dev   - for development" -ForegroundColor White
+Write-Host "  pnpm run tauri:build - for production build" -ForegroundColor White
 Write-Host ""

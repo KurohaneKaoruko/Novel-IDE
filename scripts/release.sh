@@ -44,6 +44,15 @@ TAG="v$VERSION"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+PACKAGE_MANAGER="npm"
+if [[ -f pnpm-lock.yaml ]]; then
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "pnpm-lock.yaml detected, but 'pnpm' is not installed. Install pnpm (or enable corepack) and retry." >&2
+    exit 1
+  fi
+  PACKAGE_MANAGER="pnpm"
+fi
+
 run_step() {
   echo ">> $*"
   "$@"
@@ -90,7 +99,7 @@ fs.writeFileSync(cargoPath, cargoUpdated);
 NODE
 
 if [[ "$SKIP_CHECKS" -ne 1 ]]; then
-  run_step npm run build
+  run_step "$PACKAGE_MANAGER" run build
   run_step cargo check --manifest-path src-tauri/Cargo.toml --target-dir .cargo-target
 fi
 

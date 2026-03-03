@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "sync:branding": "node ./scripts/sync-branding.mjs",
-    "predev": "npm run sync:branding",
-    "prebuild": "npm run sync:branding",
+    "predev": "node ./scripts/sync-branding.mjs",
+    "prebuild": "node ./scripts/sync-branding.mjs",
     "dev": "vite --config src-react/vite.config.ts --port 1420 --strictPort",
     "build": "tsc -b src-react/tsconfig.json && vite build --config src-react/vite.config.ts",
     "lint": "eslint -c src-react/eslint.config.js --no-error-on-unmatched-pattern --quiet src-react/src src-react/__tests__",
@@ -23,7 +23,7 @@
     "tauri:ios:dev": "tauri ios dev",
     "tauri:ios:build": "tauri ios build",
     "clean": "powershell -ExecutionPolicy Bypass -File ./scripts/clean-build.ps1",
-    "clean:full": "powershell -ExecutionPolicy Bypass -File ./scripts/clean-build.ps1 && npm install",
+    "clean:full": "powershell -ExecutionPolicy Bypass -File ./scripts/clean-build.ps1 && pnpm install --frozen-lockfile",
     "release": "powershell -ExecutionPolicy Bypass -File ./scripts/release.ps1",
     "release:sh": "bash ./scripts/release.sh"
   },

@@ -21,6 +21,17 @@ function Invoke-Step {
     }
 }
 
+function Resolve-PackageManager {
+    if (Test-Path "pnpm-lock.yaml") {
+        $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
+        if (-not $pnpm) {
+            throw "pnpm-lock.yaml detected, but 'pnpm' is not installed. Install pnpm (or enable corepack) and retry."
+        }
+        return "pnpm"
+    }
+    return "npm"
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repoRoot
 
@@ -30,6 +41,7 @@ try {
     }
 
     $tag = "v$Version"
+    $packageManager = Resolve-PackageManager
 
     if (-not $AllowDirty) {
         $dirty = git status --porcelain
@@ -88,7 +100,7 @@ fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + "\n");
     Set-Content -Path $cargoPath -Value $cargoUpdated -Encoding utf8
 
     if (-not $SkipChecks) {
-        Invoke-Step "npm run build"
+        Invoke-Step "$packageManager run build"
         Invoke-Step "cargo check --manifest-path src-tauri/Cargo.toml --target-dir .cargo-target"
     }
 

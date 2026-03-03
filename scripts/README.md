@@ -39,8 +39,8 @@ Run this script when you encounter:
 
 Run one of these commands to rebuild:
 ```bash
-npm run tauri:dev    # Development mode
-npm run tauri:build  # Production build
+pnpm run tauri:dev    # Development mode
+pnpm run tauri:build  # Production build
 ```
 
 ## Troubleshooting

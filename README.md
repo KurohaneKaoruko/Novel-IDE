@@ -32,15 +32,15 @@ Novel-IDE 是一个面向长篇写作的本地桌面 IDE，基于 `Tauri v2 + Re
 ### 2. 本地开发
 
 ```powershell
-npm install
-npm run tauri:dev
+pnpm install --frozen-lockfile
+pnpm run tauri:dev
 ```
 
 ### 3. 构建发行包
 
 ```powershell
-npm install
-npm run tauri:build
+pnpm install --frozen-lockfile
+pnpm run tauri:build
 ```
 
 构建产物通常位于：
@@ -122,13 +122,13 @@ npm run tauri:build
 
 ## 开发脚本
 
-- `npm run dev`：仅启动前端开发服务器（Vite, 1420，项目根为 `src-react/`）
-- `npm run tauri:dev`：启动桌面开发模式
-- `npm run build`：构建前端（输出到 `src-react/dist/`）
-- `npm run tauri:build`：构建桌面发行包
-- `npm run test`：运行 Vitest 测试
-- `npm run lint`：运行 ESLint
-- `npm run clean`：清理构建产物
+- `pnpm run dev`：仅启动前端开发服务器（Vite, 1420，项目根为 `src-react/`）
+- `pnpm run tauri:dev`：启动桌面开发模式
+- `pnpm run build`：构建前端（输出到 `src-react/dist/`）
+- `pnpm run tauri:build`：构建桌面发行包
+- `pnpm run test`：运行 Vitest 测试
+- `pnpm run lint`：运行 ESLint
+- `pnpm run clean`：清理构建产物
 
 ## 技术栈
 
