@@ -137,6 +137,16 @@ pub struct AgentPerf {
   pub tool_ms: u128,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentToolEvent {
+  pub step: u32,
+  pub tool: String,
+  pub args: Value,
+  pub phase: String,
+  pub ok: Option<bool>,
+  pub observation: Option<Value>,
+}
+
 pub struct AgentRuntime {
   ctx: ToolContext,
   tools: ToolRegistry,
@@ -329,16 +339,18 @@ impl AgentRuntime {
     out
   }
 
-  pub async fn run_react<F, Fut>(
+  pub async fn run_react<F, Fut, OnToolEvent>(
     &mut self,
     base_messages: Vec<ChatMessage>,
     agent_system_prompt: String,
     edit_apply_mode: AiEditApplyMode,
     call_model: F,
+    mut on_tool_event: OnToolEvent,
   ) -> Result<(String, AgentPerf), String>
   where
     F: Fn(Vec<ChatMessage>) -> Fut,
     Fut: Future<Output = Result<String, String>>,
+    OnToolEvent: FnMut(AgentToolEvent),
   {
     let mut perf = AgentPerf::default();
     let tool_list = self.tools();
@@ -388,6 +400,16 @@ impl AgentRuntime {
       let out = call_model(messages.clone()).await?;
       perf.model_ms += t0.elapsed().as_millis();
       if let Some(call) = parse_tool_call(&out) {
+        let tool_name = call.tool.clone();
+        let tool_args = call.args.clone();
+        on_tool_event(AgentToolEvent {
+          step,
+          tool: tool_name.clone(),
+          args: tool_args.clone(),
+          phase: "start".to_string(),
+          ok: None,
+          observation: None,
+        });
         let t1 = Instant::now();
         let result = if call.tool == "memory_upsert" {
           let key = call
@@ -422,10 +444,18 @@ impl AgentRuntime {
           self.tools.call(&self.ctx, &call.tool, call.args.clone())
         };
         perf.tool_ms += t1.elapsed().as_millis();
-        let obs = match result {
-          Ok(v) => v,
-          Err(e) => serde_json::json!({ "error": e }),
+        let (obs, ok) = match result {
+          Ok(v) => (v, true),
+          Err(e) => (serde_json::json!({ "error": e }), false),
         };
+        on_tool_event(AgentToolEvent {
+          step,
+          tool: tool_name,
+          args: tool_args,
+          phase: "finish".to_string(),
+          ok: Some(ok),
+          observation: Some(obs.clone()),
+        });
         let obs_text = serde_json::to_string_pretty(&obs).unwrap_or_else(|_| obs.to_string());
         messages.push(ChatMessage {
           role: "assistant".to_string(),

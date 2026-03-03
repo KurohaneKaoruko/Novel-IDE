@@ -11,8 +11,18 @@ export type AIChatMessage = {
   cancelled?: boolean
   streamId?: string
   changeSet?: ChangeSet
+  toolEvents?: AIChatToolEvent[]
   versionIndex?: number
   versionCount?: number
+}
+
+export type AIChatToolEvent = {
+  step: number
+  tool: string
+  status: 'running' | 'success' | 'error'
+  inputPreview: string
+  observationPreview?: string
+  timestamp: number
 }
 export type AIChatOption = {
   id: string
@@ -158,9 +168,13 @@ export function AIChatPanel(props: AIChatPanelProps) {
   } = props
 
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
+  const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
 
   const toggleAssistantMessage = useCallback((messageId: string) => {
     setExpandedAssistantIds((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
+  }, [])
+  const toggleToolPanel = useCallback((messageId: string) => {
+    setCollapsedToolPanels((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
   }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -245,6 +259,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 canCollapse && !expanded
                   ? preview
                   : message.content || ''
+              const toolEvents = message.toolEvents ?? []
+              const hasToolEvents = message.role === 'assistant' && toolEvents.length > 0
+              const latestToolEvent = hasToolEvents ? toolEvents[toolEvents.length - 1] : null
+              const hasManualToolCollapse = Object.prototype.hasOwnProperty.call(collapsedToolPanels, message.id)
+              const toolPanelCollapsed = hasToolEvents
+                ? hasManualToolCollapse
+                  ? collapsedToolPanels[message.id] === true
+                  : !message.streaming
+                : true
 
               return (
               <div key={message.id} className={message.role === 'user' ? 'message user' : 'message assistant'}>
@@ -298,6 +321,55 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   <button className="message-collapse-toggle" onClick={() => toggleAssistantMessage(message.id)} type="button">
                     {expanded ? t('chat.collapseDetails') : t('chat.expandDetails')}
                   </button>
+                ) : null}
+                {hasToolEvents ? (
+                  <div className="message-tool-activity">
+                    <button className="message-tool-summary" onClick={() => toggleToolPanel(message.id)} type="button">
+                      <span className="message-tool-summary-title">{t('chat.operations')}</span>
+                      <span className={`message-tool-summary-status message-tool-summary-status-${latestToolEvent?.status ?? 'running'}`}>
+                        {latestToolEvent?.status === 'running'
+                          ? t('chat.operationRunning')
+                          : latestToolEvent?.status === 'error'
+                            ? t('chat.operationError')
+                            : t('chat.operationDone')}
+                      </span>
+                      <span className="message-tool-summary-count">{toolEvents.length}</span>
+                      <span className="message-tool-summary-toggle">
+                        {toolPanelCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}
+                      </span>
+                    </button>
+                    {toolPanelCollapsed ? (
+                      latestToolEvent ? (
+                        <div className="message-tool-collapsed-line">
+                          {latestToolEvent.status === 'running' ? t('chat.currentOperation') : t('chat.latestOperation')}{' '}
+                          {latestToolEvent.tool}
+                        </div>
+                      ) : null
+                    ) : (
+                      <div className="message-tool-list">
+                        {toolEvents.map((toolEvent, idx) => (
+                          <div
+                            key={`${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${idx}`}
+                            className={`message-tool-item message-tool-item-${toolEvent.status}`}
+                          >
+                            <div className="message-tool-item-head">
+                              <span className="message-tool-item-step">#{toolEvent.step}</span>
+                              <span className="message-tool-item-name">{toolEvent.tool}</span>
+                              <span className="message-tool-item-state">
+                                {toolEvent.status === 'running'
+                                  ? t('chat.operationRunning')
+                                  : toolEvent.status === 'error'
+                                    ? t('chat.operationError')
+                                    : t('chat.operationDone')}
+                              </span>
+                            </div>
+                            {toolEvent.inputPreview ? <div className="message-tool-item-line">IN: {toolEvent.inputPreview}</div> : null}
+                            {toolEvent.observationPreview ? <div className="message-tool-item-line">OUT: {toolEvent.observationPreview}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : null}
                 {message.role === 'assistant' && message.streaming ? (
                   <div className="ai-processing-indicator">

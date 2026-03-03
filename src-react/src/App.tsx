@@ -106,6 +106,7 @@ type ChatItem = {
   cancelled?: boolean
   streamId?: string
   changeSet?: ChangeSet
+  toolEvents?: AgentToolActivity[]
   versionGroupId?: string
   versionIndex?: number
   versionCount?: number
@@ -141,6 +142,15 @@ type BackendChangeSet = {
 type ImportedChangeSet = {
   changeSet: ChangeSet
   originalContent: string
+}
+
+type AgentToolActivity = {
+  step: number
+  tool: string
+  status: 'running' | 'success' | 'error'
+  inputPreview: string
+  observationPreview?: string
+  timestamp: number
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -228,6 +238,25 @@ function stripInternalToolTrace(text: string): string {
   const hasInput = lines.slice(actionIndex).some((line) => /^\s*INPUT\s*:/i.test(line))
   if (!hasInput) return text
   return lines.slice(0, actionIndex).join('\n').trimEnd()
+}
+
+function upsertToolActivity(list: AgentToolActivity[] | undefined, incoming: AgentToolActivity): AgentToolActivity[] {
+  const base = list ?? []
+  const index = base.findIndex((item) => item.step === incoming.step && item.tool === incoming.tool)
+  if (index < 0) {
+    return [...base, incoming].sort((a, b) => {
+      if (a.step !== b.step) return a.step - b.step
+      return a.timestamp - b.timestamp
+    })
+  }
+  const current = base[index]
+  const merged: AgentToolActivity = {
+    ...current,
+    ...incoming,
+    inputPreview: incoming.inputPreview || current.inputPreview,
+    observationPreview: incoming.observationPreview ?? current.observationPreview,
+  }
+  return [...base.slice(0, index), merged, ...base.slice(index + 1)]
 }
 
 type ChatContextMenuState = {
@@ -3202,6 +3231,39 @@ function App() {
       setChatMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && m.streamId === streamId ? { ...m, content: visibleText } : m,
+        ),
+      )
+    })
+
+    subscribe('ai_agent_step', (rawPayload) => {
+      const p = parsePayload(rawPayload)
+      if (!p) return
+      const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
+      if (!streamId) return
+      const stepRaw = typeof p.step === 'number' ? p.step : Number(p.step)
+      if (!Number.isFinite(stepRaw)) return
+      const tool = typeof p.tool === 'string' ? p.tool.trim() : ''
+      if (!tool) return
+      const phase = typeof p.phase === 'string' ? p.phase : ''
+      const ok = p.ok === false ? false : p.ok === true ? true : null
+      const status: AgentToolActivity['status'] =
+        phase === 'start' ? 'running' : ok === false ? 'error' : 'success'
+      const inputPreview = typeof p.inputPreview === 'string' ? p.inputPreview : ''
+      const observationPreview = typeof p.observationPreview === 'string' ? p.observationPreview : undefined
+      const timestamp = typeof p.timestamp === 'number' ? p.timestamp : Date.now()
+      const activity: AgentToolActivity = {
+        step: Math.max(1, Math.floor(stepRaw)),
+        tool,
+        status,
+        inputPreview,
+        observationPreview,
+        timestamp,
+      }
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.role === 'assistant' && m.streamId === streamId
+            ? { ...m, toolEvents: upsertToolActivity(m.toolEvents, activity) }
+            : m,
         ),
       )
     })

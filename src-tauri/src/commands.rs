@@ -1751,6 +1751,31 @@ fn action_prefix_state(text: &str) -> (bool, bool) {
   (is_possible_prefix, is_full)
 }
 
+fn compact_preview(text: &str, max_chars: usize) -> String {
+  if text.is_empty() {
+    return String::new();
+  }
+  let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+  let mut out = String::new();
+  for (idx, ch) in collapsed.chars().enumerate() {
+    if idx >= max_chars {
+      out.push_str("...");
+      break;
+    }
+    out.push(ch);
+  }
+  out
+}
+
+fn compact_value_preview(value: &serde_json::Value, max_chars: usize) -> String {
+  let raw = if let Some(s) = value.as_str() {
+    s.to_string()
+  } else {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+  };
+  compact_preview(raw.as_str(), max_chars)
+}
+
 impl LiveEmitGate {
   fn new() -> Self {
     Self {
@@ -1959,6 +1984,24 @@ pub fn chat_generate_stream(
             },
           }
         }
+      }, |tool_event| {
+        let input_preview = compact_value_preview(&tool_event.args, 180);
+        let observation_preview = tool_event
+          .observation
+          .as_ref()
+          .map(|value| compact_value_preview(value, 220))
+          .unwrap_or_default();
+        let payload = serde_json::json!({
+          "streamId": stream_id_for_task,
+          "step": tool_event.step,
+          "tool": tool_event.tool,
+          "phase": tool_event.phase,
+          "ok": tool_event.ok,
+          "inputPreview": input_preview,
+          "observationPreview": observation_preview,
+          "timestamp": Utc::now().timestamp_millis(),
+        });
+        let _ = window_for_task.emit("ai_agent_step", payload);
       }),
     )
     .await;
