@@ -125,10 +125,10 @@ function compactSnippet(text: string, charLimit: number, lineLimit: number): str
   return snippet
 }
 
-function shouldCollapseMessage(message: AIChatMessage): boolean {
+function shouldCollapseMessage(message: AIChatMessage, contentOverride?: string): boolean {
   if (message.role !== 'assistant') return false
   if (message.streaming) return false
-  const text = message.content ?? ''
+  const text = contentOverride ?? message.content ?? ''
   if (!text.trim()) return false
   const hasDiff = !!message.changeSet && message.changeSet.modifications.length > 0
   if (hasDiff) return true
@@ -278,6 +278,23 @@ function compactPlainText(text: string, maxChars: number): string {
   const normalized = text.replace(/\s+/g, ' ').trim()
   if (normalized.length <= maxChars) return normalized
   return `${normalized.slice(0, maxChars)}...`
+}
+
+function stripToolTraceContent(content: string): string {
+  if (!content.trim()) return ''
+  const tracePrefix = /^\s*(ACTION|INPUT|OBSERVATION|OUTPUT|TOOL|TOOL_RESULT)\s*:/i
+  const traceFence = /^\s*```(?:json|tool|text)?\s*$/i
+  const next = content
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (tracePrefix.test(line)) return false
+      if (traceFence.test(line)) return false
+      return true
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return next
 }
 
 function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): string {
@@ -476,18 +493,20 @@ export function AIChatPanel(props: AIChatPanelProps) {
             </div>
           ) : (
             chatMessages.map((message) => {
-              const canCollapse = shouldCollapseMessage(message)
-              const expanded = canCollapse ? expandedAssistantIds[message.id] === true : false
+              const toolEvents = message.toolEvents ?? []
+              const hasToolEvents = message.role === 'assistant' && toolEvents.length > 0
               const hasDiff = !!message.changeSet && message.changeSet.modifications.length > 0
+              const rawContent = message.content || ''
+              const cleanedContent = hasToolEvents ? stripToolTraceContent(rawContent) : rawContent
+              const canCollapse = shouldCollapseMessage(message, cleanedContent)
+              const expanded = canCollapse ? expandedAssistantIds[message.id] === true : false
               const preview = hasDiff
                 ? t('chat.collapsedForDiff')
-                : compactSnippet(message.content, DEFAULT_COLLAPSE_CHAR_LIMIT, DEFAULT_COLLAPSE_LINE_LIMIT)
+                : compactSnippet(cleanedContent, DEFAULT_COLLAPSE_CHAR_LIMIT, DEFAULT_COLLAPSE_LINE_LIMIT)
               const renderedContent =
                 canCollapse && !expanded
                   ? preview
-                  : message.content || ''
-              const toolEvents = message.toolEvents ?? []
-              const hasToolEvents = message.role === 'assistant' && toolEvents.length > 0
+                  : cleanedContent
               const latestToolEvent = hasToolEvents ? toolEvents[toolEvents.length - 1] : null
               const thoughtSummary = hasToolEvents ? buildThoughtSummary(toolEvents, t) : ''
               const failedToolCount = hasToolEvents ? toolEvents.filter((event) => event.status === 'error').length : 0
