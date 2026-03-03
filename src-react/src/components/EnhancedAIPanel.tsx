@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useEffect, type KeyboardEvent } from 'react'
+import { useCallback, useMemo, useRef, useEffect, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ChangeSet } from '../services/ModificationService'
 import { useDiff } from '../contexts/DiffContext'
 import './EnhancedAIPanel.css'
@@ -55,18 +55,18 @@ export function EnhancedAIPanel({
 
   // Focus input on Ctrl+Shift+L
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'L') {
         e.preventDefault()
         inputRef.current?.focus()
       }
     }
-    window.addEventListener('keydown', handleKeyDown as any)
-    return () => window.removeEventListener('keydown', handleKeyDown as any)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+    (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         if (!disabled && input.trim()) {

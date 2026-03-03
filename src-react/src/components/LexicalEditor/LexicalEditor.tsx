@@ -41,7 +41,7 @@ import './LexicalEditor.css'
  * Extended editor interface with custom methods
  */
 export interface ExtendedLexicalEditor extends LexicalEditorType {
-  getSelection: () => any
+  getSelection: () => unknown
   getSelectedText: () => string
   getSelectionOffsets: () => { start: number; end: number } | null
   getContent: () => string
@@ -107,7 +107,7 @@ function InitialContentPlugin({
 }: {
   content: string
   lastEditorContentRef: MutableRefObject<string | null>
-  onChange: (content: string, editor: any) => void
+  onChange: (content: string, editor: LexicalEditorType) => void
 }) {
   const [editor] = useLexicalComposerContext()
   
@@ -149,8 +149,8 @@ function EditorRefPlugin({
   editorRef, 
   onReady 
 }: { 
-  editorRef?: React.MutableRefObject<any>
-  onReady?: (editor: any) => void
+  editorRef?: React.MutableRefObject<LexicalEditorType | null>
+  onReady?: (editor: LexicalEditorType) => void
 }) {
   const [editor] = useLexicalComposerContext()
   
@@ -325,7 +325,7 @@ export function LexicalEditor({
   }, [onChange])
 
   const emitOnChange = useMemo(() => {
-    return (content: string, editor: any) => {
+    return (content: string, editor: LexicalEditorType) => {
       onChangeRef.current(content, editor)
     }
   }, [])
@@ -345,7 +345,7 @@ export function LexicalEditor({
   
   // Handle content changes with debouncing to prevent performance issues
   const handleChange = useMemo(() => {
-    return (editorState: EditorState, editor: any) => {
+    return (editorState: EditorState, editor: LexicalEditorType) => {
       editorState.read(() => {
         const root = $getRoot()
         const textContent = root.getTextContent()
@@ -360,7 +360,7 @@ export function LexicalEditor({
   
   // Debounced onChange handler to improve performance
   const debouncedHandleChange = useMemo(() => {
-    return (editorState: EditorState, editor: any) => {
+    return (editorState: EditorState, editor: LexicalEditorType) => {
       // Clear existing timer
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current)
@@ -421,7 +421,7 @@ export function LexicalEditor({
     return (
       <SimpleFallbackEditor
         initialContent={initialContent}
-        onChange={(content) => onChange(content, null as any)}
+        onChange={(content) => onChange(content, editorRef?.current ?? (null as unknown as LexicalEditorType))}
         placeholder={placeholder}
         readOnly={readOnly}
       />

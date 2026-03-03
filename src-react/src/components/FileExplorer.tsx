@@ -41,6 +41,8 @@ const getFileIcon = (name: string): string => {
 const getDirIcon = (isOpen: boolean): string => (isOpen ? '📂' : '📁')
 
 export function FileExplorer({ tree, activePath, query, onQueryChange, onFileClick, onContextMenu }: FileExplorerProps) {
+  const [openDirs, setOpenDirs] = useState<Record<string, boolean>>({})
+
   const visibleTree = useMemo(() => {
     if (!tree) return null
     if (!query.trim()) return tree
@@ -68,14 +70,20 @@ export function FileExplorer({ tree, activePath, query, onQueryChange, onFileCli
       const paddingLeft = `${depth * 16 + 8}px`
 
       if (entry.kind === 'dir') {
-        const [isOpen, setIsOpen] = useState(depth < 1)
+        const isOpen = openDirs[entry.path] ?? depth < 1
+        const toggleDir = () => {
+          setOpenDirs((prev) => ({
+            ...prev,
+            [entry.path]: !(prev[entry.path] ?? depth < 1),
+          }))
+        }
         
         return (
           <div key={entry.path}>
             <div
               className={`file-explorer-item dir ${isActive ? 'active' : ''}`}
               style={{ paddingLeft }}
-              onClick={() => setIsOpen(!isOpen)}
+              onClick={toggleDir}
               onContextMenu={(e) => onContextMenu?.(e, entry)}
             >
               <span className="file-explorer-icon">{getDirIcon(isOpen)}</span>
@@ -109,7 +117,7 @@ export function FileExplorer({ tree, activePath, query, onQueryChange, onFileCli
         </div>
       )
     },
-    [activePath, onFileClick, onContextMenu]
+    [activePath, onFileClick, onContextMenu, openDirs]
   )
 
   return (
