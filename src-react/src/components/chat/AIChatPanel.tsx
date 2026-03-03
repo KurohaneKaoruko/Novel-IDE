@@ -244,7 +244,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const renderedContent =
                 canCollapse && !expanded
                   ? preview
-                  : message.content || (message.role === 'assistant' && message.streaming ? t('chat.thinking') : '')
+                  : message.content || ''
 
               return (
               <div key={message.id} className={message.role === 'user' ? 'message user' : 'message assistant'}>
@@ -286,12 +286,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     </button>
                   </div>
                 ) : null}
-                <div
-                  className={`message-content${canCollapse && !expanded ? ' message-content-collapsed' : ''}`}
-                  onContextMenu={(event) => onOpenMessageContextMenu(event, message)}
-                >
-                  {renderedContent}
-                </div>
+                {renderedContent ? (
+                  <div
+                    className={`message-content${canCollapse && !expanded ? ' message-content-collapsed' : ''}`}
+                    onContextMenu={(event) => onOpenMessageContextMenu(event, message)}
+                  >
+                    {renderedContent}
+                  </div>
+                ) : null}
                 {canCollapse ? (
                   <button className="message-collapse-toggle" onClick={() => toggleAssistantMessage(message.id)} type="button">
                     {expanded ? t('chat.collapseDetails') : t('chat.expandDetails')}
