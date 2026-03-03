@@ -136,6 +136,7 @@ function shouldCollapseMessage(message: AIChatMessage): boolean {
 }
 
 type TranslateFn = (key: string, params?: Record<string, string | number>) => string
+type ToolStageKey = 'context' | 'filesystem' | 'memory' | 'other'
 
 function toolStatusLabel(status: AIChatToolEvent['status'], t: TranslateFn): string {
   if (status === 'running') return t('chat.operationRunning')
@@ -168,6 +169,75 @@ function toolDisplayName(tool: string, t: TranslateFn): string {
     default:
       return tool
   }
+}
+
+function toolStageKey(tool: string): ToolStageKey {
+  switch (tool) {
+    case 'fs_read_text':
+    case 'fs_list_dir':
+    case 'fs_exists':
+      return 'context'
+    case 'fs_create_dir':
+    case 'fs_create_file':
+    case 'fs_delete_entry':
+    case 'fs_rename_entry':
+    case 'fs_write_text':
+      return 'filesystem'
+    case 'memory_upsert':
+    case 'memory_search':
+      return 'memory'
+    default:
+      return 'other'
+  }
+}
+
+function toolStageLabel(stage: ToolStageKey, t: TranslateFn): string {
+  switch (stage) {
+    case 'context':
+      return t('chat.stage.context')
+    case 'filesystem':
+      return t('chat.stage.filesystem')
+    case 'memory':
+      return t('chat.stage.memory')
+    default:
+      return t('chat.stage.other')
+  }
+}
+
+function groupToolEventsByStage(events: AIChatToolEvent[]): Array<{ stage: ToolStageKey; items: AIChatToolEvent[] }> {
+  const buckets: Record<ToolStageKey, AIChatToolEvent[]> = {
+    context: [],
+    filesystem: [],
+    memory: [],
+    other: [],
+  }
+  const order: ToolStageKey[] = []
+  for (const event of events) {
+    const stage = toolStageKey(event.tool)
+    if (buckets[stage].length === 0) {
+      order.push(stage)
+    }
+    buckets[stage].push(event)
+  }
+  return order.map((stage) => ({ stage, items: buckets[stage] }))
+}
+
+function stageStatus(events: AIChatToolEvent[]): AIChatToolEvent['status'] {
+  if (events.some((event) => event.status === 'running')) return 'running'
+  if (events.some((event) => event.status === 'error')) return 'error'
+  return 'success'
+}
+
+function shouldCollapseStageByDefault(
+  stage: ToolStageKey,
+  items: AIChatToolEvent[],
+  latestToolEvent: AIChatToolEvent | null,
+): boolean {
+  if (items.length <= 1) return false
+  const status = stageStatus(items)
+  if (status === 'running' || status === 'error') return false
+  if (!latestToolEvent) return true
+  return toolStageKey(latestToolEvent.tool) !== stage
 }
 
 function buildThoughtSummary(toolEvents: AIChatToolEvent[], t: TranslateFn): string {
@@ -298,6 +368,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
 
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
   const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
+  const [collapsedToolStages, setCollapsedToolStages] = useState<Record<string, boolean>>({})
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
@@ -325,6 +396,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const setToolFilter = useCallback((messageId: string, next: 'all' | 'error') => {
     setToolFilterByMessage((prev) => ({ ...prev, [messageId]: next }))
+  }, [])
+  const toggleToolStage = useCallback((stageId: string) => {
+    setCollapsedToolStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
   }, [])
   const toggleToolItem = useCallback((itemId: string) => {
     setExpandedToolItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }))
@@ -420,6 +494,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const toolFilter = toolFilterByMessage[message.id] ?? 'all'
               const visibleToolEvents =
                 toolFilter === 'error' ? toolEvents.filter((event) => event.status === 'error') : toolEvents
+              const groupedToolEvents = groupToolEventsByStage(visibleToolEvents)
               const hasManualToolCollapse = Object.prototype.hasOwnProperty.call(collapsedToolPanels, message.id)
               const toolPanelCollapsed = hasToolEvents
                 ? hasManualToolCollapse
@@ -523,104 +598,130 @@ export function AIChatPanel(props: AIChatPanelProps) {
                         {visibleToolEvents.length === 0 ? (
                           <div className="message-tool-empty">{t('chat.noFailedOps')}</div>
                         ) : null}
-                        {visibleToolEvents.map((toolEvent, idx) => {
-                          const itemId = `${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${idx}`
-                          const hasManualExpand = Object.prototype.hasOwnProperty.call(expandedToolItems, itemId)
-                          const expandedToolItem = hasManualExpand ? expandedToolItems[itemId] === true : toolEvent.status !== 'success'
-                          const durationMs =
-                            toolEvent.durationMs ??
-                            ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
-                              (toolEvent.startedAt ?? toolEvent.timestamp))
-                          const hasStructuredOutput =
-                            (toolEvent.tool === 'fs_list_dir' && Array.isArray(toolEvent.listItems)) ||
-                            (toolEvent.tool === 'fs_exists' && typeof toolEvent.exists === 'boolean') ||
-                            (toolEvent.tool === 'fs_read_text' && typeof toolEvent.readChars === 'number') ||
-                            (toolEvent.tool === 'fs_write_text' && typeof toolEvent.writeChars === 'number')
-
+                        {groupedToolEvents.map((group) => {
+                          const stageId = `${message.id}-stage-${group.stage}`
+                          const hasManualStageCollapse = Object.prototype.hasOwnProperty.call(collapsedToolStages, stageId)
+                          const stageCollapsed = hasManualStageCollapse
+                            ? collapsedToolStages[stageId] === true
+                            : shouldCollapseStageByDefault(group.stage, group.items, latestToolEvent)
+                          const stageState = stageStatus(group.items)
                           return (
-                          <div key={itemId} className={`message-tool-item message-tool-item-${toolEvent.status}`}>
-                            <div className="message-tool-item-head">
-                              <span className="message-tool-item-step">#{toolEvent.step}</span>
-                              <span className="message-tool-item-name">{t('chat.builderAgent')}</span>
-                              <span className="message-tool-item-state">
-                                {toolStatusLabel(toolEvent.status, t)}
+                          <div key={stageId} className="message-tool-stage">
+                            <button className="message-tool-stage-head" type="button" onClick={() => toggleToolStage(stageId)}>
+                              <span className={`message-tool-stage-chevron${stageCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+                                {'>'}
                               </span>
-                              <span className="message-tool-item-kind">{t('chat.terminal')}</span>
-                              <span className="message-tool-item-duration">
-                                {formatDurationLabel(durationMs, toolEvent.status === 'running')}
+                              <span className="message-tool-stage-title">{toolStageLabel(group.stage, t)}</span>
+                              <span className={`message-tool-stage-status message-tool-stage-status-${stageState}`}>
+                                {toolStatusLabel(stageState, t)}
                               </span>
-                              <button className="message-tool-item-toggle" type="button" onClick={() => toggleToolItem(itemId)}>
-                                {expandedToolItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
-                              </button>
-                            </div>
-                            <div className="message-tool-item-action">{toolDisplayName(toolEvent.tool, t)}</div>
-                            <div className="message-tool-command" title={toolEvent.tool}>
-                              <span className="message-tool-command-prefix">$</span>
-                              <span className="message-tool-command-name">{toolEvent.tool}</span>
-                            </div>
-                            <div className="message-tool-item-brief">
-                              <span className="message-tool-item-label">{t('chat.stepResult')}</span>{' '}
-                              {buildToolOutcomeSummary(toolEvent, t)}
-                            </div>
-                            {toolEvent.tool === 'fs_read_text' && toolEvent.readPreview ? (
-                              <div className="message-tool-read-card">
-                                <div className="message-tool-read-head">
-                                  <span className="message-tool-read-path">{toolEvent.readPath ?? t('chat.unknownPath')}</span>
-                                  <span className="message-tool-read-meta">
-                                    {t('chat.readMeta', {
-                                      lines: toolEvent.readLines ?? 0,
-                                      chars: toolEvent.readChars ?? 0,
-                                    })}
-                                  </span>
-                                </div>
-                                <pre className="message-tool-read-preview">{toolEvent.readPreview}</pre>
-                              </div>
-                            ) : null}
-                            {toolEvent.tool === 'fs_write_text' && toolEvent.writePreview ? (
-                              <div className="message-tool-write-card">
-                                <div className="message-tool-write-head">
-                                  <span className="message-tool-write-path">{toolEvent.writePath ?? t('chat.unknownPath')}</span>
-                                  <span className="message-tool-write-meta">
-                                    {t('chat.writeMeta', {
-                                      lines: toolEvent.writeLines ?? 0,
-                                      chars: toolEvent.writeChars ?? 0,
-                                    })}
-                                  </span>
-                                </div>
-                                <pre className="message-tool-write-preview">{toolEvent.writePreview}</pre>
-                              </div>
-                            ) : null}
-                            {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
-                              <div className="message-tool-tree">
-                                {toolEvent.listItems.map((item, treeIdx) => (
-                                  <div key={`${item.kind}-${item.name}-${treeIdx}`} className="message-tool-tree-item">
-                                    <span className={`message-tool-tree-kind message-tool-tree-kind-${item.kind}`}>
-                                      {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
+                              <span className="message-tool-stage-count">{t('chat.operationCount', { count: group.items.length })}</span>
+                            </button>
+                            {stageCollapsed ? null : (
+                            <div className="message-tool-stage-list">
+                              {group.items.map((toolEvent, idx) => {
+                                const itemId = `${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                                const hasManualExpand = Object.prototype.hasOwnProperty.call(expandedToolItems, itemId)
+                                const expandedToolItem = hasManualExpand ? expandedToolItems[itemId] === true : toolEvent.status !== 'success'
+                                const durationMs =
+                                  toolEvent.durationMs ??
+                                  ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                                    (toolEvent.startedAt ?? toolEvent.timestamp))
+                                const hasStructuredOutput =
+                                  (toolEvent.tool === 'fs_list_dir' && Array.isArray(toolEvent.listItems)) ||
+                                  (toolEvent.tool === 'fs_exists' && typeof toolEvent.exists === 'boolean') ||
+                                  (toolEvent.tool === 'fs_read_text' && typeof toolEvent.readChars === 'number') ||
+                                  (toolEvent.tool === 'fs_write_text' && typeof toolEvent.writeChars === 'number')
+
+                                return (
+                                <div key={itemId} className={`message-tool-item message-tool-item-${toolEvent.status}`}>
+                                  <div className="message-tool-item-head">
+                                    <span className="message-tool-item-step">#{toolEvent.step}</span>
+                                    <span className="message-tool-item-name">{t('chat.builderAgent')}</span>
+                                    <span className="message-tool-item-state">
+                                      {toolStatusLabel(toolEvent.status, t)}
                                     </span>
-                                    <span className="message-tool-tree-name">{item.name}</span>
+                                    <span className="message-tool-item-kind">{t('chat.terminal')}</span>
+                                    <span className="message-tool-item-duration">
+                                      {formatDurationLabel(durationMs, toolEvent.status === 'running')}
+                                    </span>
+                                    <button className="message-tool-item-toggle" type="button" onClick={() => toggleToolItem(itemId)}>
+                                      {expandedToolItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
+                                    </button>
                                   </div>
-                                ))}
-                                {toolEvent.listTruncated ? (
-                                  <div className="message-tool-tree-more">{t('chat.treeMore')}</div>
-                                ) : null}
-                              </div>
-                            ) : null}
-                            {expandedToolItem ? (
-                              <>
-                                {toolEvent.inputPreview ? (
-                                  <pre className="message-tool-item-line" title={toolEvent.inputPreview}>
-                                    <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
-                                    {toolEvent.inputPreview}
-                                  </pre>
-                                ) : null}
-                                {toolEvent.observationPreview && (!hasStructuredOutput || toolEvent.status === 'error') ? (
-                                  <pre className="message-tool-item-line" title={toolEvent.observationPreview}>
-                                    <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
-                                    {toolEvent.observationPreview}
-                                  </pre>
-                                ) : null}
-                              </>
-                            ) : null}
+                                  <div className="message-tool-item-action">{toolDisplayName(toolEvent.tool, t)}</div>
+                                  <div className="message-tool-command" title={toolEvent.tool}>
+                                    <span className="message-tool-command-prefix">$</span>
+                                    <span className="message-tool-command-name">{toolEvent.tool}</span>
+                                  </div>
+                                  <div className="message-tool-item-brief">
+                                    <span className="message-tool-item-label">{t('chat.stepResult')}</span>{' '}
+                                    {buildToolOutcomeSummary(toolEvent, t)}
+                                  </div>
+                                  {toolEvent.tool === 'fs_read_text' && toolEvent.readPreview ? (
+                                    <div className="message-tool-read-card">
+                                      <div className="message-tool-read-head">
+                                        <span className="message-tool-read-path">{toolEvent.readPath ?? t('chat.unknownPath')}</span>
+                                        <span className="message-tool-read-meta">
+                                          {t('chat.readMeta', {
+                                            lines: toolEvent.readLines ?? 0,
+                                            chars: toolEvent.readChars ?? 0,
+                                          })}
+                                        </span>
+                                      </div>
+                                      <pre className="message-tool-read-preview">{toolEvent.readPreview}</pre>
+                                    </div>
+                                  ) : null}
+                                  {toolEvent.tool === 'fs_write_text' && toolEvent.writePreview ? (
+                                    <div className="message-tool-write-card">
+                                      <div className="message-tool-write-head">
+                                        <span className="message-tool-write-path">{toolEvent.writePath ?? t('chat.unknownPath')}</span>
+                                        <span className="message-tool-write-meta">
+                                          {t('chat.writeMeta', {
+                                            lines: toolEvent.writeLines ?? 0,
+                                            chars: toolEvent.writeChars ?? 0,
+                                          })}
+                                        </span>
+                                      </div>
+                                      <pre className="message-tool-write-preview">{toolEvent.writePreview}</pre>
+                                    </div>
+                                  ) : null}
+                                  {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
+                                    <div className="message-tool-tree">
+                                      {toolEvent.listItems.map((item, treeIdx) => (
+                                        <div key={`${item.kind}-${item.name}-${treeIdx}`} className="message-tool-tree-item">
+                                          <span className={`message-tool-tree-kind message-tool-tree-kind-${item.kind}`}>
+                                            {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
+                                          </span>
+                                          <span className="message-tool-tree-name">{item.name}</span>
+                                        </div>
+                                      ))}
+                                      {toolEvent.listTruncated ? (
+                                        <div className="message-tool-tree-more">{t('chat.treeMore')}</div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                  {expandedToolItem ? (
+                                    <>
+                                      {toolEvent.inputPreview ? (
+                                        <pre className="message-tool-item-line" title={toolEvent.inputPreview}>
+                                          <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
+                                          {toolEvent.inputPreview}
+                                        </pre>
+                                      ) : null}
+                                      {toolEvent.observationPreview && (!hasStructuredOutput || toolEvent.status === 'error') ? (
+                                        <pre className="message-tool-item-line" title={toolEvent.observationPreview}>
+                                          <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
+                                          {toolEvent.observationPreview}
+                                        </pre>
+                                      ) : null}
+                                    </>
+                                  ) : null}
+                                </div>
+                                )
+                              })}
+                            </div>
+                            )}
                           </div>
                           )
                         })}

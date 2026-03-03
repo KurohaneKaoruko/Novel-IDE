@@ -1347,6 +1347,86 @@ body {
   color: var(--text-muted);
 }
 
+.message-tool-stage {
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 90%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  overflow: hidden;
+}
+
+.message-tool-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+}
+
+.message-tool-stage-head:hover {
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--accent-primary));
+}
+
+.message-tool-stage-head:focus-visible {
+  outline: 1px solid var(--accent-primary);
+  outline-offset: -1px;
+}
+
+.message-tool-stage-chevron {
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.message-tool-stage-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.message-tool-stage-title {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.message-tool-stage-status {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.message-tool-stage-status-running {
+  color: var(--accent-primary);
+}
+
+.message-tool-stage-status-success {
+  color: var(--success-text);
+}
+
+.message-tool-stage-status-error {
+  color: var(--error-text);
+}
+
+.message-tool-stage-count {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.message-tool-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.message-tool-stage-list .message-tool-item {
+  margin: 0;
+}
+
 .message-tool-item {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
