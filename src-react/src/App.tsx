@@ -253,6 +253,13 @@ type SelectionLineRange = {
   endLine: number
 }
 
+type ExtendedLexicalEditor = LexicalEditorType & {
+  getSelectedText?: () => string
+  getContextBeforeCursor?: (maxChars: number) => string
+  getContent?: () => string
+  getSelectionOffsets?: () => SelectionOffsets | null
+}
+
 type InlineAIAssistCommand = 'polish' | 'expand' | 'condense'
 
 type StreamWaiter = {
@@ -1508,7 +1515,7 @@ function App() {
     if (!editor) return ''
 
     // Use Lexical's getSelectedText method from AIAssistPlugin
-    const extendedEditor = editor as any
+    const extendedEditor = editor as ExtendedLexicalEditor
     if (extendedEditor.getSelectedText && typeof extendedEditor.getSelectedText === 'function') {
       return extendedEditor.getSelectedText()
     }
@@ -2004,7 +2011,9 @@ function App() {
       try {
         const { chatCancelStream } = await import('./tauriChat')
         await chatCancelStream(rollbackTurn.streamId)
-      } catch {}
+      } catch {
+        // Ignore cancellation failures during rollback cleanup.
+      }
     }
 
     cleanupStreamRefs(streamRefs, rollbackTurn.streamId)
@@ -2084,7 +2093,9 @@ function App() {
       try {
         const { chatCancelStream } = await import('./tauriChat')
         await chatCancelStream(streamId)
-      } catch {}
+      } catch {
+        // Ignore cancellation failures during auto-retry cancellation.
+      }
 
       const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
       for (let i = 0; i < 40; i += 1) {
@@ -2295,7 +2306,7 @@ function App() {
     const editor = editorRef.current
 
     // Use getContextBeforeCursor from AIAssistPlugin to get last 1200 characters
-    const extendedEditor = editor as any
+    const extendedEditor = editor as ExtendedLexicalEditor
     let snippet = ''
 
     if (extendedEditor?.getContextBeforeCursor && typeof extendedEditor.getContextBeforeCursor === 'function') {
@@ -2600,7 +2611,7 @@ function App() {
       const withBounds = (value: number) => Math.max(0, Math.min(value, content.length))
       const toLine = (offset: number) => content.slice(0, withBounds(offset)).split('\n').length
 
-      const extendedEditor = editor as (LexicalEditorType & { getSelectionOffsets?: () => SelectionOffsets | null }) | null | undefined
+      const extendedEditor = editor as ExtendedLexicalEditor | null | undefined
       const offsets = extendedEditor?.getSelectionOffsets?.()
       if (offsets) {
         const start = withBounds(offsets.start)
@@ -4834,7 +4845,6 @@ function App() {
 }
 
 export default App
-
 
 
 

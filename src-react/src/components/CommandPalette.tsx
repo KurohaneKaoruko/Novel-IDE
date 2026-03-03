@@ -87,9 +87,11 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
           break
         case 'Enter':
           e.preventDefault()
-          const cmd = flatCommands[selectedIndex]
-          if (cmd) {
-            runCommand(cmd)
+          {
+            const cmd = flatCommands[selectedIndex]
+            if (cmd) {
+              runCommand(cmd)
+            }
           }
           break
         case 'Escape':

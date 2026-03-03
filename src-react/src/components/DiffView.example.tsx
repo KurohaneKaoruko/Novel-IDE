@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components, react-hooks/rules-of-hooks */
 /**
  * Example usage of DiffView integration in App.tsx
  * 
