@@ -122,13 +122,15 @@ function shouldCollapseMessage(message: AIChatMessage): boolean {
   return text.length > DEFAULT_COLLAPSE_CHAR_LIMIT || countLines(text) > DEFAULT_COLLAPSE_LINE_LIMIT
 }
 
-function toolStatusLabel(status: AIChatToolEvent['status'], t: (key: string) => string): string {
+type TranslateFn = (key: string, params?: Record<string, string | number>) => string
+
+function toolStatusLabel(status: AIChatToolEvent['status'], t: TranslateFn): string {
   if (status === 'running') return t('chat.operationRunning')
   if (status === 'error') return t('chat.operationError')
   return t('chat.operationDone')
 }
 
-function toolDisplayName(tool: string, t: (key: string) => string): string {
+function toolDisplayName(tool: string, t: TranslateFn): string {
   switch (tool) {
     case 'fs_read_text':
       return t('chat.tool.fsReadText')
@@ -153,6 +155,28 @@ function toolDisplayName(tool: string, t: (key: string) => string): string {
     default:
       return tool
   }
+}
+
+function buildThoughtSummary(toolEvents: AIChatToolEvent[], t: TranslateFn): string {
+  if (toolEvents.length === 0) return ''
+  const failed = toolEvents.filter((event) => event.status === 'error')
+  const completed = toolEvents.filter((event) => event.status === 'success')
+  const running = [...toolEvents].reverse().find((event) => event.status === 'running')
+  if (running) {
+    return t('chat.summaryRunning', {
+      action: toolDisplayName(running.tool, t),
+      done: completed.length,
+      failed: failed.length,
+    })
+  }
+  if (failed.length > 0) {
+    const latestFailed = failed[failed.length - 1]
+    return t('chat.summaryFailed', {
+      failed: failed.length,
+      action: toolDisplayName(latestFailed.tool, t),
+    })
+  }
+  return t('chat.summaryDone', { done: completed.length })
 }
 
 function formatDurationLabel(ms: number): string {
@@ -216,6 +240,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
 
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
   const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
+  const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
 
   const hasRunningToolEvents = chatMessages.some((message) => {
@@ -238,6 +263,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const toggleToolPanel = useCallback((messageId: string) => {
     setCollapsedToolPanels((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
+  }, [])
+  const setToolFilter = useCallback((messageId: string, next: 'all' | 'error') => {
+    setToolFilterByMessage((prev) => ({ ...prev, [messageId]: next }))
   }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -325,6 +353,11 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const toolEvents = message.toolEvents ?? []
               const hasToolEvents = message.role === 'assistant' && toolEvents.length > 0
               const latestToolEvent = hasToolEvents ? toolEvents[toolEvents.length - 1] : null
+              const thoughtSummary = hasToolEvents ? buildThoughtSummary(toolEvents, t) : ''
+              const failedToolCount = hasToolEvents ? toolEvents.filter((event) => event.status === 'error').length : 0
+              const toolFilter = toolFilterByMessage[message.id] ?? 'all'
+              const visibleToolEvents =
+                toolFilter === 'error' ? toolEvents.filter((event) => event.status === 'error') : toolEvents
               const hasManualToolCollapse = Object.prototype.hasOwnProperty.call(collapsedToolPanels, message.id)
               const toolPanelCollapsed = hasToolEvents
                 ? hasManualToolCollapse
@@ -401,15 +434,34 @@ export function AIChatPanel(props: AIChatPanelProps) {
                       </span>
                     </button>
                     {toolPanelCollapsed ? (
-                      latestToolEvent ? (
+                      thoughtSummary ? (
                         <div className="message-tool-collapsed-line">
-                          {latestToolEvent.status === 'running' ? t('chat.currentOperation') : t('chat.latestOperation')}{' '}
-                          {toolDisplayName(latestToolEvent.tool, t)}
+                          {thoughtSummary}
                         </div>
                       ) : null
                     ) : (
                       <div className="message-tool-list">
-                        {toolEvents.map((toolEvent, idx) => (
+                        <div className="message-tool-summary-text">{thoughtSummary}</div>
+                        <div className="message-tool-toolbar">
+                          <button
+                            className={`message-tool-filter${toolFilter === 'all' ? ' active' : ''}`}
+                            type="button"
+                            onClick={() => setToolFilter(message.id, 'all')}
+                          >
+                            {t('chat.filterAll')}
+                          </button>
+                          <button
+                            className={`message-tool-filter${toolFilter === 'error' ? ' active' : ''}`}
+                            type="button"
+                            onClick={() => setToolFilter(message.id, 'error')}
+                          >
+                            {t('chat.filterFailed', { count: failedToolCount })}
+                          </button>
+                        </div>
+                        {visibleToolEvents.length === 0 ? (
+                          <div className="message-tool-empty">{t('chat.noFailedOps')}</div>
+                        ) : null}
+                        {visibleToolEvents.map((toolEvent, idx) => (
                           <div
                             key={`${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${idx}`}
                             className={`message-tool-item message-tool-item-${toolEvent.status}`}
