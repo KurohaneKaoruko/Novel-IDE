@@ -120,6 +120,12 @@ function shouldCollapseMessage(message: AIChatMessage): boolean {
   return text.length > DEFAULT_COLLAPSE_CHAR_LIMIT || countLines(text) > DEFAULT_COLLAPSE_LINE_LIMIT
 }
 
+function toolStatusLabel(status: AIChatToolEvent['status'], t: (key: string) => string): string {
+  if (status === 'running') return t('chat.operationRunning')
+  if (status === 'error') return t('chat.operationError')
+  return t('chat.operationDone')
+}
+
 export function AIChatPanel(props: AIChatPanelProps) {
   const { t } = useI18n()
   const {
@@ -325,15 +331,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 {hasToolEvents ? (
                   <div className="message-tool-activity">
                     <button className="message-tool-summary" onClick={() => toggleToolPanel(message.id)} type="button">
-                      <span className="message-tool-summary-title">{t('chat.operations')}</span>
-                      <span className={`message-tool-summary-status message-tool-summary-status-${latestToolEvent?.status ?? 'running'}`}>
-                        {latestToolEvent?.status === 'running'
-                          ? t('chat.operationRunning')
-                          : latestToolEvent?.status === 'error'
-                            ? t('chat.operationError')
-                            : t('chat.operationDone')}
+                      <span className={`message-tool-summary-chevron${toolPanelCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+                        {'>'}
                       </span>
-                      <span className="message-tool-summary-count">{toolEvents.length}</span>
+                      <span className="message-tool-summary-title">{t('chat.thoughtProcess')}</span>
+                      <span className="message-tool-summary-count">{t('chat.operationCount', { count: toolEvents.length })}</span>
+                      <span className={`message-tool-summary-status message-tool-summary-status-${latestToolEvent?.status ?? 'running'}`}>
+                        {toolStatusLabel(latestToolEvent?.status ?? 'running', t)}
+                      </span>
                       <span className="message-tool-summary-toggle">
                         {toolPanelCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}
                       </span>
@@ -354,17 +359,28 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           >
                             <div className="message-tool-item-head">
                               <span className="message-tool-item-step">#{toolEvent.step}</span>
-                              <span className="message-tool-item-name">{toolEvent.tool}</span>
+                              <span className="message-tool-item-name">{t('chat.builderAgent')}</span>
                               <span className="message-tool-item-state">
-                                {toolEvent.status === 'running'
-                                  ? t('chat.operationRunning')
-                                  : toolEvent.status === 'error'
-                                    ? t('chat.operationError')
-                                    : t('chat.operationDone')}
+                                {toolStatusLabel(toolEvent.status, t)}
                               </span>
+                              <span className="message-tool-item-kind">{t('chat.terminal')}</span>
                             </div>
-                            {toolEvent.inputPreview ? <div className="message-tool-item-line">IN: {toolEvent.inputPreview}</div> : null}
-                            {toolEvent.observationPreview ? <div className="message-tool-item-line">OUT: {toolEvent.observationPreview}</div> : null}
+                            <div className="message-tool-command">
+                              <span className="message-tool-command-prefix">$</span>
+                              <span className="message-tool-command-name">{toolEvent.tool}</span>
+                            </div>
+                            {toolEvent.inputPreview ? (
+                              <pre className="message-tool-item-line">
+                                <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
+                                {toolEvent.inputPreview}
+                              </pre>
+                            ) : null}
+                            {toolEvent.observationPreview ? (
+                              <pre className="message-tool-item-line">
+                                <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
+                                {toolEvent.observationPreview}
+                              </pre>
+                            ) : null}
                           </div>
                         ))}
                       </div>
