@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useI18n } from '../i18n'
 import './Search.css'
 
 export type SearchResult = {
@@ -25,6 +26,7 @@ type SearchPanelProps = {
 }
 
 export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: SearchPanelProps) {
+  const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
@@ -44,7 +46,7 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return
-    
+
     setLoading(true)
     setSearched(true)
     try {
@@ -57,9 +59,9 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
     }
   }, [query, options, onSearch])
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      handleSearch()
+      void handleSearch()
     } else if (e.key === 'Escape') {
       onClose()
     }
@@ -75,15 +77,17 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
             ref={inputRef}
             type="text"
             className="search-input"
-          placeholder="Search..."
+            placeholder={t('search.placeholder')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
           />
-          <button className="search-btn" onClick={handleSearch} disabled={loading}>
-            {loading ? '...' : '🔍'}
+          <button className="search-btn" onClick={() => void handleSearch()} disabled={loading}>
+            {loading ? t('search.searching') : t('search.search')}
           </button>
-        <button className="search-close" onClick={onClose}>x</button>
+          <button className="search-close" onClick={onClose} aria-label={t('common.close')}>
+            x
+          </button>
         </div>
 
         <div className="search-options">
@@ -93,7 +97,7 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
               checked={options.caseSensitive}
               onChange={(e) => setOptions({ ...options, caseSensitive: e.target.checked })}
             />
-            <span>区分大小写</span>
+            <span>{t('search.option.caseSensitive')}</span>
           </label>
           <label className="search-option">
             <input
@@ -101,7 +105,7 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
               checked={options.wholeWord}
               onChange={(e) => setOptions({ ...options, wholeWord: e.target.checked })}
             />
-            <span>全词匹配</span>
+            <span>{t('search.option.wholeWord')}</span>
           </label>
           <label className="search-option">
             <input
@@ -109,14 +113,12 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
               checked={options.regex}
               onChange={(e) => setOptions({ ...options, regex: e.target.checked })}
             />
-            <span>正则表达式</span>
+            <span>{t('search.option.regex')}</span>
           </label>
         </div>
 
         <div className="search-results">
-          {results.length === 0 && searched && !loading && (
-            <div className="search-empty">未找到匹配结果</div>
-          )}
+          {results.length === 0 && searched && !loading ? <div className="search-empty">{t('search.empty')}</div> : null}
           {results.map((result) => (
             <div
               key={result.id}
@@ -132,11 +134,9 @@ export function SearchPanel({ isOpen, onClose, onSearch, onResultClick }: Search
           ))}
         </div>
 
-        {results.length > 0 && (
-          <div className="search-footer">
-            找到 {results.length} 个结果
-          </div>
-        )}
+        {results.length > 0 ? (
+          <div className="search-footer">{t('search.resultCount', { count: results.length })}</div>
+        ) : null}
       </div>
     </div>
   )

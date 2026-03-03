@@ -62,6 +62,7 @@ import { WritingGoalPanel } from './components/WritingGoalPanel'
 import { RiskPanel } from './components/RiskPanel'
 import { StatusBar } from './components/StatusBar'
 import { CommandPalette } from './components/CommandPalette'
+import { SearchPanel, type SearchResult } from './components/Search'
 import { TabBar } from './components/TabBar'
 import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
 import { useAutoSave, clearAutoSavedContent } from './hooks/useAutoSave'
@@ -297,6 +298,12 @@ type RollbackTurnState = {
   changeSetIds: string[]
 }
 
+type SearchPanelOptions = {
+  caseSensitive?: boolean
+  wholeWord?: boolean
+  regex?: boolean
+}
+
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
 const FIRST_TOKEN_RETRY_TIMEOUT_MS = 35_000
 const AUTO_RETRY_MAX_PER_GROUP = 1
@@ -304,6 +311,60 @@ const STREAM_MANUAL_CANCEL_GRACE_MS = 6_000
 const STREAM_PRETOKEN_HARD_TIMEOUT_MS = 360_000
 const STREAM_IDLE_HARD_TIMEOUT_MS = 120_000
 const STREAM_TOTAL_HARD_TIMEOUT_MS = 900_000
+const FILE_SEARCH_RESULT_LIMIT = 300
+const SEARCHABLE_TEXT_EXTENSIONS = new Set(['md', 'txt', 'json', 'toml', 'yaml', 'yml'])
+
+function normalizeRelativePath(path: string): string {
+  return path.replaceAll('\\', '/')
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function collectSearchableFiles(node: FsEntry | null): string[] {
+  if (!node) return []
+  const files: string[] = []
+
+  const walk = (entry: FsEntry) => {
+    if (entry.kind === 'file') {
+      const normalized = normalizeRelativePath(entry.path)
+      const extension = normalized.split('.').pop()?.toLowerCase() ?? ''
+      if (SEARCHABLE_TEXT_EXTENSIONS.has(extension)) {
+        files.push(normalized)
+      }
+      return
+    }
+
+    for (const child of entry.children ?? []) {
+      if (child.name === '.git' || child.name === 'node_modules' || child.name === 'target') continue
+      walk(child)
+    }
+  }
+
+  walk(node)
+  return files
+}
+
+function buildSearchRegex(query: string, options: SearchPanelOptions): RegExp {
+  const base = options.regex ? query : escapeRegExp(query)
+  const source = options.wholeWord ? `\\b${base}\\b` : base
+  return new RegExp(source, options.caseSensitive ? 'g' : 'gi')
+}
+
+function countMatches(line: string, regex: RegExp): number {
+  regex.lastIndex = 0
+  let count = 0
+  let match: RegExpExecArray | null = null
+  while ((match = regex.exec(line)) !== null) {
+    count += 1
+    if (match[0].length === 0) {
+      regex.lastIndex += 1
+    }
+    if (count > 999) break
+  }
+  return count
+}
 
 function shortText(text: string, max = 180): string {
   const trimmed = text.trim()
@@ -392,6 +453,8 @@ function App() {
   // Modern UI State
   const initialUISettings = uiSettingsManager.getSettings() as UISettingsState
   const [showCommandPalette, setShowCommandPalette] = useState(false)
+  const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState('')
+  const [showSearchPanel, setShowSearchPanel] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark'>(initialUISettings.theme)
   const [uiDensity, setUiDensity] = useState<'compact' | 'comfortable'>(initialUISettings.density)
   const [uiMotion, setUiMotion] = useState<'full' | 'reduced'>(initialUISettings.motion)
@@ -535,6 +598,14 @@ function App() {
   const { validateTaskQuality } = useTaskQualityValidator()
 
   const activeFile = useMemo(() => openFiles.find((f) => f.path === activePath) ?? null, [openFiles, activePath])
+  const openFileContentMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const file of openFiles) {
+      map.set(normalizeRelativePath(file.path), file.content)
+    }
+    return map
+  }, [openFiles])
+  const searchableFilePaths = useMemo(() => collectSearchableFiles(tree), [tree])
   const isMarkdownFile = useMemo(() => !!activeFile && activeFile.path.toLowerCase().endsWith('.md'), [activeFile])
   const activeCharCount = useMemo(() => {
     if (!activeFile) return 0
@@ -1178,6 +1249,89 @@ function App() {
       }
     },
     [openFiles],
+  )
+
+  const openCommandPalette = useCallback((initialQuery = '') => {
+    setCommandPaletteInitialQuery(initialQuery)
+    setShowCommandPalette(true)
+  }, [])
+
+  const onSearchInFiles = useCallback(
+    async (query: string, options: SearchPanelOptions): Promise<SearchResult[]> => {
+      const normalizedQuery = query.trim()
+      if (!normalizedQuery) return []
+
+      let regex: RegExp
+      try {
+        regex = buildSearchRegex(normalizedQuery, options)
+      } catch {
+        setError(t('search.error.invalidRegex'))
+        return []
+      }
+
+      const results: SearchResult[] = []
+      for (const filePath of searchableFilePaths) {
+        let content = openFileContentMap.get(filePath)
+        if (content === undefined) {
+          try {
+            content = await readText(filePath)
+          } catch {
+            continue
+          }
+        }
+
+        const lines = content.split(/\r?\n/)
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+          const line = lines[lineIndex]
+          const matches = countMatches(line, regex)
+          if (matches <= 0) continue
+
+          results.push({
+            id: `${filePath}:${lineIndex + 1}:${results.length}`,
+            path: filePath,
+            line: lineIndex + 1,
+            preview: line.trim() || line,
+            matchCount: matches,
+          })
+
+          if (results.length >= FILE_SEARCH_RESULT_LIMIT) {
+            return results
+          }
+        }
+      }
+
+      return results
+    },
+    [openFileContentMap, searchableFilePaths, t],
+  )
+
+  const onSearchResultClick = useCallback(
+    (result: SearchResult) => {
+      setShowSearchPanel(false)
+      void onOpenByPath(result.path)
+    },
+    [onOpenByPath],
+  )
+
+  const closeActiveTab = useCallback(() => {
+    if (!activePath) return
+    setOpenFiles((prev) => {
+      const next = prev.filter((f) => f.path !== activePath)
+      setActivePath(next[next.length - 1]?.path ?? null)
+      return next
+    })
+  }, [activePath])
+
+  const focusNeighborTab = useCallback(
+    (direction: 'next' | 'prev') => {
+      if (!activePath || openFiles.length <= 1) return
+      const currentIndex = openFiles.findIndex((f) => f.path === activePath)
+      if (currentIndex < 0) return
+      const offset = direction === 'next' ? 1 : -1
+      const nextIndex = (currentIndex + offset + openFiles.length) % openFiles.length
+      setActivePath(openFiles[nextIndex]?.path ?? activePath)
+    },
+    [activePath, openFiles],
   )
 
   const { ensureAutoNextChapter, ensureAutoStoryFile } = useAutoStoryNavigation({
@@ -3240,6 +3394,8 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
         void onSaveActive()
@@ -3250,19 +3406,44 @@ function App() {
         toggleSidebar()
         return
       }
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault()
+        closeActiveTab()
+        return
+      }
+      if (mod && !e.altKey && e.key === 'Tab') {
+        e.preventDefault()
+        focusNeighborTab(e.shiftKey ? 'prev' : 'next')
+        return
+      }
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyL') {
         e.preventDefault()
         chatInputRef.current?.focus()
       }
-      // Command Palette: Ctrl+Shift+P
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'p') {
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
         e.preventDefault()
-        setShowCommandPalette(true)
+        setShowSearchPanel(true)
+        return
+      }
+      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setShowSearchPanel(true)
+        return
+      }
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        openCommandPalette('@')
+        return
+      }
+      // Command Palette: Ctrl+Shift+P
+      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        openCommandPalette('>')
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onSaveActive, toggleSidebar])
+  }, [closeActiveTab, focusNeighborTab, onSaveActive, openCommandPalette, toggleSidebar])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -3358,6 +3539,211 @@ function App() {
       ctx.fillText(p.name, p.x, p.y)
     }
   }, [activeRightTab, graphNodes, graphEdges]) // Re-render when tab changes or data changes
+
+  const quickOpenFileCommands = useMemo(
+    () =>
+      [...searchableFilePaths].sort((a, b) => a.localeCompare(b)).map((filePath) => {
+        const parts = filePath.split('/')
+        const fileName = parts[parts.length - 1] ?? filePath
+        const parent = parts.length > 1 ? parts.slice(0, -1).join('/') : '.'
+        return {
+          id: `open-file:${filePath}`,
+          kind: 'file' as const,
+          label: fileName,
+          description: parent,
+          keywords: [filePath, fileName, parent],
+          category: t('app.command.category.files'),
+          action: () => onOpenByPath(filePath),
+        }
+      }),
+    [onOpenByPath, searchableFilePaths, t],
+  )
+
+  const commandPaletteCommands = useMemo(
+    () => [
+      {
+        id: 'quickOpenFiles',
+        kind: 'command' as const,
+        label: t('app.command.quickOpen'),
+        category: t('app.command.category.file'),
+        shortcut: 'Ctrl+P',
+        action: () => {
+          window.setTimeout(() => {
+            openCommandPalette('@')
+          }, 0)
+        },
+      },
+      {
+        id: 'searchInFiles',
+        kind: 'command' as const,
+        label: t('app.command.searchInFiles'),
+        category: t('app.command.category.file'),
+        shortcut: 'Ctrl+Shift+F',
+        action: () => setShowSearchPanel(true),
+      },
+      { id: 'save', kind: 'command' as const, label: t('app.command.saveFile'), category: t('app.command.category.file'), shortcut: 'Ctrl+S', action: () => onSaveActive() },
+      {
+        id: 'closeTab',
+        kind: 'command' as const,
+        label: t('app.command.closeTab'),
+        category: t('app.command.category.file'),
+        shortcut: 'Ctrl+W',
+        action: closeActiveTab,
+      },
+      {
+        id: 'nextTab',
+        kind: 'command' as const,
+        label: t('app.command.nextTab'),
+        category: t('app.command.category.file'),
+        shortcut: 'Ctrl+Tab',
+        action: () => focusNeighborTab('next'),
+      },
+      {
+        id: 'prevTab',
+        kind: 'command' as const,
+        label: t('app.command.prevTab'),
+        category: t('app.command.category.file'),
+        shortcut: 'Ctrl+Shift+Tab',
+        action: () => focusNeighborTab('prev'),
+      },
+      { id: 'newChapter', kind: 'command' as const, label: t('app.command.newChapter'), category: t('app.command.category.file'), action: () => onNewChapter() },
+      {
+        id: 'switchProject',
+        kind: 'command' as const,
+        label: t('app.command.switchProject'),
+        category: t('app.command.category.file'),
+        action: () => {
+          setShowCommandPalette(false)
+          setAppView('project-picker')
+          void refreshProjectPickerState()
+        },
+      },
+      { id: 'toggleTheme', kind: 'command' as const, label: t('app.command.toggleTheme'), category: t('app.command.category.view'), action: toggleTheme },
+      { id: 'toggleDensity', kind: 'command' as const, label: t('app.command.toggleDensity'), category: t('app.command.category.view'), action: toggleDensity },
+      { id: 'toggleSidebar', kind: 'command' as const, label: t('app.command.toggleSidebar'), category: t('app.command.category.view'), shortcut: 'Ctrl+B', action: toggleSidebar },
+      { id: 'openSettings', kind: 'command' as const, label: t('app.command.openSettings'), category: t('app.command.category.settings'), shortcut: 'Ctrl+,', action: () => setShowSettings(true) },
+      {
+        id: 'aiChat',
+        kind: 'command' as const,
+        label: t('app.command.aiChat'),
+        category: t('app.command.category.ai'),
+        shortcut: 'Ctrl+Shift+L',
+        action: () => {
+          openRightTab('chat')
+          window.setTimeout(() => {
+            chatInputRef.current?.focus()
+          }, 0)
+        },
+      },
+      { id: 'smartComplete', kind: 'command' as const, label: t('app.command.smartComplete'), category: t('app.command.category.ai'), action: () => onSmartComplete() },
+      {
+        id: 'toggleAutoLongWrite',
+        kind: 'command' as const,
+        label: autoLongWriteEnabled ? t('app.command.disableAutoLongWrite') : t('app.command.enableAutoLongWrite'),
+        category: t('app.command.category.ai'),
+        action: () => {
+          const next = !autoLongWriteEnabled
+          setAutoLongWriteEnabled(next)
+          autoLongWriteStopRef.current = !next
+          setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
+          if (!next && activeStreamId) {
+            void onStopChat()
+          }
+        },
+      },
+      { id: 'regenerateReply', kind: 'command' as const, label: t('app.command.regenerateReply'), category: t('app.command.category.ai'), action: () => onRegenerateAssistant(latestCompletedAssistantId ?? undefined) },
+      { id: 'candidateReplies', kind: 'command' as const, label: t('app.command.generateCandidates'), category: t('app.command.category.ai'), action: () => onGenerateAssistantCandidates(latestCompletedAssistantId ?? undefined, 2) },
+      { id: 'modeNormal', kind: 'command' as const, label: t('app.command.modeNormal'), category: t('app.command.category.aiPlanner'), action: () => onWriterModeChange('normal') },
+      { id: 'modePlan', kind: 'command' as const, label: t('app.command.modePlan'), category: t('app.command.category.aiPlanner'), action: () => onWriterModeChange('plan') },
+      { id: 'modeSpec', kind: 'command' as const, label: t('app.command.modeSpec'), category: t('app.command.category.aiPlanner'), action: () => onWriterModeChange('spec') },
+      { id: 'generatePlan', kind: 'command' as const, label: t('app.command.generatePlanTasks'), category: t('app.command.category.aiPlanner'), action: () => onGeneratePlanAndTasks() },
+      { id: 'runQueue', kind: 'command' as const, label: t('app.command.runTaskQueue'), category: t('app.command.category.aiPlanner'), action: () => runPlannerQueue(chatInput) },
+      {
+        id: 'newOutline',
+        kind: 'command' as const,
+        label: t('app.command.createOutline'),
+        category: t('app.command.category.writing'),
+        action: () => {
+          onNewOutline()
+        },
+      },
+      {
+        id: 'newConceptNote',
+        kind: 'command' as const,
+        label: t('app.command.createConcept'),
+        category: t('app.command.category.writing'),
+        action: () => {
+          onNewConceptNote()
+        },
+      },
+      {
+        id: 'openMasterPlan',
+        kind: 'command' as const,
+        label: t('app.command.openMasterPlan'),
+        category: t('app.command.category.writing'),
+        action: () => {
+          onOpenMasterPlanDoc()
+        },
+      },
+      {
+        id: 'openHistory',
+        kind: 'command' as const,
+        label: t('app.command.openHistory'),
+        category: t('app.command.category.writing'),
+        action: () => {
+          openSidebarTab('history')
+        },
+      },
+      {
+        id: 'snapshotActive',
+        kind: 'command' as const,
+        label: t('app.command.snapshotActive'),
+        category: t('app.command.category.writing'),
+        action: () => {
+          if (!activeFile) return
+          void (async () => {
+            try {
+              await createHistorySnapshot(activeFile.path, 'manual')
+              openSidebarTab('history')
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e))
+            }
+          })()
+        },
+      },
+      ...quickOpenFileCommands,
+    ],
+    [
+      activeFile,
+      activeStreamId,
+      autoLongWriteEnabled,
+      chatInput,
+      closeActiveTab,
+      focusNeighborTab,
+      latestCompletedAssistantId,
+      onGenerateAssistantCandidates,
+      onGeneratePlanAndTasks,
+      onNewChapter,
+      onNewConceptNote,
+      onNewOutline,
+      onOpenMasterPlanDoc,
+      onRegenerateAssistant,
+      onSaveActive,
+      onSmartComplete,
+      onStopChat,
+      onWriterModeChange,
+      openCommandPalette,
+      openRightTab,
+      openSidebarTab,
+      quickOpenFileCommands,
+      refreshProjectPickerState,
+      runPlannerQueue,
+      t,
+      toggleDensity,
+      toggleSidebar,
+      toggleTheme,
+    ],
+  )
 
   // --- Render ---
 
@@ -4737,120 +5123,20 @@ function App() {
       {/* Command Palette */}
       {showCommandPalette && (
         <CommandPalette
-          commands={[
-            { id: 'save', label: t('app.command.saveFile'), category: t('app.command.category.file'), shortcut: 'Ctrl+S', action: () => void onSaveActive() },
-            { id: 'newChapter', label: t('app.command.newChapter'), category: t('app.command.category.file'), action: () => void onNewChapter() },
-            {
-              id: 'switchProject',
-              label: t('app.command.switchProject'),
-              category: t('app.command.category.file'),
-              action: () => {
-                setShowCommandPalette(false)
-                setAppView('project-picker')
-                void refreshProjectPickerState()
-              },
-            },
-            { id: 'toggleTheme', label: t('app.command.toggleTheme'), category: t('app.command.category.view'), action: toggleTheme },
-            { id: 'toggleDensity', label: t('app.command.toggleDensity'), category: t('app.command.category.view'), action: toggleDensity },
-            { id: 'toggleSidebar', label: t('app.command.toggleSidebar'), category: t('app.command.category.view'), shortcut: 'Ctrl+B', action: toggleSidebar },
-            { id: 'openSettings', label: t('app.command.openSettings'), category: t('app.command.category.settings'), shortcut: 'Ctrl+,', action: () => setShowSettings(true) },
-            {
-              id: 'aiChat',
-              label: t('app.command.aiChat'),
-              category: t('app.command.category.ai'),
-              shortcut: 'Ctrl+Shift+L',
-              action: () => {
-                openRightTab('chat')
-                window.setTimeout(() => {
-                  chatInputRef.current?.focus()
-                }, 0)
-              },
-            },
-            { id: 'smartComplete', label: t('app.command.smartComplete'), category: t('app.command.category.ai'), action: () => void onSmartComplete() },
-            {
-              id: 'toggleAutoLongWrite',
-              label: autoLongWriteEnabled ? t('app.command.disableAutoLongWrite') : t('app.command.enableAutoLongWrite'),
-              category: t('app.command.category.ai'),
-	              action: () => {
-	                const next = !autoLongWriteEnabled
-	                setAutoLongWriteEnabled(next)
-	                autoLongWriteStopRef.current = !next
-	                setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
-	                if (!next && activeStreamId) {
-	                  void onStopChat()
-	                }
-	              },
-	            },
-            { id: 'regenerateReply', label: t('app.command.regenerateReply'), category: t('app.command.category.ai'), action: () => void onRegenerateAssistant(latestCompletedAssistantId ?? undefined) },
-            { id: 'candidateReplies', label: t('app.command.generateCandidates'), category: t('app.command.category.ai'), action: () => void onGenerateAssistantCandidates(latestCompletedAssistantId ?? undefined, 2) },
-            { id: 'modeNormal', label: t('app.command.modeNormal'), category: t('app.command.category.aiPlanner'), action: () => void onWriterModeChange('normal') },
-            { id: 'modePlan', label: t('app.command.modePlan'), category: t('app.command.category.aiPlanner'), action: () => void onWriterModeChange('plan') },
-            { id: 'modeSpec', label: t('app.command.modeSpec'), category: t('app.command.category.aiPlanner'), action: () => void onWriterModeChange('spec') },
-            { id: 'generatePlan', label: t('app.command.generatePlanTasks'), category: t('app.command.category.aiPlanner'), action: () => void onGeneratePlanAndTasks() },
-            { id: 'runQueue', label: t('app.command.runTaskQueue'), category: t('app.command.category.aiPlanner'), action: () => void runPlannerQueue(chatInput) },
-            {
-              id: 'newOutline',
-              label: t('app.command.createOutline'),
-              category: t('app.command.category.writing'),
-              action: () => {
-                void onNewOutline()
-              },
-            },
-            {
-              id: 'newConceptNote',
-              label: t('app.command.createConcept'),
-              category: t('app.command.category.writing'),
-              action: () => {
-                void onNewConceptNote()
-              },
-            },
-            {
-              id: 'openMasterPlan',
-              label: t('app.command.openMasterPlan'),
-              category: t('app.command.category.writing'),
-              action: () => {
-                void onOpenMasterPlanDoc()
-              },
-            },
-            {
-              id: 'openHistory',
-              label: t('app.command.openHistory'),
-              category: t('app.command.category.writing'),
-              action: () => {
-                openSidebarTab('history')
-              },
-            },
-            {
-              id: 'snapshotActive',
-              label: t('app.command.snapshotActive'),
-              category: t('app.command.category.writing'),
-              action: () => {
-                if (!activeFile) return
-                void (async () => {
-                  try {
-                    await createHistorySnapshot(activeFile.path, 'manual')
-                    openSidebarTab('history')
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : String(e))
-                  }
-                })()
-              },
-            },
-          ]}
+          commands={commandPaletteCommands}
+          initialQuery={commandPaletteInitialQuery}
           onClose={() => setShowCommandPalette(false)}
         />
       )}
+
+      <SearchPanel
+        isOpen={showSearchPanel}
+        onClose={() => setShowSearchPanel(false)}
+        onSearch={onSearchInFiles}
+        onResultClick={onSearchResultClick}
+      />
     </div>
   )
 }
 
 export default App
-
-
-
-
-
-
-
-
-

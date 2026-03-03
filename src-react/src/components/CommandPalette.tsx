@@ -8,6 +8,9 @@ export type Command = {
   id: string
   label: string
   category: string
+  kind?: 'command' | 'file'
+  description?: string
+  keywords?: string[]
   shortcut?: string
   action: () => void | Promise<void>
 }
@@ -15,11 +18,30 @@ export type Command = {
 type CommandPaletteProps = {
   commands: Command[]
   onClose: () => void
+  initialQuery?: string
 }
 
-export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
+function scoreCommand(command: Command, query: string): number {
+  if (!query) return 1
+
+  const label = command.label.toLowerCase()
+  const category = command.category.toLowerCase()
+  const description = (command.description ?? '').toLowerCase()
+  const keywords = command.keywords?.map((word) => word.toLowerCase()) ?? []
+
+  if (label === query) return 120
+  if (keywords.includes(query)) return 110
+  if (label.startsWith(query)) return 100
+  if (label.includes(query)) return 80
+  if (keywords.some((word) => word.includes(query))) return 60
+  if (description.includes(query)) return 45
+  if (category.includes(query)) return 30
+  return 0
+}
+
+export function CommandPalette({ commands, onClose, initialQuery = '' }: CommandPaletteProps) {
   const { t } = useI18n()
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialQuery)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -34,14 +56,23 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
       })
   }, [onClose])
 
+  useEffect(() => {
+    setQuery(initialQuery)
+  }, [initialQuery])
+
   const filteredCommands = useMemo(() => {
-    if (!query.trim()) return commands
-    const q = query.toLowerCase()
-    return commands.filter(
-      (cmd) =>
-        cmd.label.toLowerCase().includes(q) ||
-        cmd.category.toLowerCase().includes(q)
-    )
+    const raw = query.trim()
+    const mode = raw.startsWith('>') ? 'command' : raw.startsWith('@') ? 'file' : 'all'
+    const q = (mode === 'all' ? raw : raw.slice(1)).trim().toLowerCase()
+    const scoped = mode === 'all' ? commands : commands.filter((cmd) => (cmd.kind ?? 'command') === mode)
+
+    if (!q) return scoped
+
+    return scoped
+      .map((cmd) => ({ cmd, score: scoreCommand(cmd, q) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || a.cmd.label.localeCompare(b.cmd.label))
+      .map((item) => item.cmd)
   }, [commands, query])
 
   const groupedCommands = useMemo(() => {
@@ -144,7 +175,12 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
                       onClick={() => handleItemClick(cmd)}
                       onMouseEnter={() => setSelectedIndex(idx)}
                     >
-                      <span className="command-palette-label">{cmd.label}</span>
+                      <div className="command-palette-item-main">
+                        <span className="command-palette-label">{cmd.label}</span>
+                        {cmd.description ? (
+                          <span className="command-palette-description">{cmd.description}</span>
+                        ) : null}
+                      </div>
                       {cmd.shortcut && (
                         <kbd className="command-palette-item-shortcut">{cmd.shortcut}</kbd>
                       )}
