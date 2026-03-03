@@ -1997,6 +1997,7 @@ pub fn chat_generate_stream(
           "tool": tool_event.tool,
           "phase": tool_event.phase,
           "ok": tool_event.ok,
+          "durationMs": tool_event.duration_ms,
           "inputPreview": input_preview,
           "observationPreview": observation_preview,
           "timestamp": Utc::now().timestamp_millis(),

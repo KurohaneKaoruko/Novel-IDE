@@ -153,6 +153,7 @@ type AgentToolActivity = {
   timestamp: number
   startedAt?: number
   finishedAt?: number
+  durationMs?: number
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -263,6 +264,7 @@ function upsertToolActivity(list: AgentToolActivity[] | undefined, incoming: Age
     observationPreview: incoming.observationPreview ?? current.observationPreview,
     startedAt: incoming.startedAt ?? current.startedAt ?? incoming.timestamp,
     finishedAt: incoming.finishedAt ?? current.finishedAt,
+    durationMs: incoming.durationMs ?? current.durationMs,
   }
   return [...base.slice(0, index), merged, ...base.slice(index + 1)]
 }
@@ -3259,6 +3261,7 @@ function App() {
       const inputPreview = typeof p.inputPreview === 'string' ? p.inputPreview : ''
       const observationPreview = typeof p.observationPreview === 'string' ? p.observationPreview : undefined
       const timestamp = typeof p.timestamp === 'number' ? p.timestamp : Date.now()
+      const durationMsRaw = typeof p.durationMs === 'number' ? p.durationMs : Number(p.durationMs)
       const activity: AgentToolActivity = {
         step: Math.max(1, Math.floor(stepRaw)),
         tool,
@@ -3268,6 +3271,7 @@ function App() {
         timestamp,
         startedAt: phase === 'start' ? timestamp : undefined,
         finishedAt: phase === 'finish' ? timestamp : undefined,
+        durationMs: Number.isFinite(durationMsRaw) ? Math.max(0, Math.floor(durationMsRaw)) : undefined,
       }
       setChatMessages((prev) =>
         prev.map((m) =>

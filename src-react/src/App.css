@@ -1395,6 +1395,22 @@ body {
   font-size: 10px;
 }
 
+.message-tool-item-toggle {
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.message-tool-item-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
 .message-tool-item-running .message-tool-item-state {
   color: var(--accent-primary);
 }
@@ -1411,6 +1427,12 @@ body {
   color: var(--text-primary);
   font-size: 12px;
   margin-bottom: 4px;
+}
+
+.message-tool-item-brief {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .message-tool-command {

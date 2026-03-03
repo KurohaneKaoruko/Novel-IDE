@@ -145,6 +145,7 @@ pub struct AgentToolEvent {
   pub phase: String,
   pub ok: Option<bool>,
   pub observation: Option<Value>,
+  pub duration_ms: Option<u128>,
 }
 
 pub struct AgentRuntime {
@@ -409,6 +410,7 @@ impl AgentRuntime {
           phase: "start".to_string(),
           ok: None,
           observation: None,
+          duration_ms: None,
         });
         let t1 = Instant::now();
         let result = if call.tool == "memory_upsert" {
@@ -443,7 +445,8 @@ impl AgentRuntime {
         } else {
           self.tools.call(&self.ctx, &call.tool, call.args.clone())
         };
-        perf.tool_ms += t1.elapsed().as_millis();
+        let duration_ms = t1.elapsed().as_millis();
+        perf.tool_ms += duration_ms;
         let (obs, ok) = match result {
           Ok(v) => (v, true),
           Err(e) => (serde_json::json!({ "error": e }), false),
@@ -455,6 +458,7 @@ impl AgentRuntime {
           phase: "finish".to_string(),
           ok: Some(ok),
           observation: Some(obs.clone()),
+          duration_ms: Some(duration_ms),
         });
         let obs_text = serde_json::to_string_pretty(&obs).unwrap_or_else(|_| obs.to_string());
         messages.push(ChatMessage {

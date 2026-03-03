@@ -25,6 +25,7 @@ export type AIChatToolEvent = {
   timestamp: number
   startedAt?: number
   finishedAt?: number
+  durationMs?: number
 }
 export type AIChatOption = {
   id: string
@@ -179,8 +180,8 @@ function buildThoughtSummary(toolEvents: AIChatToolEvent[], t: TranslateFn): str
   return t('chat.summaryDone', { done: completed.length })
 }
 
-function formatDurationLabel(ms: number): string {
-  const safe = Math.max(0, Math.floor(ms))
+function formatDurationLabel(ms: number, running: boolean): string {
+  const safe = Math.max(running ? 0 : 1, Math.floor(ms))
   if (safe < 1000) return `${safe}ms`
   if (safe < 60_000) {
     const sec = safe / 1000
@@ -189,6 +190,30 @@ function formatDurationLabel(ms: number): string {
   const minutes = Math.floor(safe / 60_000)
   const seconds = Math.floor((safe % 60_000) / 1000)
   return `${minutes}m ${seconds}s`
+}
+
+function compactPlainText(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxChars) return normalized
+  return `${normalized.slice(0, maxChars)}...`
+}
+
+function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): string {
+  if (toolEvent.status === 'running') return t('chat.stepInProgress')
+  const raw = toolEvent.observationPreview?.trim()
+  if (!raw) return t('chat.outcomeOk')
+  if (raw.includes('"exists":true') || raw.includes('"exists": true')) return t('chat.outcomePathExists')
+  if (raw.includes('"exists":false') || raw.includes('"exists": false')) return t('chat.outcomePathMissing')
+  if (toolEvent.tool === 'fs_list_dir') {
+    const match = raw.match(/"name"\s*:/g)
+    const count = match ? match.length : 0
+    if (count > 0) return t('chat.outcomeListDir', { count })
+  }
+  if (toolEvent.tool === 'fs_read_text') {
+    if (raw.includes('"text":')) return t('chat.outcomeReadText')
+  }
+  if (raw.includes('"error"')) return t('chat.outcomeError')
+  return compactPlainText(raw, 96)
 }
 
 export function AIChatPanel(props: AIChatPanelProps) {
@@ -241,6 +266,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
   const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
+  const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
 
   const hasRunningToolEvents = chatMessages.some((message) => {
@@ -266,6 +292,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const setToolFilter = useCallback((messageId: string, next: 'all' | 'error') => {
     setToolFilterByMessage((prev) => ({ ...prev, [messageId]: next }))
+  }, [])
+  const toggleToolItem = useCallback((itemId: string) => {
+    setExpandedToolItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }))
   }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -461,11 +490,17 @@ export function AIChatPanel(props: AIChatPanelProps) {
                         {visibleToolEvents.length === 0 ? (
                           <div className="message-tool-empty">{t('chat.noFailedOps')}</div>
                         ) : null}
-                        {visibleToolEvents.map((toolEvent, idx) => (
-                          <div
-                            key={`${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${idx}`}
-                            className={`message-tool-item message-tool-item-${toolEvent.status}`}
-                          >
+                        {visibleToolEvents.map((toolEvent, idx) => {
+                          const itemId = `${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${idx}`
+                          const hasManualExpand = Object.prototype.hasOwnProperty.call(expandedToolItems, itemId)
+                          const expandedToolItem = hasManualExpand ? expandedToolItems[itemId] === true : toolEvent.status !== 'success'
+                          const durationMs =
+                            toolEvent.durationMs ??
+                            ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                              (toolEvent.startedAt ?? toolEvent.timestamp))
+
+                          return (
+                          <div key={itemId} className={`message-tool-item message-tool-item-${toolEvent.status}`}>
                             <div className="message-tool-item-head">
                               <span className="message-tool-item-step">#{toolEvent.step}</span>
                               <span className="message-tool-item-name">{t('chat.builderAgent')}</span>
@@ -474,31 +509,40 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               </span>
                               <span className="message-tool-item-kind">{t('chat.terminal')}</span>
                               <span className="message-tool-item-duration">
-                                {formatDurationLabel(
-                                  (toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
-                                    (toolEvent.startedAt ?? toolEvent.timestamp),
-                                )}
+                                {formatDurationLabel(durationMs, toolEvent.status === 'running')}
                               </span>
+                              <button className="message-tool-item-toggle" type="button" onClick={() => toggleToolItem(itemId)}>
+                                {expandedToolItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
+                              </button>
                             </div>
                             <div className="message-tool-item-action">{toolDisplayName(toolEvent.tool, t)}</div>
                             <div className="message-tool-command" title={toolEvent.tool}>
                               <span className="message-tool-command-prefix">$</span>
                               <span className="message-tool-command-name">{toolEvent.tool}</span>
                             </div>
-                            {toolEvent.inputPreview ? (
-                              <pre className="message-tool-item-line">
-                                <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
-                                {toolEvent.inputPreview}
-                              </pre>
-                            ) : null}
-                            {toolEvent.observationPreview ? (
-                              <pre className="message-tool-item-line">
-                                <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
-                                {toolEvent.observationPreview}
-                              </pre>
+                            <div className="message-tool-item-brief">
+                              <span className="message-tool-item-label">{t('chat.stepResult')}</span>{' '}
+                              {buildToolOutcomeSummary(toolEvent, t)}
+                            </div>
+                            {expandedToolItem ? (
+                              <>
+                                {toolEvent.inputPreview ? (
+                                  <pre className="message-tool-item-line" title={toolEvent.inputPreview}>
+                                    <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
+                                    {toolEvent.inputPreview}
+                                  </pre>
+                                ) : null}
+                                {toolEvent.observationPreview ? (
+                                  <pre className="message-tool-item-line" title={toolEvent.observationPreview}>
+                                    <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
+                                    {toolEvent.observationPreview}
+                                  </pre>
+                                ) : null}
+                              </>
                             ) : null}
                           </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
