@@ -1,4 +1,4 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
+import { useCallback, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import { useI18n } from '../../i18n'
 import type { ChangeSet, WriterMode } from '../../services'
 import { AppIcon } from '../icons/AppIcon'
@@ -79,6 +79,37 @@ function writerModeUpper(mode: WriterMode, t: (key: string) => string): string {
   return writerModeLabel(mode, t).toUpperCase()
 }
 
+const DEFAULT_COLLAPSE_CHAR_LIMIT = 900
+const DEFAULT_COLLAPSE_LINE_LIMIT = 14
+
+function countLines(text: string): number {
+  if (!text) return 0
+  return text.split(/\r?\n/).length
+}
+
+function compactSnippet(text: string, charLimit: number, lineLimit: number): string {
+  if (!text) return text
+  const lines = text.split(/\r?\n/)
+  const clippedLines = lines.slice(0, lineLimit)
+  let snippet = clippedLines.join('\n')
+  if (snippet.length > charLimit) {
+    snippet = `${snippet.slice(0, charLimit)}...`
+  } else if (lines.length > lineLimit) {
+    snippet = `${snippet}\n...`
+  }
+  return snippet
+}
+
+function shouldCollapseMessage(message: AIChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  if (message.streaming) return false
+  const text = message.content ?? ''
+  if (!text.trim()) return false
+  const hasDiff = !!message.changeSet && message.changeSet.modifications.length > 0
+  if (hasDiff) return true
+  return text.length > DEFAULT_COLLAPSE_CHAR_LIMIT || countLines(text) > DEFAULT_COLLAPSE_LINE_LIMIT
+}
+
 export function AIChatPanel(props: AIChatPanelProps) {
   const { t } = useI18n()
   const {
@@ -125,6 +156,12 @@ export function AIChatPanel(props: AIChatPanelProps) {
     providers,
     onActiveProviderChange,
   } = props
+
+  const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
+
+  const toggleAssistantMessage = useCallback((messageId: string) => {
+    setExpandedAssistantIds((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
+  }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !chatInput.trim()) {
@@ -197,7 +234,19 @@ export function AIChatPanel(props: AIChatPanelProps) {
               </div>
             </div>
           ) : (
-            chatMessages.map((message) => (
+            chatMessages.map((message) => {
+              const canCollapse = shouldCollapseMessage(message)
+              const expanded = canCollapse ? expandedAssistantIds[message.id] === true : false
+              const hasDiff = !!message.changeSet && message.changeSet.modifications.length > 0
+              const preview = hasDiff
+                ? t('chat.collapsedForDiff')
+                : compactSnippet(message.content, DEFAULT_COLLAPSE_CHAR_LIMIT, DEFAULT_COLLAPSE_LINE_LIMIT)
+              const renderedContent =
+                canCollapse && !expanded
+                  ? preview
+                  : message.content || (message.role === 'assistant' && message.streaming ? t('chat.thinking') : '')
+
+              return (
               <div key={message.id} className={message.role === 'user' ? 'message user' : 'message assistant'}>
                 <div className="message-meta">
                   {message.role === 'user' ? (
@@ -237,9 +286,17 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     </button>
                   </div>
                 ) : null}
-                <div className="message-content" onContextMenu={(event) => onOpenMessageContextMenu(event, message)}>
-                  {message.content || (message.role === 'assistant' && message.streaming ? t('chat.thinking') : '')}
+                <div
+                  className={`message-content${canCollapse && !expanded ? ' message-content-collapsed' : ''}`}
+                  onContextMenu={(event) => onOpenMessageContextMenu(event, message)}
+                >
+                  {renderedContent}
                 </div>
+                {canCollapse ? (
+                  <button className="message-collapse-toggle" onClick={() => toggleAssistantMessage(message.id)} type="button">
+                    {expanded ? t('chat.collapseDetails') : t('chat.expandDetails')}
+                  </button>
+                ) : null}
                 {message.role === 'assistant' && message.streaming ? (
                   <div className="ai-processing-indicator">
                     <div className="ai-processing-spinner" />
@@ -266,7 +323,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   </div>
                 ) : null}
               </div>
-            ))
+              )
+            })
           )}
         </div>
         {!chatAutoScroll ? (
