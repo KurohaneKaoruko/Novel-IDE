@@ -220,6 +220,16 @@ function parseBackendChangeSets(raw: unknown): ImportedChangeSet[] {
   return imported
 }
 
+function stripInternalToolTrace(text: string): string {
+  if (!text) return ''
+  const lines = text.split(/\r?\n/)
+  const actionIndex = lines.findIndex((line) => /^\s*ACTION\s*:/i.test(line))
+  if (actionIndex < 0) return text
+  const hasInput = lines.slice(actionIndex).some((line) => /^\s*INPUT\s*:/i.test(line))
+  if (!hasInput) return text
+  return lines.slice(0, actionIndex).join('\n').trimEnd()
+}
+
 type ChatContextMenuState = {
   x: number
   y: number
@@ -3188,9 +3198,10 @@ function App() {
       const merged = appendStreamTextWithOverlap(prevText, token)
       if (!merged.appended) return
       streamOutputRef.current.set(streamId, merged.next)
+      const visibleText = stripInternalToolTrace(merged.next)
       setChatMessages((prev) =>
         prev.map((m) =>
-          m.role === 'assistant' && m.streamId === streamId ? { ...m, content: `${m.content}${merged.appended}` } : m,
+          m.role === 'assistant' && m.streamId === streamId ? { ...m, content: visibleText } : m,
         ),
       )
     })
@@ -3202,7 +3213,10 @@ function App() {
       if (!streamId) return
       const cancelled = p.cancelled === true
       const streamVersionGroupId = streamAssistantGroupRef.current.get(streamId)
-      const hasOutput = (streamOutputRef.current.get(streamId) ?? '').trim().length > 0
+      const rawOutput = streamOutputRef.current.get(streamId) ?? ''
+      const hasOutput = rawOutput.trim().length > 0
+      const visibleOutput = stripInternalToolTrace(rawOutput)
+      const hasVisibleOutput = visibleOutput.trim().length > 0
       if (cancelled) {
         streamFailuresRef.current.add(streamId)
       }
@@ -3215,8 +3229,17 @@ function App() {
             ? (() => {
               const groupId = m.versionGroupId ?? streamVersionGroupId ?? m.id
               const mergedCancelled = cancelled || m.cancelled
+              const sanitizedContent = stripInternalToolTrace(m.content)
+              const sanitizedTrim = sanitizedContent.trim()
+              const hasChangeSet = !!m.changeSet && m.changeSet.modifications.length > 0
               const normalizedContent =
-                !mergedCancelled && !hasOutput && !m.content.trim() ? 'AI returned empty response. Please retry.' : m.content
+                !mergedCancelled && !hasVisibleOutput
+                  ? hasChangeSet
+                    ? 'Changes were applied. Open Diff for details.'
+                    : !hasOutput && !sanitizedTrim
+                      ? 'AI returned empty response. Please retry.'
+                      : 'AI completed actions. No direct chat output was returned.'
+                  : sanitizedContent
               const registered = upsertAssistantVersion(groupId, {
                 content: normalizedContent,
                 changeSet: m.changeSet,

@@ -1851,7 +1851,6 @@ pub fn chat_generate_stream(
   let window_for_task = window.clone();
   let app_for_task = app.clone();
   let live_session = LiveStreamSession::new(window_for_task.clone(), stream_id_for_task.clone());
-  let live_session_for_task = live_session.clone();
 
   let task = tauri::async_runtime::spawn(async move {
     let payload_start = serde_json::json!({ "streamId": stream_id_for_task });
@@ -1926,7 +1925,6 @@ pub fn chat_generate_stream(
         let client = client.clone();
         let app = app.clone();
         let agent_temp = agent_temp;
-        let live_session_for_call = live_session_for_task.clone();
         async move {
           let mut system = String::new();
           for m in msgs.iter().filter(|m| m.role == "system") {
@@ -1946,7 +1944,7 @@ pub fn chat_generate_stream(
                 &filtered,
                 system.as_str(),
                 agent_temp,
-                Some(&live_session_for_call),
+                None,
               ).await
             },
             app_settings::ProviderKind::Anthropic => {
@@ -1956,7 +1954,7 @@ pub fn chat_generate_stream(
                 &provider_cfg,
                 &filtered,
                 system.as_str(),
-                Some(&live_session_for_call),
+                None,
               ).await
             },
           }
@@ -2037,7 +2035,7 @@ pub fn chat_generate_stream(
       }
     };
 
-    if !live_session_for_task.has_emitted() {
+    if !live_session.has_emitted() {
       emit_stream_status(&window_for_task, &stream_id_for_task, "responding");
       let step_chars = 48usize;
       let mut buf = String::new();
