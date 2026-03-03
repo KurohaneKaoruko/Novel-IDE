@@ -1,4 +1,4 @@
-import { useCallback, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
+import { useCallback, useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import { useI18n } from '../../i18n'
 import type { ChangeSet, WriterMode } from '../../services'
 import { AppIcon } from '../icons/AppIcon'
@@ -23,6 +23,8 @@ export type AIChatToolEvent = {
   inputPreview: string
   observationPreview?: string
   timestamp: number
+  startedAt?: number
+  finishedAt?: number
 }
 export type AIChatOption = {
   id: string
@@ -126,6 +128,45 @@ function toolStatusLabel(status: AIChatToolEvent['status'], t: (key: string) => 
   return t('chat.operationDone')
 }
 
+function toolDisplayName(tool: string, t: (key: string) => string): string {
+  switch (tool) {
+    case 'fs_read_text':
+      return t('chat.tool.fsReadText')
+    case 'fs_list_dir':
+      return t('chat.tool.fsListDir')
+    case 'fs_exists':
+      return t('chat.tool.fsExists')
+    case 'fs_create_dir':
+      return t('chat.tool.fsCreateDir')
+    case 'fs_create_file':
+      return t('chat.tool.fsCreateFile')
+    case 'fs_delete_entry':
+      return t('chat.tool.fsDeleteEntry')
+    case 'fs_rename_entry':
+      return t('chat.tool.fsRenameEntry')
+    case 'fs_write_text':
+      return t('chat.tool.fsWriteText')
+    case 'memory_upsert':
+      return t('chat.tool.memoryUpsert')
+    case 'memory_search':
+      return t('chat.tool.memorySearch')
+    default:
+      return tool
+  }
+}
+
+function formatDurationLabel(ms: number): string {
+  const safe = Math.max(0, Math.floor(ms))
+  if (safe < 1000) return `${safe}ms`
+  if (safe < 60_000) {
+    const sec = safe / 1000
+    return sec >= 10 ? `${Math.round(sec)}s` : `${sec.toFixed(1)}s`
+  }
+  const minutes = Math.floor(safe / 60_000)
+  const seconds = Math.floor((safe % 60_000) / 1000)
+  return `${minutes}m ${seconds}s`
+}
+
 export function AIChatPanel(props: AIChatPanelProps) {
   const { t } = useI18n()
   const {
@@ -175,6 +216,22 @@ export function AIChatPanel(props: AIChatPanelProps) {
 
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
   const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
+  const [toolNowTick, setToolNowTick] = useState(Date.now())
+
+  const hasRunningToolEvents = chatMessages.some((message) => {
+    if (message.role !== 'assistant') return false
+    return (message.toolEvents ?? []).some((event) => event.status === 'running')
+  })
+
+  useEffect(() => {
+    if (!hasRunningToolEvents) return
+    const timer = window.setInterval(() => {
+      setToolNowTick(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [hasRunningToolEvents])
 
   const toggleAssistantMessage = useCallback((messageId: string) => {
     setExpandedAssistantIds((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
@@ -347,7 +404,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                       latestToolEvent ? (
                         <div className="message-tool-collapsed-line">
                           {latestToolEvent.status === 'running' ? t('chat.currentOperation') : t('chat.latestOperation')}{' '}
-                          {latestToolEvent.tool}
+                          {toolDisplayName(latestToolEvent.tool, t)}
                         </div>
                       ) : null
                     ) : (
@@ -364,8 +421,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                 {toolStatusLabel(toolEvent.status, t)}
                               </span>
                               <span className="message-tool-item-kind">{t('chat.terminal')}</span>
+                              <span className="message-tool-item-duration">
+                                {formatDurationLabel(
+                                  (toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                                    (toolEvent.startedAt ?? toolEvent.timestamp),
+                                )}
+                              </span>
                             </div>
-                            <div className="message-tool-command">
+                            <div className="message-tool-item-action">{toolDisplayName(toolEvent.tool, t)}</div>
+                            <div className="message-tool-command" title={toolEvent.tool}>
                               <span className="message-tool-command-prefix">$</span>
                               <span className="message-tool-command-name">{toolEvent.tool}</span>
                             </div>

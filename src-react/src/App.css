@@ -1345,6 +1345,11 @@ body {
   text-transform: uppercase;
 }
 
+.message-tool-item-duration {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 .message-tool-item-running .message-tool-item-state {
   color: var(--accent-primary);
 }
@@ -1355,6 +1360,12 @@ body {
 
 .message-tool-item-error .message-tool-item-state {
   color: var(--error-text);
+}
+
+.message-tool-item-action {
+  color: var(--text-primary);
+  font-size: 12px;
+  margin-bottom: 4px;
 }
 
 .message-tool-command {
