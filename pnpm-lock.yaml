@@ -53,6 +53,9 @@ importers:
       marked:
         specifier: ^15.0.6
         version: 15.0.12
+      prismjs:
+        specifier: ^1.30.0
+        version: 1.30.0
       react:
         specifier: ^19.2.0
         version: 19.2.4
