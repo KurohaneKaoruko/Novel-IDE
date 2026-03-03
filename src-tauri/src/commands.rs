@@ -1767,6 +1767,35 @@ fn compact_preview(text: &str, max_chars: usize) -> String {
   out
 }
 
+fn compact_multiline_preview(text: &str, max_lines: usize, max_chars: usize) -> String {
+  if text.is_empty() {
+    return String::new();
+  }
+  let mut lines: Vec<&str> = text.lines().collect();
+  if lines.is_empty() {
+    lines.push(text);
+  }
+  let mut snippet = lines
+    .iter()
+    .take(max_lines)
+    .copied()
+    .collect::<Vec<_>>()
+    .join("\n");
+
+  let char_len = snippet.chars().count();
+  if char_len > max_chars {
+    snippet = snippet.chars().take(max_chars).collect::<String>();
+  }
+
+  let truncated = lines.len() > max_lines || text.chars().count() > max_chars;
+  if truncated {
+    if !snippet.ends_with("...") {
+      snippet.push_str("\n...");
+    }
+  }
+  snippet
+}
+
 fn compact_value_preview(value: &serde_json::Value, max_chars: usize) -> String {
   let raw = if let Some(s) = value.as_str() {
     s.to_string()
@@ -2038,6 +2067,19 @@ pub fn chat_generate_stream(
                   if kind == "dir" || kind == "file" {
                     obj.insert("existsKind".to_string(), serde_json::json!(kind));
                   }
+                }
+              }
+              "fs_read_text" => {
+                if let Some(path) = tool_event.args.get("path").and_then(|v| v.as_str()) {
+                  obj.insert("readPath".to_string(), serde_json::json!(path));
+                }
+                if let Some(text) = observation.get("text").and_then(|v| v.as_str()) {
+                  let lines = if text.is_empty() { 0usize } else { text.lines().count() };
+                  let chars = text.chars().count();
+                  let preview = compact_multiline_preview(text, 8, 420);
+                  obj.insert("readLines".to_string(), serde_json::json!(lines));
+                  obj.insert("readChars".to_string(), serde_json::json!(chars));
+                  obj.insert("readPreview".to_string(), serde_json::json!(preview));
                 }
               }
               _ => {}

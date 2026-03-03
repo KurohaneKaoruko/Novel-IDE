@@ -159,6 +159,10 @@ type AgentToolActivity = {
   listTruncated?: boolean
   exists?: boolean
   existsKind?: 'dir' | 'file'
+  readPath?: string
+  readLines?: number
+  readChars?: number
+  readPreview?: string
   timestamp: number
   startedAt?: number
   finishedAt?: number
@@ -275,6 +279,10 @@ function upsertToolActivity(list: AgentToolActivity[] | undefined, incoming: Age
     listTruncated: incoming.listTruncated ?? current.listTruncated,
     exists: incoming.exists ?? current.exists,
     existsKind: incoming.existsKind ?? current.existsKind,
+    readPath: incoming.readPath ?? current.readPath,
+    readLines: incoming.readLines ?? current.readLines,
+    readChars: incoming.readChars ?? current.readChars,
+    readPreview: incoming.readPreview ?? current.readPreview,
     startedAt: incoming.startedAt ?? current.startedAt ?? incoming.timestamp,
     finishedAt: incoming.finishedAt ?? current.finishedAt,
     durationMs: incoming.durationMs ?? current.durationMs,
@@ -3288,6 +3296,10 @@ function App() {
         p.exists === true ? true : p.exists === false ? false : undefined
       const existsKind =
         p.existsKind === 'dir' ? 'dir' : p.existsKind === 'file' ? 'file' : undefined
+      const readPath = typeof p.readPath === 'string' ? p.readPath : undefined
+      const readLinesRaw = typeof p.readLines === 'number' ? p.readLines : Number(p.readLines)
+      const readCharsRaw = typeof p.readChars === 'number' ? p.readChars : Number(p.readChars)
+      const readPreview = typeof p.readPreview === 'string' ? p.readPreview : undefined
       const timestamp = typeof p.timestamp === 'number' ? p.timestamp : Date.now()
       const durationMsRaw = typeof p.durationMs === 'number' ? p.durationMs : Number(p.durationMs)
       const activity: AgentToolActivity = {
@@ -3300,6 +3312,10 @@ function App() {
         listTruncated,
         exists,
         existsKind,
+        readPath,
+        readLines: Number.isFinite(readLinesRaw) ? Math.max(0, Math.floor(readLinesRaw)) : undefined,
+        readChars: Number.isFinite(readCharsRaw) ? Math.max(0, Math.floor(readCharsRaw)) : undefined,
+        readPreview,
         timestamp,
         startedAt: phase === 'start' ? timestamp : undefined,
         finishedAt: phase === 'finish' ? timestamp : undefined,

@@ -26,6 +26,10 @@ export type AIChatToolEvent = {
   listTruncated?: boolean
   exists?: boolean
   existsKind?: 'dir' | 'file'
+  readPath?: string
+  readLines?: number
+  readChars?: number
+  readPreview?: string
   timestamp: number
   startedAt?: number
   finishedAt?: number
@@ -212,6 +216,12 @@ function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): st
   }
   if (toolEvent.tool === 'fs_list_dir' && Array.isArray(toolEvent.listItems)) {
     return t('chat.outcomeListDir', { count: toolEvent.listItems.length })
+  }
+  if (toolEvent.tool === 'fs_read_text' && typeof toolEvent.readChars === 'number') {
+    return t('chat.outcomeReadTextMeta', {
+      lines: toolEvent.readLines ?? 0,
+      chars: toolEvent.readChars,
+    })
   }
   const raw = toolEvent.observationPreview?.trim()
   if (!raw) return t('chat.outcomeOk')
@@ -511,6 +521,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
                             toolEvent.durationMs ??
                             ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
                               (toolEvent.startedAt ?? toolEvent.timestamp))
+                          const hasStructuredOutput =
+                            (toolEvent.tool === 'fs_list_dir' && Array.isArray(toolEvent.listItems)) ||
+                            (toolEvent.tool === 'fs_exists' && typeof toolEvent.exists === 'boolean') ||
+                            (toolEvent.tool === 'fs_read_text' && typeof toolEvent.readChars === 'number')
 
                           return (
                           <div key={itemId} className={`message-tool-item message-tool-item-${toolEvent.status}`}>
@@ -537,6 +551,20 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               <span className="message-tool-item-label">{t('chat.stepResult')}</span>{' '}
                               {buildToolOutcomeSummary(toolEvent, t)}
                             </div>
+                            {toolEvent.tool === 'fs_read_text' && toolEvent.readPreview ? (
+                              <div className="message-tool-read-card">
+                                <div className="message-tool-read-head">
+                                  <span className="message-tool-read-path">{toolEvent.readPath ?? t('chat.unknownPath')}</span>
+                                  <span className="message-tool-read-meta">
+                                    {t('chat.readMeta', {
+                                      lines: toolEvent.readLines ?? 0,
+                                      chars: toolEvent.readChars ?? 0,
+                                    })}
+                                  </span>
+                                </div>
+                                <pre className="message-tool-read-preview">{toolEvent.readPreview}</pre>
+                              </div>
+                            ) : null}
                             {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
                               <div className="message-tool-tree">
                                 {toolEvent.listItems.map((item, treeIdx) => (
@@ -560,7 +588,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                     {toolEvent.inputPreview}
                                   </pre>
                                 ) : null}
-                                {toolEvent.observationPreview ? (
+                                {toolEvent.observationPreview && (!hasStructuredOutput || toolEvent.status === 'error') ? (
                                   <pre className="message-tool-item-line" title={toolEvent.observationPreview}>
                                     <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
                                     {toolEvent.observationPreview}
