@@ -1926,6 +1926,7 @@ pub fn chat_generate_stream(
         let client = client.clone();
         let app = app.clone();
         let agent_temp = agent_temp;
+        let live_session_for_call = live_session_for_task.clone();
         async move {
           let mut system = String::new();
           for m in msgs.iter().filter(|m| m.role == "system") {
@@ -1945,7 +1946,7 @@ pub fn chat_generate_stream(
                 &filtered,
                 system.as_str(),
                 agent_temp,
-                None,
+                Some(&live_session_for_call),
               ).await
             },
             app_settings::ProviderKind::Anthropic => {
@@ -1955,7 +1956,7 @@ pub fn chat_generate_stream(
                 &provider_cfg,
                 &filtered,
                 system.as_str(),
-                None,
+                Some(&live_session_for_call),
               ).await
             },
           }
