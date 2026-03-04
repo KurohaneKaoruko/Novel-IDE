@@ -904,7 +904,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
           </button>
         ) : null}
       </div>
-      {activeStreamingMessage && activeLiveToolCount > 0 ? (
+      {activeStreamingMessage ? (
         <div className={`ai-live-ops${liveOpsCollapsed ? ' collapsed' : ''}`}>
           <button className="ai-live-ops-head" type="button" onClick={() => setLiveOpsCollapsed((prev) => !prev)}>
             <span className={`ai-live-ops-chevron${liveOpsCollapsed ? '' : ' expanded'}`} aria-hidden="true">
@@ -918,14 +918,19 @@ export function AIChatPanel(props: AIChatPanelProps) {
             <span className="ai-live-ops-toggle">{liveOpsCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}</span>
           </button>
           {liveOpsCollapsed ? (
-            activeLiveSummary ? (
-              <div className="ai-live-ops-summary">{activeLiveSummary}</div>
+            activeLiveSummary || activeStreamingMessage.streamId ? (
+              <div className="ai-live-ops-summary">
+                {activeLiveSummary || getStreamPhaseLabel(activeStreamingMessage.streamId)}
+              </div>
             ) : null
           ) : (
             <div className="ai-live-ops-body">
               <div className="ai-live-ops-phase">{getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
               {activeLiveSummary ? <div className="ai-live-ops-summary">{activeLiveSummary}</div> : null}
               <div className="ai-live-ops-list">
+                {activeLiveVisibleTools.length === 0 ? (
+                  <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
+                ) : null}
                 {activeLiveVisibleTools.map((toolEvent, idx) => {
                   const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
                   const durationMs =
