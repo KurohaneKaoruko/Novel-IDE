@@ -15,6 +15,7 @@ export async function chatGenerateStream(args: {
   messages: ChatMessage[]
   useMarkdown: boolean
   agentId?: string | null
+  providerId?: string | null
 }): Promise<void> {
   return invoke<void>('chat_generate_stream', {
     streamId: args.streamId,
@@ -24,6 +25,8 @@ export async function chatGenerateStream(args: {
     use_markdown: args.useMarkdown,
     agentId: args.agentId ?? null,
     agent_id: args.agentId ?? null,
+    providerId: args.providerId ?? null,
+    provider_id: args.providerId ?? null,
   })
 }
 

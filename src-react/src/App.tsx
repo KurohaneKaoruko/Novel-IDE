@@ -382,6 +382,8 @@ type SearchPanelOptions = {
   regex?: boolean
 }
 
+type TranslateText = (key: string, params?: Record<string, string | number>) => string
+
 const MASTER_PLAN_RELATIVE_PATH = '.novel/plans/master-plan.md'
 const FIRST_TOKEN_RETRY_TIMEOUT_MS = 120_000
 const AUTO_RETRY_MAX_PER_GROUP = 1
@@ -509,13 +511,46 @@ function formatProviderProbeErrorMessage(rawMessage: string): string {
 function formatProviderProbeSuccessMessage(result: ProviderConnectivityResult): string {
   const status = Number.isFinite(result.status_code) ? result.status_code : 200
   const latency = Math.max(1, Math.round(result.latency_ms))
-  return `Connectivity OK · HTTP ${status} · ${latency}ms`
+  return `Connectivity OK - HTTP ${status} - ${latency}ms`
 }
 
 function formatProviderProbeDetail(rawMessage: string): string | undefined {
   const text = rawMessage.trim()
   if (!text) return undefined
   return text.length > 1200 ? `${text.slice(0, 1200)}...` : text
+}
+
+async function preflightChatProviderIssue(
+  settings: AppSettings | null,
+  providerId: string,
+  t: TranslateText,
+): Promise<string | null> {
+  if (!settings) {
+    return t('app.chat.preflight.settingsLoading')
+  }
+  if (settings.providers.length === 0) {
+    return t('app.chat.preflight.noProvider')
+  }
+  const provider = settings.providers.find((item) => item.id === providerId)
+  if (!provider) {
+    return t('app.chat.preflight.providerMissing')
+  }
+  if (!provider.base_url.trim()) {
+    return t('app.chat.preflight.baseUrlMissing', { provider: provider.name })
+  }
+  if (!provider.model_name.trim()) {
+    return t('app.chat.preflight.modelMissing', { provider: provider.name })
+  }
+  if (!isTauriApp()) return null
+  try {
+    const hasApiKey = await getApiKeyStatus(provider.id)
+    if (!hasApiKey) {
+      return t('app.chat.preflight.apiKeyMissing', { provider: provider.name })
+    }
+  } catch {
+    // Let backend perform final validation when keyring status cannot be read.
+  }
+  return null
 }
 
 function App() {
@@ -2034,6 +2069,12 @@ function App() {
         }
       }
 
+      const providerIssue = await preflightChatProviderIssue(appSettings, effectiveProviderId, t)
+      if (providerIssue) {
+        setError(providerIssue)
+        return null
+      }
+
       const sourceHistory = options?.sourceMessages ?? chatMessagesRef.current
       const user: ChatItem = { id: newId(), role: 'user', content }
       const streamId = newId()
@@ -2135,6 +2176,7 @@ function App() {
           messages: messagesToSend,
           useMarkdown: appSettings?.output.use_markdown ?? false,
           agentId: appSettings?.active_agent_id ?? null,
+          providerId: effectiveProviderId || null,
         })
         return streamId
       } catch (e) {
@@ -2159,10 +2201,12 @@ function App() {
       appSettings,
       buildPromptByMode,
       chatInput,
+      effectiveProviderId,
       ensurePlanningArtifacts,
       getSelectionText,
       newId,
       refreshPlannerQueue,
+      t,
       workspaceRoot,
       writerMode,
     ],

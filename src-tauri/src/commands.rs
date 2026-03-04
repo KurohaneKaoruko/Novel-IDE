@@ -1420,6 +1420,59 @@ fn resolve_current_provider(
     .ok_or_else(|| "provider not found".to_string())
 }
 
+fn ensure_provider_ready(
+  app: &AppHandle,
+  provider: &app_settings::ModelProvider,
+) -> Result<(), String> {
+  if provider.base_url.trim().is_empty() {
+    return Err(format!(
+      "provider={} base_url is empty. Set it in Settings > Models.",
+      provider.id
+    ));
+  }
+  if provider.model_name.trim().is_empty() {
+    return Err(format!(
+      "provider={} model_name is empty. Set it in Settings > Models.",
+      provider.id
+    ));
+  }
+  if !provider_has_configured_api_key(app, provider) {
+    return Err(format!(
+      "no API key configured for provider={}. Set it in Settings > Models.",
+      provider.id
+    ));
+  }
+  Ok(())
+}
+
+fn resolve_chat_provider(
+  app: &AppHandle,
+  settings: &app_settings::AppSettings,
+  requested_provider_id: Option<&str>,
+) -> Result<app_settings::ModelProvider, String> {
+  if settings.providers.is_empty() {
+    return Err("no providers configured".to_string());
+  }
+
+  if let Some(provider_id) = requested_provider_id {
+    let provider_id = provider_id.trim();
+    if !provider_id.is_empty() {
+      let provider = settings
+        .providers
+        .iter()
+        .find(|p| p.id == provider_id)
+        .cloned()
+        .ok_or_else(|| format!("provider not found: {}", provider_id))?;
+      ensure_provider_ready(app, &provider)?;
+      return Ok(provider);
+    }
+  }
+
+  let provider = resolve_current_provider(app, settings)?;
+  ensure_provider_ready(app, &provider)?;
+  Ok(provider)
+}
+
 fn resolve_provider_api_key(
   app: &AppHandle,
   provider: &app_settings::ModelProvider,
@@ -1890,6 +1943,8 @@ pub fn chat_generate_stream(
   use_markdown: Option<bool>,
   agentId: Option<String>,
   agent_id: Option<String>,
+  providerId: Option<String>,
+  provider_id: Option<String>,
 ) -> Result<(), String> {
   let stream_id = streamId.or(stream_id).unwrap_or_default();
   let stream_id = stream_id.trim().to_string();
@@ -1898,12 +1953,17 @@ pub fn chat_generate_stream(
   }
   let use_markdown = useMarkdown.or(use_markdown).unwrap_or(false);
   let agent_id = agentId.or(agent_id);
+  let provider_id = providerId
+    .or(provider_id)
+    .map(|v| v.trim().to_string())
+    .filter(|v| !v.is_empty());
 
   let app = app.clone();
   let workspace_root = get_workspace_root(&state)?;
   let stream_id_for_task = stream_id.clone();
   let window_for_task = window.clone();
   let app_for_task = app.clone();
+  let requested_provider_id = provider_id.clone();
   let live_session = LiveStreamSession::new(window_for_task.clone(), stream_id_for_task.clone());
 
   let task = tauri::async_runtime::spawn(async move {
@@ -1953,13 +2013,18 @@ pub fn chat_generate_stream(
       }
     };
 
-    let current_provider = match resolve_current_provider(&app, &settings) {
+    let current_provider = match resolve_chat_provider(&app, &settings, requested_provider_id.as_deref()) {
       Ok(p) => p,
       Err(e) => {
         eprintln!("ai_error: {}", e);
         let _ = window_for_task.emit(
           "ai_error",
-          serde_json::json!({ "streamId": stream_id_for_task, "stage": "settings", "message": e }),
+          serde_json::json!({
+            "streamId": stream_id_for_task,
+            "provider": requested_provider_id,
+            "stage": "provider",
+            "message": e
+          }),
         );
         clear_stream_task(&app_for_task, &stream_id_for_task);
         emit_stream_done(&window_for_task, &stream_id_for_task, false);
