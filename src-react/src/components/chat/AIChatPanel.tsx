@@ -275,6 +275,25 @@ function buildThoughtSummary(toolEvents: AIChatToolEvent[], t: TranslateFn): str
   return t('chat.summaryDone', { done: completed.length })
 }
 
+function buildFailedOpsDigest(toolEvents: AIChatToolEvent[], t: TranslateFn, limit = 8): string {
+  const failed = toolEvents.filter((event) => event.status === 'error')
+  if (failed.length === 0) return ''
+  const recentFailed = failed.slice(-limit)
+  const lines = recentFailed.map((event, idx) => {
+    const target = resolveToolEventTarget(event)
+    const detail = compactPlainText(
+      (event.observationPreview || event.readPreview || event.writePreview || event.inputPreview || '').replace(/\s+/g, ' ').trim(),
+      160,
+    )
+    const targetPart = target ? ` | ${target}` : ''
+    const detailPart = detail ? ` | ${detail}` : ''
+    return `${idx + 1}. #${event.step} ${toolDisplayName(event.tool, t)} (${event.tool})${targetPart}${detailPart}`
+  })
+  const hiddenCount = failed.length - recentFailed.length
+  const hiddenSuffix = hiddenCount > 0 ? `\n${t('chat.failedOpsDigestMore', { count: hiddenCount })}` : ''
+  return `${t('chat.failedOpsDigestHeader', { count: failed.length })}\n${lines.join('\n')}${hiddenSuffix}`
+}
+
 function formatDurationLabel(ms: number, running: boolean): string {
   const safe = Math.max(running ? 0 : 1, Math.floor(ms))
   if (safe < 1000) return `${safe}ms`
@@ -504,6 +523,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [expandedLiveItems, setExpandedLiveItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
   const latestLiveStreamIdRef = useRef<string>('')
+  const liveOpsListRef = useRef<HTMLDivElement | null>(null)
 
   const hasRunningToolEvents = chatMessages.some((message) => {
     if (message.role !== 'assistant') return false
@@ -527,6 +547,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const visibleLiveToolEvents =
     liveOpsFilter === 'error' ? activeLiveToolEvents.filter((event) => event.status === 'error') : activeLiveToolEvents
   const groupedLiveToolEvents = groupToolEventsByStage(visibleLiveToolEvents)
+  const liveFailedOpsDigest = liveFailedToolCount > 0 ? buildFailedOpsDigest(activeLiveToolEvents, t) : ''
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -554,6 +575,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
     }
     latestLiveStreamIdRef.current = activeLiveStreamId
   }, [activeLiveStreamId])
+  useEffect(() => {
+    if (liveOpsCollapsed) return
+    const list = liveOpsListRef.current
+    if (!list) return
+    const distanceToBottom = list.scrollHeight - list.scrollTop - list.clientHeight
+    if (distanceToBottom > 56) return
+    list.scrollTop = list.scrollHeight
+  }, [activeLiveToolCount, liveOpsCollapsed, liveOpsFilter])
 
   const toggleAssistantMessage = useCallback((messageId: string) => {
     setExpandedAssistantIds((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
@@ -690,9 +719,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const thoughtSummary = hasToolEvents ? buildThoughtSummary(toolEvents, t) : ''
               const failedToolCount = hasToolEvents ? toolEvents.filter((event) => event.status === 'error').length : 0
               const retryContextDefaultText = failedToolCount > 0 ? (getRetryContextText?.(message.id) ?? '') : ''
+              const failedOpsDigest = failedToolCount > 0 ? buildFailedOpsDigest(toolEvents, t) : ''
               const hasRetryContextDraft = Object.prototype.hasOwnProperty.call(retryContextDraftByMessage, message.id)
               const retryContextDraft = hasRetryContextDraft ? (retryContextDraftByMessage[message.id] ?? '') : retryContextDefaultText
-              const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? true
+              const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? false
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
               const toolFilter = toolFilterByMessage[message.id] ?? 'all'
@@ -703,7 +733,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const toolPanelCollapsed = hasToolEvents
                 ? hasManualToolCollapse
                   ? collapsedToolPanels[message.id] === true
-                  : true
+                  : message.streaming
+                    ? false
+                    : failedToolCount === 0
                 : true
 
               return (
@@ -829,6 +861,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           >
                             {t('chat.filterFailed', { count: failedToolCount })}
                           </button>
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className="message-tool-filter"
+                              type="button"
+                              disabled={!failedOpsDigest.trim()}
+                              onClick={() => void copyWithFeedback(`${message.id}-failed-ops`, failedOpsDigest)}
+                            >
+                              {copiedMarker === `${message.id}-failed-ops` ? t('chat.copied') : t('chat.copyFailedOps')}
+                            </button>
+                          ) : null}
                           {!message.streaming && failedToolCount > 0 ? (
                             <button
                               className="message-tool-filter"
@@ -1133,8 +1175,18 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 >
                   {t('chat.filterFailed', { count: liveFailedToolCount })}
                 </button>
+                {liveFailedToolCount > 0 ? (
+                  <button
+                    className="message-tool-filter"
+                    type="button"
+                    disabled={!liveFailedOpsDigest.trim()}
+                    onClick={() => void copyWithFeedback('live-failed-ops', liveFailedOpsDigest)}
+                  >
+                    {copiedMarker === 'live-failed-ops' ? t('chat.copied') : t('chat.copyFailedOps')}
+                  </button>
+                ) : null}
               </div>
-              <div className="ai-live-ops-list">
+              <div className="ai-live-ops-list" ref={liveOpsListRef}>
                 {activeLiveToolCount === 0 ? (
                   <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
                 ) : null}
