@@ -356,6 +356,7 @@ type SendChatOptions = {
   useExistingLastUser?: boolean
   hideUserEcho?: boolean
   versionGroupId?: string
+  overrideProviderId?: string
 }
 
 type AssistantReplayContext = {
@@ -2106,7 +2107,8 @@ function App() {
         }
       }
 
-      const providerIssue = await preflightChatProviderIssue(appSettings, effectiveProviderId, t)
+      const selectedProviderId = options?.overrideProviderId?.trim() || effectiveProviderId
+      const providerIssue = await preflightChatProviderIssue(appSettings, selectedProviderId, t)
       if (providerIssue) {
         setError(providerIssue)
         const shouldEchoLocalFailure = !options?.hideUserEcho && !options?.useExistingLastUser && !options?.sourceMessages
@@ -2242,7 +2244,7 @@ function App() {
           messages: messagesToSend,
           useMarkdown: appSettings?.output.use_markdown ?? false,
           agentId: appSettings?.active_agent_id ?? null,
-          providerId: effectiveProviderId || null,
+          providerId: selectedProviderId || null,
         })
         return streamId
       } catch (e) {
@@ -2595,6 +2597,72 @@ function App() {
       })
     },
     [onSendChat, resolveAssistantReplayContext],
+  )
+
+  const onRetryWithFallbackProvider = useCallback(
+    async (assistantMessageId?: string) => {
+      if (!appSettings) {
+        setError(t('chat.recovery.noSettingsLoaded'))
+        openModelSettings()
+        return
+      }
+
+      const replay = resolveAssistantReplayContext(assistantMessageId)
+      if (!replay) return
+
+      const currentProviderId = effectiveProviderId
+      const candidates = appSettings.providers.filter((provider) => provider.id !== currentProviderId)
+
+      let fallbackProvider: ModelProvider | null = null
+      for (const provider of candidates) {
+        if (!provider.base_url.trim() || !provider.model_name.trim()) continue
+        if (provider.api_key.trim()) {
+          fallbackProvider = provider
+          break
+        }
+        if (!isTauriApp()) continue
+        try {
+          const hasKey = await getApiKeyStatus(provider.id)
+          if (hasKey) {
+            fallbackProvider = provider
+            break
+          }
+        } catch {
+          // Ignore keyring lookup errors and keep trying other providers.
+        }
+      }
+
+      if (!fallbackProvider) {
+        setError(t('chat.recovery.noAlternativeProvider'))
+        openModelSettings()
+        return
+      }
+
+      if (appSettings.active_provider_id !== fallbackProvider.id) {
+        const prev = appSettings
+        const next = { ...appSettings, active_provider_id: fallbackProvider.id }
+        setAppSettingsState(next)
+        await persistAppSettings(next, prev)
+      }
+
+      await onSendChat(replay.replayUser.content, {
+        sourceMessages: replay.replayHistory,
+        useExistingLastUser: true,
+        hideUserEcho: true,
+        versionGroupId: replay.versionGroupId,
+        overrideProviderId: fallbackProvider.id,
+      })
+      setError(null)
+    },
+    [
+      appSettings,
+      effectiveProviderId,
+      onSendChat,
+      openModelSettings,
+      persistAppSettings,
+      resolveAssistantReplayContext,
+      t,
+    ],
   )
 
   const onGenerateAssistantCandidates = useCallback(
@@ -4405,6 +4473,7 @@ function App() {
                 latestCompletedAssistantId={latestCompletedAssistant?.id}
                 onRegenerateAssistant={onRegenerateAssistant}
                 onGenerateAssistantCandidates={onGenerateAssistantCandidates}
+                onRetryWithFallbackProvider={onRetryWithFallbackProvider}
                 onOpenModelSettings={openModelSettings}
                 activeAgentId={appSettings?.active_agent_id ?? ''}
                 agents={chatAgentOptions}

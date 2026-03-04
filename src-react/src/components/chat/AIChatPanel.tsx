@@ -82,6 +82,7 @@ type AIChatPanelProps = {
   latestCompletedAssistantId?: string
   onRegenerateAssistant: (messageId?: string) => void | Promise<unknown>
   onGenerateAssistantCandidates: (messageId?: string, count?: number) => void | Promise<unknown>
+  onRetryWithFallbackProvider: (messageId?: string) => void | Promise<unknown>
   onOpenModelSettings: () => void
   activeAgentId: string
   agents: AIChatOption[]
@@ -143,6 +144,7 @@ type ToolStageKey = 'context' | 'filesystem' | 'memory' | 'other'
 type RecoveryActions = {
   showRetry: boolean
   showOpenModelSettings: boolean
+  showSwitchProviderRetry: boolean
 }
 
 function toolStatusLabel(status: AIChatToolEvent['status'], t: TranslateFn): string {
@@ -328,6 +330,7 @@ function messageRecoveryActions(message: AIChatMessage, text: string): RecoveryA
   return {
     showRetry: !runtimeLike,
     showOpenModelSettings: providerLike,
+    showSwitchProviderRetry: providerLike,
   }
 }
 
@@ -409,6 +412,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     latestCompletedAssistantId,
     onRegenerateAssistant,
     onGenerateAssistantCandidates,
+    onRetryWithFallbackProvider,
     onOpenModelSettings,
     activeAgentId,
     agents,
@@ -612,6 +616,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 ) : null}
                 {recoveryActions ? (
                   <div className="message-recovery-actions">
+                    {recoveryActions.showSwitchProviderRetry ? (
+                      <button
+                        className="message-recovery-button"
+                        type="button"
+                        onClick={() => void onRetryWithFallbackProvider(message.id)}
+                      >
+                        {t('chat.recovery.switchProviderRetry')}
+                      </button>
+                    ) : null}
                     {recoveryActions.showOpenModelSettings ? (
                       <button
                         className="message-recovery-button"
