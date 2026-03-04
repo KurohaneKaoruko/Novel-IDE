@@ -321,6 +321,35 @@ function hasLiveToolDetail(toolEvent: AIChatToolEvent): boolean {
   return false
 }
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  const payload = text.trim()
+  if (!payload) return false
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(payload)
+      return true
+    }
+  } catch {
+    // Ignore and fallback to legacy API.
+  }
+  try {
+    if (typeof document === 'undefined') return false
+    const area = document.createElement('textarea')
+    area.value = payload
+    area.setAttribute('readonly', 'true')
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    area.style.pointerEvents = 'none'
+    document.body.appendChild(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(area)
+    return ok
+  } catch {
+    return false
+  }
+}
+
 function stripToolTraceContent(content: string): string {
   if (!content.trim()) return ''
   const tracePrefix = /^\s*(ACTION|INPUT|OBSERVATION|OUTPUT|TOOL|TOOL_RESULT)\s*:/i
@@ -464,6 +493,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [collapsedToolStages, setCollapsedToolStages] = useState<Record<string, boolean>>({})
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
+  const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
   const [liveOpsFilter, setLiveOpsFilter] = useState<'all' | 'error'>('all')
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
@@ -510,11 +540,13 @@ export function AIChatPanel(props: AIChatPanelProps) {
       setLiveOpsFilter('all')
       setCollapsedLiveStages({})
       setExpandedLiveItems({})
+      setCopiedMarker(null)
     } else if (!activeLiveStreamId && prev) {
       setLiveOpsCollapsed(true)
       setLiveOpsFilter('all')
       setCollapsedLiveStages({})
       setExpandedLiveItems({})
+      setCopiedMarker(null)
     }
     latestLiveStreamIdRef.current = activeLiveStreamId
   }, [activeLiveStreamId])
@@ -533,6 +565,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const toggleToolItem = useCallback((itemId: string) => {
     setExpandedToolItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }))
+  }, [])
+  const copyWithFeedback = useCallback(async (marker: string, text: string) => {
+    const ok = await copyTextToClipboard(text)
+    if (!ok) return
+    setCopiedMarker(marker)
+    window.setTimeout(() => {
+      setCopiedMarker((prev) => (prev === marker ? null : prev))
+    }, 1200)
   }, [])
   const toggleLiveStage = useCallback((stageId: string) => {
     setCollapsedLiveStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
@@ -875,16 +915,38 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                   {expandedToolItem ? (
                                     <>
                                       {toolEvent.inputPreview ? (
-                                        <pre className="message-tool-item-line" title={toolEvent.inputPreview}>
-                                          <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
-                                          {toolEvent.inputPreview}
-                                        </pre>
+                                        <div className="message-tool-item-line-wrap">
+                                          <pre className="message-tool-item-line" title={toolEvent.inputPreview}>
+                                            <span className="message-tool-item-label">{t('chat.input')}</span>{' '}
+                                            {toolEvent.inputPreview}
+                                          </pre>
+                                          <button
+                                            className="message-tool-copy-button"
+                                            type="button"
+                                            onClick={() =>
+                                              void copyWithFeedback(`${itemId}-input`, `${t('chat.input')} ${toolEvent.inputPreview}`)
+                                            }
+                                          >
+                                            {copiedMarker === `${itemId}-input` ? t('chat.copied') : t('chat.copy')}
+                                          </button>
+                                        </div>
                                       ) : null}
                                       {toolEvent.observationPreview && (!hasStructuredOutput || toolEvent.status === 'error') ? (
-                                        <pre className="message-tool-item-line" title={toolEvent.observationPreview}>
-                                          <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
-                                          {toolEvent.observationPreview}
-                                        </pre>
+                                        <div className="message-tool-item-line-wrap">
+                                          <pre className="message-tool-item-line" title={toolEvent.observationPreview}>
+                                            <span className="message-tool-item-label">{t('chat.output')}</span>{' '}
+                                            {toolEvent.observationPreview}
+                                          </pre>
+                                          <button
+                                            className="message-tool-copy-button"
+                                            type="button"
+                                            onClick={() =>
+                                              void copyWithFeedback(`${itemId}-output`, `${t('chat.output')} ${toolEvent.observationPreview ?? ''}`)
+                                            }
+                                          >
+                                            {copiedMarker === `${itemId}-output` ? t('chat.copied') : t('chat.copy')}
+                                          </button>
+                                        </div>
                                       ) : null}
                                     </>
                                   ) : null}
@@ -1049,16 +1111,38 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                   <div className={`ai-live-ops-item-detail-wrap${expandedLiveItem ? ' expanded' : ''}`}>
                                     <div className="ai-live-ops-item-detail">
                                       {toolEvent.inputPreview ? (
-                                        <pre className="ai-live-ops-item-line" title={toolEvent.inputPreview}>
-                                          <span className="ai-live-ops-item-label">{t('chat.input')}</span>{' '}
-                                          {toolEvent.inputPreview}
-                                        </pre>
+                                        <div className="ai-live-ops-item-line-wrap">
+                                          <pre className="ai-live-ops-item-line" title={toolEvent.inputPreview}>
+                                            <span className="ai-live-ops-item-label">{t('chat.input')}</span>{' '}
+                                            {toolEvent.inputPreview}
+                                          </pre>
+                                          <button
+                                            className="message-tool-copy-button"
+                                            type="button"
+                                            onClick={() =>
+                                              void copyWithFeedback(`${liveToolId}-input`, `${t('chat.input')} ${toolEvent.inputPreview}`)
+                                            }
+                                          >
+                                            {copiedMarker === `${liveToolId}-input` ? t('chat.copied') : t('chat.copy')}
+                                          </button>
+                                        </div>
                                       ) : null}
                                       {toolEvent.observationPreview ? (
-                                        <pre className="ai-live-ops-item-line" title={toolEvent.observationPreview}>
-                                          <span className="ai-live-ops-item-label">{t('chat.output')}</span>{' '}
-                                          {toolEvent.observationPreview}
-                                        </pre>
+                                        <div className="ai-live-ops-item-line-wrap">
+                                          <pre className="ai-live-ops-item-line" title={toolEvent.observationPreview}>
+                                            <span className="ai-live-ops-item-label">{t('chat.output')}</span>{' '}
+                                            {toolEvent.observationPreview}
+                                          </pre>
+                                          <button
+                                            className="message-tool-copy-button"
+                                            type="button"
+                                            onClick={() =>
+                                              void copyWithFeedback(`${liveToolId}-output`, `${t('chat.output')} ${toolEvent.observationPreview ?? ''}`)
+                                            }
+                                          >
+                                            {copiedMarker === `${liveToolId}-output` ? t('chat.copied') : t('chat.copy')}
+                                          </button>
+                                        </div>
                                       ) : null}
                                       {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
                                         <div className="ai-live-ops-item-tree">

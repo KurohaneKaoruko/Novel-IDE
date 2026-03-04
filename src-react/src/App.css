@@ -1699,6 +1699,8 @@ body {
 }
 
 .message-tool-item-line {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   margin-top: 4px;
   padding: 6px;
@@ -1710,6 +1712,35 @@ body {
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-tool-item-line-wrap,
+.ai-live-ops-item-line-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.message-tool-item-line-wrap + .message-tool-item-line-wrap,
+.ai-live-ops-item-line-wrap + .ai-live-ops-item-line-wrap {
+  margin-top: 4px;
+}
+
+.message-tool-copy-button {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.message-tool-copy-button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
 }
 
 .message-tool-item-label {
@@ -1999,6 +2030,8 @@ body {
 }
 
 .ai-live-ops-item-line {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   padding: 6px;
   border: 1px solid var(--border-subtle);
