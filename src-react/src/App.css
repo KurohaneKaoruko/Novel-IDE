@@ -1488,6 +1488,85 @@ body {
   flex-wrap: wrap;
 }
 
+.message-retry-history {
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-retry-history-title {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.message-retry-history-empty {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.message-retry-history-item {
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 92%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 95%, transparent);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-retry-history-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.message-retry-history-index {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.message-retry-history-mode {
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 36%, var(--border-subtle));
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.message-retry-history-lines {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.message-retry-history-preview {
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  padding: 6px;
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.message-retry-history-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .message-retry-context {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);

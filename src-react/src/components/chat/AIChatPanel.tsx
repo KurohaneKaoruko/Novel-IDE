@@ -113,6 +113,7 @@ function writerModeUpper(mode: WriterMode, t: (key: string) => string): string {
 
 const DEFAULT_COLLAPSE_CHAR_LIMIT = 900
 const DEFAULT_COLLAPSE_LINE_LIMIT = 14
+const RETRY_PROMPT_HISTORY_LIMIT = 5
 
 function countLines(text: string): number {
   if (!text) return 0
@@ -148,6 +149,11 @@ type ToolFilterMode = 'all' | 'error'
 type ToolStageFilter = 'all' | ToolStageKey
 type ToolCounters = { running: number; done: number; failed: number; total: number }
 type RetryPromptMode = 'concise' | 'detailed'
+type RetryPromptHistoryEntry = {
+  id: string
+  mode: RetryPromptMode
+  text: string
+}
 
 type RecoveryActions = {
   showRetry: boolean
@@ -591,6 +597,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [retryContextDraftByMessage, setRetryContextDraftByMessage] = useState<Record<string, string>>({})
   const [retryPromptModeByMessage, setRetryPromptModeByMessage] = useState<Record<string, RetryPromptMode>>({})
   const [retryPromptPreviewCollapsedByMessage, setRetryPromptPreviewCollapsedByMessage] = useState<Record<string, boolean>>({})
+  const [retryPromptHistoryByMessage, setRetryPromptHistoryByMessage] = useState<Record<string, RetryPromptHistoryEntry[]>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
@@ -702,6 +709,23 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const toggleRetryPromptPreview = useCallback((messageId: string) => {
     setRetryPromptPreviewCollapsedByMessage((prev) => ({ ...prev, [messageId]: !(prev[messageId] ?? true) }))
   }, [])
+  const rememberRetryPrompt = useCallback((messageId: string, mode: RetryPromptMode, prompt: string) => {
+    const text = prompt.trim()
+    if (!text) return
+    setRetryPromptHistoryByMessage((prev) => {
+      const current = prev[messageId] ?? []
+      const withoutDup = current.filter((entry) => entry.text !== text)
+      const next: RetryPromptHistoryEntry[] = [
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+          mode,
+          text,
+        },
+        ...withoutDup,
+      ].slice(0, RETRY_PROMPT_HISTORY_LIMIT)
+      return { ...prev, [messageId]: next }
+    })
+  }, [])
   const toggleToolStage = useCallback((stageId: string) => {
     setCollapsedToolStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
   }, [])
@@ -734,6 +758,24 @@ export function AIChatPanel(props: AIChatPanelProps) {
       }, 0)
     },
     [chatInput, chatInputRef, onChatInputChange],
+  )
+  const copyRetryPrompt = useCallback(
+    (marker: string, messageId: string, mode: RetryPromptMode, prompt: string) => {
+      const payload = prompt.trim()
+      if (!payload) return
+      rememberRetryPrompt(messageId, mode, payload)
+      void copyWithFeedback(marker, payload)
+    },
+    [copyWithFeedback, rememberRetryPrompt],
+  )
+  const useRetryPrompt = useCallback(
+    (messageId: string, mode: RetryPromptMode, prompt: string) => {
+      const payload = prompt.trim()
+      if (!payload) return
+      rememberRetryPrompt(messageId, mode, payload)
+      insertPromptToComposer(payload)
+    },
+    [insertPromptToComposer, rememberRetryPrompt],
   )
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -835,6 +877,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 failedToolCount > 0 ? buildRetryPromptTemplate(retryPromptMode, retryContextDraft, failedOpsDigest, t) : ''
               const retryPromptPreviewCollapsed = retryPromptPreviewCollapsedByMessage[message.id] ?? true
               const retryPromptLineCount = retryPromptTemplate.trim() ? countLines(retryPromptTemplate.trim()) : 0
+              const retryPromptHistory = retryPromptHistoryByMessage[message.id] ?? []
               const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? false
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
@@ -1027,7 +1070,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               className="message-tool-filter"
                               type="button"
                               disabled={!retryPromptTemplate.trim()}
-                              onClick={() => void copyWithFeedback(`${message.id}-retry-prompt`, retryPromptTemplate)}
+                              onClick={() => copyRetryPrompt(`${message.id}-retry-prompt`, message.id, retryPromptMode, retryPromptTemplate)}
                             >
                               {copiedMarker === `${message.id}-retry-prompt` ? t('chat.copied') : t('chat.copyRetryPrompt')}
                             </button>
@@ -1113,7 +1156,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                     className="message-tool-filter"
                                     type="button"
                                     disabled={!retryPromptTemplate.trim()}
-                                    onClick={() => void copyWithFeedback(`${message.id}-retry-prompt-preview`, retryPromptTemplate)}
+                                    onClick={() =>
+                                      copyRetryPrompt(`${message.id}-retry-prompt-preview`, message.id, retryPromptMode, retryPromptTemplate)
+                                    }
                                   >
                                     {copiedMarker === `${message.id}-retry-prompt-preview` ? t('chat.copied') : t('chat.copyRetryPrompt')}
                                   </button>
@@ -1121,10 +1166,47 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                     className="message-tool-filter"
                                     type="button"
                                     disabled={!retryPromptTemplate.trim()}
-                                    onClick={() => insertPromptToComposer(retryPromptTemplate)}
+                                    onClick={() => useRetryPrompt(message.id, retryPromptMode, retryPromptTemplate)}
                                   >
                                     {t('chat.useRetryPrompt')}
                                   </button>
+                                </div>
+                                <div className="message-retry-history">
+                                  <div className="message-retry-history-title">{t('chat.retryPrompt.historyTitle')}</div>
+                                  {retryPromptHistory.length === 0 ? (
+                                    <div className="message-retry-history-empty">{t('chat.retryPrompt.historyEmpty')}</div>
+                                  ) : (
+                                    retryPromptHistory.map((entry, idx) => (
+                                      <div key={`${message.id}-retry-history-${entry.id}`} className="message-retry-history-item">
+                                        <div className="message-retry-history-meta">
+                                          <span className="message-retry-history-index">#{idx + 1}</span>
+                                          <span className="message-retry-history-mode">
+                                            {entry.mode === 'concise' ? t('chat.retryPrompt.modeConcise') : t('chat.retryPrompt.modeDetailed')}
+                                          </span>
+                                          <span className="message-retry-history-lines">
+                                            {t('chat.retryPrompt.lineCount', { count: countLines(entry.text) })}
+                                          </span>
+                                        </div>
+                                        <pre className="message-retry-history-preview">{compactSnippet(entry.text, 300, 4)}</pre>
+                                        <div className="message-retry-history-actions">
+                                          <button
+                                            className="message-tool-filter"
+                                            type="button"
+                                            onClick={() => useRetryPrompt(message.id, entry.mode, entry.text)}
+                                          >
+                                            {t('chat.retryPrompt.historyUse')}
+                                          </button>
+                                          <button
+                                            className="message-tool-filter"
+                                            type="button"
+                                            onClick={() => copyRetryPrompt(`${message.id}-retry-history-${entry.id}`, message.id, entry.mode, entry.text)}
+                                          >
+                                            {copiedMarker === `${message.id}-retry-history-${entry.id}` ? t('chat.copied') : t('chat.copy')}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1177,7 +1259,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                     className="message-tool-filter"
                                     type="button"
                                     disabled={!retryPromptTemplate.trim()}
-                                    onClick={() => insertPromptToComposer(retryPromptTemplate)}
+                                    onClick={() => useRetryPrompt(message.id, retryPromptMode, retryPromptTemplate)}
                                   >
                                     {t('chat.useRetryPrompt')}
                                   </button>
