@@ -590,6 +590,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [retryContextCollapsedByMessage, setRetryContextCollapsedByMessage] = useState<Record<string, boolean>>({})
   const [retryContextDraftByMessage, setRetryContextDraftByMessage] = useState<Record<string, string>>({})
   const [retryPromptModeByMessage, setRetryPromptModeByMessage] = useState<Record<string, RetryPromptMode>>({})
+  const [retryPromptPreviewCollapsedByMessage, setRetryPromptPreviewCollapsedByMessage] = useState<Record<string, boolean>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
@@ -697,6 +698,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const setRetryPromptMode = useCallback((messageId: string, next: RetryPromptMode) => {
     setRetryPromptModeByMessage((prev) => ({ ...prev, [messageId]: next }))
+  }, [])
+  const toggleRetryPromptPreview = useCallback((messageId: string) => {
+    setRetryPromptPreviewCollapsedByMessage((prev) => ({ ...prev, [messageId]: !(prev[messageId] ?? true) }))
   }, [])
   const toggleToolStage = useCallback((stageId: string) => {
     setCollapsedToolStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
@@ -829,6 +833,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const retryPromptMode = retryPromptModeByMessage[message.id] ?? 'concise'
               const retryPromptTemplate =
                 failedToolCount > 0 ? buildRetryPromptTemplate(retryPromptMode, retryContextDraft, failedOpsDigest, t) : ''
+              const retryPromptPreviewCollapsed = retryPromptPreviewCollapsedByMessage[message.id] ?? true
+              const retryPromptLineCount = retryPromptTemplate.trim() ? countLines(retryPromptTemplate.trim()) : 0
               const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? false
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
@@ -1030,6 +1036,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
                             <button
                               className="message-tool-filter"
                               type="button"
+                              disabled={!retryPromptTemplate.trim()}
+                              onClick={() => toggleRetryPromptPreview(message.id)}
+                            >
+                              {retryPromptPreviewCollapsed ? t('chat.retryPrompt.showPreview') : t('chat.retryPrompt.hidePreview')}
+                            </button>
+                          ) : null}
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className="message-tool-filter"
+                              type="button"
                               onClick={() => toggleRetryContextPanel(message.id)}
                             >
                               {retryContextCollapsed ? t('chat.retryContext.showEditor') : t('chat.retryContext.hideEditor')}
@@ -1065,6 +1081,55 @@ export function AIChatPanel(props: AIChatPanelProps) {
                             </button>
                           ))}
                         </div>
+                        {!message.streaming && failedToolCount > 0 ? (
+                          <div className="message-retry-preview">
+                            <button
+                              className="message-retry-preview-head"
+                              type="button"
+                              onClick={() => toggleRetryPromptPreview(message.id)}
+                              aria-expanded={!retryPromptPreviewCollapsed}
+                            >
+                              <span className={`message-retry-preview-chevron${retryPromptPreviewCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+                                {'>'}
+                              </span>
+                              <span className="message-retry-preview-title">{t('chat.retryPrompt.previewTitle')}</span>
+                              <span className="message-retry-preview-count">{t('chat.retryPrompt.lineCount', { count: retryPromptLineCount })}</span>
+                              <span className="message-retry-preview-mode">
+                                {retryPromptMode === 'concise' ? t('chat.retryPrompt.modeConcise') : t('chat.retryPrompt.modeDetailed')}
+                              </span>
+                              <span className="message-retry-preview-toggle">
+                                {retryPromptPreviewCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}
+                              </span>
+                            </button>
+                            <div className={`message-retry-preview-body-wrap${retryPromptPreviewCollapsed ? ' collapsed' : ''}`}>
+                              <div className="message-retry-preview-body">
+                                {retryPromptTemplate.trim() ? (
+                                  <pre className="message-retry-preview-text">{retryPromptTemplate}</pre>
+                                ) : (
+                                  <div className="message-tool-empty">{t('chat.retryPrompt.emptyPreview')}</div>
+                                )}
+                                <div className="message-retry-preview-actions">
+                                  <button
+                                    className="message-tool-filter"
+                                    type="button"
+                                    disabled={!retryPromptTemplate.trim()}
+                                    onClick={() => void copyWithFeedback(`${message.id}-retry-prompt-preview`, retryPromptTemplate)}
+                                  >
+                                    {copiedMarker === `${message.id}-retry-prompt-preview` ? t('chat.copied') : t('chat.copyRetryPrompt')}
+                                  </button>
+                                  <button
+                                    className="message-tool-filter"
+                                    type="button"
+                                    disabled={!retryPromptTemplate.trim()}
+                                    onClick={() => insertPromptToComposer(retryPromptTemplate)}
+                                  >
+                                    {t('chat.useRetryPrompt')}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                         {!message.streaming && failedToolCount > 0 ? (
                           <div className="message-retry-context">
                             <button
