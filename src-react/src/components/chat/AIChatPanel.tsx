@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import { useI18n } from '../../i18n'
 import type { ChangeSet, WriterMode } from '../../services'
 import { AppIcon } from '../icons/AppIcon'
@@ -289,15 +289,38 @@ function compactPlainText(text: string, maxChars: number): string {
   return `${normalized.slice(0, maxChars)}...`
 }
 
+function extractJsonField(inputPreview: string, field: 'path' | 'from' | 'to'): string | null {
+  const matcher = new RegExp(`"${field}"\\s*:\\s*"([^"]+)"`)
+  const match = inputPreview.match(matcher)
+  if (!match?.[1]) return null
+  return match[1]
+}
+
+function resolveToolEventTarget(toolEvent: AIChatToolEvent): string {
+  if (toolEvent.readPath?.trim()) return toolEvent.readPath.trim()
+  if (toolEvent.writePath?.trim()) return toolEvent.writePath.trim()
+  const inputPreview = toolEvent.inputPreview ?? ''
+  const path = extractJsonField(inputPreview, 'path')
+  if (path) return path
+  const from = extractJsonField(inputPreview, 'from')
+  const to = extractJsonField(inputPreview, 'to')
+  if (from && to) return `${from} -> ${to}`
+  return ''
+}
+
 function stripToolTraceContent(content: string): string {
   if (!content.trim()) return ''
   const tracePrefix = /^\s*(ACTION|INPUT|OBSERVATION|OUTPUT|TOOL|TOOL_RESULT)\s*:/i
   const traceFence = /^\s*```(?:json|tool|text)?\s*$/i
+  const traceJsonLine = /^\s*[\[{].*(?:"(path|name|kind|exists|text|error|ok|from|to|lines|chars)")/i
+  const traceJsonTail = /^\s*[\],]\s*$/
   const next = content
     .split(/\r?\n/)
     .filter((line) => {
       if (tracePrefix.test(line)) return false
       if (traceFence.test(line)) return false
+      if (traceJsonLine.test(line)) return false
+      if (traceJsonTail.test(line)) return false
       return true
     })
     .join('\n')
@@ -427,12 +450,29 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [collapsedToolStages, setCollapsedToolStages] = useState<Record<string, boolean>>({})
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
+  const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
   const [toolNowTick, setToolNowTick] = useState(Date.now())
+  const latestLiveStreamIdRef = useRef<string>('')
 
   const hasRunningToolEvents = chatMessages.some((message) => {
     if (message.role !== 'assistant') return false
     return (message.toolEvents ?? []).some((event) => event.status === 'running')
   })
+  const activeStreamingMessage = (() => {
+    for (let i = chatMessages.length - 1; i >= 0; i -= 1) {
+      const candidate = chatMessages[i]
+      if (candidate.role === 'assistant' && candidate.streaming) {
+        return candidate
+      }
+    }
+    return null
+  })()
+  const activeLiveStreamId = activeStreamingMessage?.streamId ?? ''
+  const activeLiveToolEvents = activeStreamingMessage?.toolEvents ?? []
+  const activeLiveToolCount = activeLiveToolEvents.length
+  const activeLiveLatestTool = activeLiveToolCount > 0 ? activeLiveToolEvents[activeLiveToolCount - 1] : null
+  const activeLiveSummary = activeLiveToolCount > 0 ? buildThoughtSummary(activeLiveToolEvents, t) : ''
+  const activeLiveVisibleTools = activeLiveToolCount > 7 ? activeLiveToolEvents.slice(activeLiveToolCount - 7) : activeLiveToolEvents
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -443,6 +483,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
       window.clearInterval(timer)
     }
   }, [hasRunningToolEvents])
+  useEffect(() => {
+    const prev = latestLiveStreamIdRef.current
+    if (activeLiveStreamId && activeLiveStreamId !== prev) {
+      setLiveOpsCollapsed(false)
+    } else if (!activeLiveStreamId && prev) {
+      setLiveOpsCollapsed(true)
+    }
+    latestLiveStreamIdRef.current = activeLiveStreamId
+  }, [activeLiveStreamId])
 
   const toggleAssistantMessage = useCallback((messageId: string) => {
     setExpandedAssistantIds((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
@@ -558,7 +607,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const toolPanelCollapsed = hasToolEvents
                 ? hasManualToolCollapse
                   ? collapsedToolPanels[message.id] === true
-                  : !message.streaming
+                  : true
                 : true
 
               return (
@@ -855,6 +904,56 @@ export function AIChatPanel(props: AIChatPanelProps) {
           </button>
         ) : null}
       </div>
+      {activeStreamingMessage && activeLiveToolCount > 0 ? (
+        <div className={`ai-live-ops${liveOpsCollapsed ? ' collapsed' : ''}`}>
+          <button className="ai-live-ops-head" type="button" onClick={() => setLiveOpsCollapsed((prev) => !prev)}>
+            <span className={`ai-live-ops-chevron${liveOpsCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+              {'>'}
+            </span>
+            <span className="ai-live-ops-title">{t('chat.thoughtProcess')}</span>
+            <span className="ai-live-ops-count">{t('chat.operationCount', { count: activeLiveToolCount })}</span>
+            <span className={`ai-live-ops-status ai-live-ops-status-${activeLiveLatestTool?.status ?? 'running'}`}>
+              {toolStatusLabel(activeLiveLatestTool?.status ?? 'running', t)}
+            </span>
+            <span className="ai-live-ops-toggle">{liveOpsCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}</span>
+          </button>
+          {liveOpsCollapsed ? (
+            activeLiveSummary ? (
+              <div className="ai-live-ops-summary">{activeLiveSummary}</div>
+            ) : null
+          ) : (
+            <div className="ai-live-ops-body">
+              <div className="ai-live-ops-phase">{getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
+              {activeLiveSummary ? <div className="ai-live-ops-summary">{activeLiveSummary}</div> : null}
+              <div className="ai-live-ops-list">
+                {activeLiveVisibleTools.map((toolEvent, idx) => {
+                  const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                  const durationMs =
+                    toolEvent.durationMs ??
+                    ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                      (toolEvent.startedAt ?? toolEvent.timestamp))
+                  const target = resolveToolEventTarget(toolEvent)
+                  return (
+                    <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
+                      <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
+                      <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
+                      {target ? (
+                        <span className="ai-live-ops-item-target" title={target}>
+                          {target}
+                        </span>
+                      ) : null}
+                      <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
+                      <span className="ai-live-ops-item-duration">
+                        {formatDurationLabel(durationMs, toolEvent.status === 'running')}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="ai-input-area">
         <div className="ai-input-topbar">
