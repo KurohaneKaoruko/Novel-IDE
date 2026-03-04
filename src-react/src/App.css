@@ -1335,6 +1335,15 @@ body {
   background: color-mix(in srgb, var(--surface-1) 92%, transparent);
 }
 
+.message-tool-stats {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 90%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
+}
+
 .message-tool-toolbar {
   display: flex;
   align-items: center;

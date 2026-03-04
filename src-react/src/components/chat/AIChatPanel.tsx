@@ -146,6 +146,7 @@ type TranslateFn = (key: string, params?: Record<string, string | number>) => st
 type ToolStageKey = 'context' | 'filesystem' | 'memory' | 'other'
 type ToolFilterMode = 'all' | 'error'
 type ToolStageFilter = 'all' | ToolStageKey
+type ToolCounters = { running: number; done: number; failed: number; total: number }
 
 type RecoveryActions = {
   showRetry: boolean
@@ -248,6 +249,29 @@ function buildToolStageCountMap(events: AIChatToolEvent[]): Record<ToolStageKey,
     counts[toolStageKey(event.tool)] += 1
   }
   return counts
+}
+
+function buildToolCounters(events: AIChatToolEvent[]): ToolCounters {
+  let running = 0
+  let done = 0
+  let failed = 0
+  for (const event of events) {
+    if (event.status === 'running') {
+      running += 1
+      continue
+    }
+    if (event.status === 'error') {
+      failed += 1
+      continue
+    }
+    done += 1
+  }
+  return {
+    running,
+    done,
+    failed,
+    total: events.length,
+  }
 }
 
 function stageStatus(events: AIChatToolEvent[]): AIChatToolEvent['status'] {
@@ -568,6 +592,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
     liveStageFilter === 'all'
       ? modeFilteredLiveToolEvents
       : modeFilteredLiveToolEvents.filter((event) => toolStageKey(event.tool) === liveStageFilter)
+  const liveModeFilteredStats = buildToolCounters(modeFilteredLiveToolEvents)
+  const liveVisibleStats = buildToolCounters(visibleLiveToolEvents)
   const groupedLiveToolEvents = groupToolEventsByStage(visibleLiveToolEvents)
   const liveFailedOpsDigest = liveFailedToolCount > 0 ? buildFailedOpsDigest(activeLiveToolEvents, t) : ''
 
@@ -757,10 +783,12 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const modeFilteredToolEvents =
                 toolFilter === 'error' ? toolEvents.filter((event) => event.status === 'error') : toolEvents
               const toolStageCounts = buildToolStageCountMap(modeFilteredToolEvents)
+              const modeFilteredStats = buildToolCounters(modeFilteredToolEvents)
               const visibleToolEvents =
                 toolStageFilter === 'all'
                   ? modeFilteredToolEvents
                   : modeFilteredToolEvents.filter((event) => toolStageKey(event.tool) === toolStageFilter)
+              const visibleToolStats = buildToolCounters(visibleToolEvents)
               const hasToolFilterApplied = toolFilter !== 'all' || toolStageFilter !== 'all'
               const groupedToolEvents = groupToolEventsByStage(visibleToolEvents)
               const hasManualToolCollapse = Object.prototype.hasOwnProperty.call(collapsedToolPanels, message.id)
@@ -880,6 +908,17 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     ) : (
                       <div className="message-tool-list">
                         <div className="message-tool-summary-text">{thoughtSummary}</div>
+                        <div className="message-tool-stats">
+                          {toolStageFilter === 'all'
+                            ? t('chat.opsStats', modeFilteredStats)
+                            : t('chat.opsStatsFiltered', {
+                                visible: visibleToolStats.total,
+                                total: modeFilteredStats.total,
+                                running: visibleToolStats.running,
+                                done: visibleToolStats.done,
+                                failed: visibleToolStats.failed,
+                              })}
+                        </div>
                         <div className="message-tool-toolbar">
                           <button
                             className={`message-tool-filter${toolFilter === 'all' ? ' active' : ''}`}
@@ -1259,6 +1298,17 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     {toolStageLabel(stageKey, t)} ({liveStageCounts[stageKey]})
                   </button>
                 ))}
+              </div>
+              <div className="message-tool-stats">
+                {liveStageFilter === 'all'
+                  ? t('chat.opsStats', liveModeFilteredStats)
+                  : t('chat.opsStatsFiltered', {
+                      visible: liveVisibleStats.total,
+                      total: liveModeFilteredStats.total,
+                      running: liveVisibleStats.running,
+                      done: liveVisibleStats.done,
+                      failed: liveVisibleStats.failed,
+                    })}
               </div>
               <div className="ai-live-ops-list" ref={liveOpsListRef}>
                 {activeLiveToolCount === 0 ? (
