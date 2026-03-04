@@ -333,6 +333,26 @@ function buildFailedOpsDigest(toolEvents: AIChatToolEvent[], t: TranslateFn, lim
   return `${t('chat.failedOpsDigestHeader', { count: failed.length })}\n${lines.join('\n')}${hiddenSuffix}`
 }
 
+function buildRetryPromptTemplate(retryContextText: string, failedOpsDigest: string, t: TranslateFn): string {
+  const retryContext = retryContextText.trim()
+  const failedOps = failedOpsDigest.trim()
+  if (!retryContext && !failedOps) return ''
+  const sections: string[] = [t('chat.retryPrompt.header')]
+  if (failedOps) {
+    sections.push('')
+    sections.push(t('chat.retryPrompt.failedSection'))
+    sections.push(failedOps)
+  }
+  if (retryContext) {
+    sections.push('')
+    sections.push(t('chat.retryPrompt.contextSection'))
+    sections.push(retryContext)
+  }
+  sections.push('')
+  sections.push(t('chat.retryPrompt.instruction'))
+  return sections.join('\n').trim()
+}
+
 function formatDurationLabel(ms: number, running: boolean): string {
   const safe = Math.max(running ? 0 : 1, Math.floor(ms))
   if (safe < 1000) return `${safe}ms`
@@ -680,6 +700,19 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const toggleLiveItem = useCallback((itemId: string) => {
     setExpandedLiveItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }))
   }, [])
+  const insertPromptToComposer = useCallback(
+    (prompt: string) => {
+      const payload = prompt.trim()
+      if (!payload) return
+      const current = chatInput.trim()
+      const next = current ? `${current}\n\n${payload}` : payload
+      onChatInputChange(next)
+      window.setTimeout(() => {
+        chatInputRef.current?.focus()
+      }, 0)
+    },
+    [chatInput, chatInputRef, onChatInputChange],
+  )
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !chatInput.trim()) {
@@ -775,6 +808,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const failedOpsDigest = failedToolCount > 0 ? buildFailedOpsDigest(toolEvents, t) : ''
               const hasRetryContextDraft = Object.prototype.hasOwnProperty.call(retryContextDraftByMessage, message.id)
               const retryContextDraft = hasRetryContextDraft ? (retryContextDraftByMessage[message.id] ?? '') : retryContextDefaultText
+              const retryPromptTemplate = failedToolCount > 0 ? buildRetryPromptTemplate(retryContextDraft, failedOpsDigest, t) : ''
               const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? false
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
@@ -948,6 +982,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
                             <button
                               className="message-tool-filter"
                               type="button"
+                              disabled={!retryPromptTemplate.trim()}
+                              onClick={() => void copyWithFeedback(`${message.id}-retry-prompt`, retryPromptTemplate)}
+                            >
+                              {copiedMarker === `${message.id}-retry-prompt` ? t('chat.copied') : t('chat.copyRetryPrompt')}
+                            </button>
+                          ) : null}
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className="message-tool-filter"
+                              type="button"
                               onClick={() => toggleRetryContextPanel(message.id)}
                             >
                               {retryContextCollapsed ? t('chat.retryContext.showEditor') : t('chat.retryContext.hideEditor')}
@@ -1025,6 +1069,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                     onClick={() => resetRetryContextDraft(message.id)}
                                   >
                                     {t('chat.retryContext.reset')}
+                                  </button>
+                                  <button
+                                    className="message-tool-filter"
+                                    type="button"
+                                    disabled={!retryPromptTemplate.trim()}
+                                    onClick={() => insertPromptToComposer(retryPromptTemplate)}
+                                  >
+                                    {t('chat.useRetryPrompt')}
                                   </button>
                                   <button
                                     className="message-tool-filter"
