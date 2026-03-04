@@ -308,6 +308,16 @@ function resolveToolEventTarget(toolEvent: AIChatToolEvent): string {
   return ''
 }
 
+function hasLiveToolDetail(toolEvent: AIChatToolEvent): boolean {
+  if (toolEvent.inputPreview?.trim()) return true
+  if (toolEvent.observationPreview?.trim()) return true
+  if (Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0) return true
+  if (typeof toolEvent.exists === 'boolean') return true
+  if (toolEvent.readPreview?.trim()) return true
+  if (toolEvent.writePreview?.trim()) return true
+  return false
+}
+
 function stripToolTraceContent(content: string): string {
   if (!content.trim()) return ''
   const tracePrefix = /^\s*(ACTION|INPUT|OBSERVATION|OUTPUT|TOOL|TOOL_RESULT)\s*:/i
@@ -452,6 +462,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
+  const [expandedLiveItems, setExpandedLiveItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
   const latestLiveStreamIdRef = useRef<string>('')
 
@@ -489,9 +500,11 @@ export function AIChatPanel(props: AIChatPanelProps) {
     if (activeLiveStreamId && activeLiveStreamId !== prev) {
       setLiveOpsCollapsed(false)
       setCollapsedLiveStages({})
+      setExpandedLiveItems({})
     } else if (!activeLiveStreamId && prev) {
       setLiveOpsCollapsed(true)
       setCollapsedLiveStages({})
+      setExpandedLiveItems({})
     }
     latestLiveStreamIdRef.current = activeLiveStreamId
   }, [activeLiveStreamId])
@@ -513,6 +526,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const toggleLiveStage = useCallback((stageId: string) => {
     setCollapsedLiveStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
+  }, [])
+  const toggleLiveItem = useCallback((itemId: string) => {
+    setExpandedLiveItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }))
   }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -946,7 +962,12 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   const liveStageState = stageStatus(group.items)
                   return (
                     <div key={stageId} className="ai-live-ops-stage">
-                      <button className="ai-live-ops-stage-head" type="button" onClick={() => toggleLiveStage(stageId)}>
+                      <button
+                        className="ai-live-ops-stage-head"
+                        type="button"
+                        onClick={() => toggleLiveStage(stageId)}
+                        aria-expanded={!liveStageCollapsed}
+                      >
                         <span className={`ai-live-ops-stage-chevron${liveStageCollapsed ? '' : ' expanded'}`} aria-hidden="true">
                           {'>'}
                         </span>
@@ -956,7 +977,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                         </span>
                         <span className="ai-live-ops-stage-count">{t('chat.operationCount', { count: group.items.length })}</span>
                       </button>
-                      {liveStageCollapsed ? null : (
+                      <div className={`ai-live-ops-stage-content${liveStageCollapsed ? ' collapsed' : ''}`}>
                         <div className="ai-live-ops-stage-list">
                           {group.items.map((toolEvent, idx) => {
                             const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
@@ -965,24 +986,68 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
                                 (toolEvent.startedAt ?? toolEvent.timestamp))
                             const target = resolveToolEventTarget(toolEvent)
+                            const canExpandDetail = hasLiveToolDetail(toolEvent)
+                            const expandedLiveItem = expandedLiveItems[liveToolId] === true
                             return (
                               <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
-                                <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
-                                <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
-                                {target ? (
-                                  <span className="ai-live-ops-item-target" title={target}>
-                                    {target}
+                                <div className="ai-live-ops-item-main">
+                                  <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
+                                  <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
+                                  {target ? (
+                                    <span className="ai-live-ops-item-target" title={target}>
+                                      {target}
+                                    </span>
+                                  ) : null}
+                                  <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
+                                  <span className="ai-live-ops-item-duration">
+                                    {formatDurationLabel(durationMs, toolEvent.status === 'running')}
                                   </span>
+                                  {canExpandDetail ? (
+                                    <button
+                                      className="ai-live-ops-item-toggle"
+                                      type="button"
+                                      onClick={() => toggleLiveItem(liveToolId)}
+                                      aria-expanded={expandedLiveItem}
+                                    >
+                                      {expandedLiveItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
+                                    </button>
+                                  ) : null}
+                                </div>
+                                {canExpandDetail ? (
+                                  <div className={`ai-live-ops-item-detail-wrap${expandedLiveItem ? ' expanded' : ''}`}>
+                                    <div className="ai-live-ops-item-detail">
+                                      {toolEvent.inputPreview ? (
+                                        <pre className="ai-live-ops-item-line" title={toolEvent.inputPreview}>
+                                          <span className="ai-live-ops-item-label">{t('chat.input')}</span>{' '}
+                                          {toolEvent.inputPreview}
+                                        </pre>
+                                      ) : null}
+                                      {toolEvent.observationPreview ? (
+                                        <pre className="ai-live-ops-item-line" title={toolEvent.observationPreview}>
+                                          <span className="ai-live-ops-item-label">{t('chat.output')}</span>{' '}
+                                          {toolEvent.observationPreview}
+                                        </pre>
+                                      ) : null}
+                                      {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
+                                        <div className="ai-live-ops-item-tree">
+                                          {toolEvent.listItems.map((item, treeIdx) => (
+                                            <div key={`${item.kind}-${item.name}-${treeIdx}`} className="ai-live-ops-item-tree-entry">
+                                              <span className={`ai-live-ops-item-tree-kind ai-live-ops-item-tree-kind-${item.kind}`}>
+                                                {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
+                                              </span>
+                                              <span className="ai-live-ops-item-tree-name">{item.name}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  </div>
                                 ) : null}
-                                <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
-                                <span className="ai-live-ops-item-duration">
-                                  {formatDurationLabel(durationMs, toolEvent.status === 'running')}
-                                </span>
                               </div>
                             )
                           })}
                         </div>
-                      )}
+                      </div>
                     </div>
                   )
                 })}
