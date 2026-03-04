@@ -144,6 +144,8 @@ function shouldCollapseMessage(message: AIChatMessage, contentOverride?: string)
 
 type TranslateFn = (key: string, params?: Record<string, string | number>) => string
 type ToolStageKey = 'context' | 'filesystem' | 'memory' | 'other'
+type ToolFilterMode = 'all' | 'error'
+type ToolStageFilter = 'all' | ToolStageKey
 
 type RecoveryActions = {
   showRetry: boolean
@@ -233,6 +235,19 @@ function groupToolEventsByStage(events: AIChatToolEvent[]): Array<{ stage: ToolS
     buckets[stage].push(event)
   }
   return order.map((stage) => ({ stage, items: buckets[stage] }))
+}
+
+function buildToolStageCountMap(events: AIChatToolEvent[]): Record<ToolStageKey, number> {
+  const counts: Record<ToolStageKey, number> = {
+    context: 0,
+    filesystem: 0,
+    memory: 0,
+    other: 0,
+  }
+  for (const event of events) {
+    counts[toolStageKey(event.tool)] += 1
+  }
+  return counts
 }
 
 function stageStatus(events: AIChatToolEvent[]): AIChatToolEvent['status'] {
@@ -512,13 +527,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [expandedAssistantIds, setExpandedAssistantIds] = useState<Record<string, boolean>>({})
   const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
   const [collapsedToolStages, setCollapsedToolStages] = useState<Record<string, boolean>>({})
-  const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
+  const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, ToolFilterMode>>({})
+  const [toolStageFilterByMessage, setToolStageFilterByMessage] = useState<Record<string, ToolStageFilter>>({})
   const [retryContextCollapsedByMessage, setRetryContextCollapsedByMessage] = useState<Record<string, boolean>>({})
   const [retryContextDraftByMessage, setRetryContextDraftByMessage] = useState<Record<string, string>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
-  const [liveOpsFilter, setLiveOpsFilter] = useState<'all' | 'error'>('all')
+  const [liveOpsFilter, setLiveOpsFilter] = useState<ToolFilterMode>('all')
+  const [liveStageFilter, setLiveStageFilter] = useState<ToolStageFilter>('all')
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
   const [expandedLiveItems, setExpandedLiveItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
@@ -544,8 +561,13 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const activeLiveLatestTool = activeLiveToolCount > 0 ? activeLiveToolEvents[activeLiveToolCount - 1] : null
   const activeLiveSummary = activeLiveToolCount > 0 ? buildThoughtSummary(activeLiveToolEvents, t) : ''
   const liveFailedToolCount = activeLiveToolEvents.filter((event) => event.status === 'error').length
-  const visibleLiveToolEvents =
+  const modeFilteredLiveToolEvents =
     liveOpsFilter === 'error' ? activeLiveToolEvents.filter((event) => event.status === 'error') : activeLiveToolEvents
+  const liveStageCounts = buildToolStageCountMap(modeFilteredLiveToolEvents)
+  const visibleLiveToolEvents =
+    liveStageFilter === 'all'
+      ? modeFilteredLiveToolEvents
+      : modeFilteredLiveToolEvents.filter((event) => toolStageKey(event.tool) === liveStageFilter)
   const groupedLiveToolEvents = groupToolEventsByStage(visibleLiveToolEvents)
   const liveFailedOpsDigest = liveFailedToolCount > 0 ? buildFailedOpsDigest(activeLiveToolEvents, t) : ''
 
@@ -563,12 +585,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
     if (activeLiveStreamId && activeLiveStreamId !== prev) {
       setLiveOpsCollapsed(false)
       setLiveOpsFilter('all')
+      setLiveStageFilter('all')
       setCollapsedLiveStages({})
       setExpandedLiveItems({})
       setCopiedMarker(null)
     } else if (!activeLiveStreamId && prev) {
       setLiveOpsCollapsed(true)
       setLiveOpsFilter('all')
+      setLiveStageFilter('all')
       setCollapsedLiveStages({})
       setExpandedLiveItems({})
       setCopiedMarker(null)
@@ -590,8 +614,11 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const toggleToolPanel = useCallback((messageId: string) => {
     setCollapsedToolPanels((prev) => ({ ...prev, [messageId]: !prev[messageId] }))
   }, [])
-  const setToolFilter = useCallback((messageId: string, next: 'all' | 'error') => {
+  const setToolFilter = useCallback((messageId: string, next: ToolFilterMode) => {
     setToolFilterByMessage((prev) => ({ ...prev, [messageId]: next }))
+  }, [])
+  const setToolStageFilter = useCallback((messageId: string, next: ToolStageFilter) => {
+    setToolStageFilterByMessage((prev) => ({ ...prev, [messageId]: next }))
   }, [])
   const toggleRetryContextPanel = useCallback((messageId: string) => {
     setRetryContextCollapsedByMessage((prev) => ({ ...prev, [messageId]: !(prev[messageId] ?? true) }))
@@ -726,8 +753,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
               const toolFilter = toolFilterByMessage[message.id] ?? 'all'
-              const visibleToolEvents =
+              const toolStageFilter = toolStageFilterByMessage[message.id] ?? 'all'
+              const modeFilteredToolEvents =
                 toolFilter === 'error' ? toolEvents.filter((event) => event.status === 'error') : toolEvents
+              const toolStageCounts = buildToolStageCountMap(modeFilteredToolEvents)
+              const visibleToolEvents =
+                toolStageFilter === 'all'
+                  ? modeFilteredToolEvents
+                  : modeFilteredToolEvents.filter((event) => toolStageKey(event.tool) === toolStageFilter)
               const groupedToolEvents = groupToolEventsByStage(visibleToolEvents)
               const hasManualToolCollapse = Object.prototype.hasOwnProperty.call(collapsedToolPanels, message.id)
               const toolPanelCollapsed = hasToolEvents
@@ -889,6 +922,26 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               {t('chat.recovery.retryTurn')}
                             </button>
                           ) : null}
+                        </div>
+                        <div className="message-tool-toolbar message-tool-stage-toolbar">
+                          <button
+                            className={`message-tool-filter${toolStageFilter === 'all' ? ' active' : ''}`}
+                            type="button"
+                            onClick={() => setToolStageFilter(message.id, 'all')}
+                          >
+                            {t('chat.stageFilterAll')}
+                          </button>
+                          {(['context', 'filesystem', 'memory', 'other'] as const).map((stageKey) => (
+                            <button
+                              key={`${message.id}-stage-filter-${stageKey}`}
+                              className={`message-tool-filter${toolStageFilter === stageKey ? ' active' : ''}`}
+                              type="button"
+                              disabled={toolStageCounts[stageKey] === 0}
+                              onClick={() => setToolStageFilter(message.id, stageKey)}
+                            >
+                              {toolStageLabel(stageKey, t)} ({toolStageCounts[stageKey]})
+                            </button>
+                          ))}
                         </div>
                         {!message.streaming && failedToolCount > 0 ? (
                           <div className="message-retry-context">
@@ -1185,6 +1238,26 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     {copiedMarker === 'live-failed-ops' ? t('chat.copied') : t('chat.copyFailedOps')}
                   </button>
                 ) : null}
+              </div>
+              <div className="message-tool-toolbar message-tool-stage-toolbar ai-live-ops-toolbar">
+                <button
+                  className={`message-tool-filter${liveStageFilter === 'all' ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => setLiveStageFilter('all')}
+                >
+                  {t('chat.stageFilterAll')}
+                </button>
+                {(['context', 'filesystem', 'memory', 'other'] as const).map((stageKey) => (
+                  <button
+                    key={`live-stage-filter-${stageKey}`}
+                    className={`message-tool-filter${liveStageFilter === stageKey ? ' active' : ''}`}
+                    type="button"
+                    disabled={liveStageCounts[stageKey] === 0}
+                    onClick={() => setLiveStageFilter(stageKey)}
+                  >
+                    {toolStageLabel(stageKey, t)} ({liveStageCounts[stageKey]})
+                  </button>
+                ))}
               </div>
               <div className="ai-live-ops-list" ref={liveOpsListRef}>
                 {activeLiveToolCount === 0 ? (

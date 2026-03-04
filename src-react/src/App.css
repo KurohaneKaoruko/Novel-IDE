@@ -1342,6 +1342,10 @@ body {
   flex-wrap: wrap;
 }
 
+.message-tool-stage-toolbar {
+  margin-top: -2px;
+}
+
 .message-tool-filter {
   border: 1px solid var(--border-subtle);
   background: var(--surface-1);
