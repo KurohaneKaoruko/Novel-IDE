@@ -2109,6 +2109,23 @@ function App() {
       const providerIssue = await preflightChatProviderIssue(appSettings, effectiveProviderId, t)
       if (providerIssue) {
         setError(providerIssue)
+        const shouldEchoLocalFailure = !options?.hideUserEcho && !options?.useExistingLastUser && !options?.sourceMessages
+        if (shouldEchoLocalFailure) {
+          const localUser: ChatItem = { id: newId(), role: 'user', content }
+          const localAssistant: ChatItem = {
+            id: newId(),
+            role: 'assistant',
+            content: providerIssue,
+            streaming: false,
+            failureKind: 'provider',
+            timestamp: Date.now(),
+          }
+          setChatMessages((prev) => [...prev, localUser, localAssistant])
+          setChatAutoScroll(true)
+          if (!overrideContent || overrideContent === chatInput) {
+            setChatInput('')
+          }
+        }
         return null
       }
 
