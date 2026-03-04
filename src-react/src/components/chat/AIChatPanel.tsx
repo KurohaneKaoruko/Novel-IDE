@@ -83,6 +83,7 @@ type AIChatPanelProps = {
   canRegenerateLatest: boolean
   latestCompletedAssistantId?: string
   onRegenerateAssistant: (messageId?: string) => void | Promise<unknown>
+  getRetryContextText?: (messageId?: string) => string
   onGenerateAssistantCandidates: (messageId?: string, count?: number) => void | Promise<unknown>
   onRetryWithFallbackProvider: (messageId?: string) => void | Promise<unknown>
   onOpenModelSettings: () => void
@@ -476,6 +477,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     canRegenerateLatest,
     latestCompletedAssistantId,
     onRegenerateAssistant,
+    getRetryContextText,
     onGenerateAssistantCandidates,
     onRetryWithFallbackProvider,
     onOpenModelSettings,
@@ -671,6 +673,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const latestToolEvent = hasToolEvents ? toolEvents[toolEvents.length - 1] : null
               const thoughtSummary = hasToolEvents ? buildThoughtSummary(toolEvents, t) : ''
               const failedToolCount = hasToolEvents ? toolEvents.filter((event) => event.status === 'error').length : 0
+              const retryContextText = failedToolCount > 0 ? (getRetryContextText?.(message.id) ?? '') : ''
               const toolFilter = toolFilterByMessage[message.id] ?? 'all'
               const visibleToolEvents =
                 toolFilter === 'error' ? toolEvents.filter((event) => event.status === 'error') : toolEvents
@@ -805,6 +808,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           >
                             {t('chat.filterFailed', { count: failedToolCount })}
                           </button>
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className="message-tool-filter"
+                              type="button"
+                              disabled={!retryContextText.trim()}
+                              onClick={() => void copyWithFeedback(`${message.id}-retryctx`, retryContextText)}
+                            >
+                              {copiedMarker === `${message.id}-retryctx` ? t('chat.copied') : t('chat.copyErrorContext')}
+                            </button>
+                          ) : null}
                           {!message.streaming && failedToolCount > 0 ? (
                             <button
                               className="message-tool-filter"

@@ -363,6 +363,11 @@ type AssistantReplayContext = {
   replayHistory: ChatItem[]
   replayUser: ChatItem
   versionGroupId: string
+  retryContext: string
+}
+
+type ResolveReplayOptions = {
+  persistCurrentVersion?: boolean
 }
 
 type SettingsTabKey = 'general' | 'editor' | 'models' | 'agents'
@@ -600,6 +605,42 @@ function getProviderAvailability(
     return { ready: false, statusLabel: t('chat.provider.missingApiKey') }
   }
   return { ready: true, statusLabel: t('chat.provider.ready') }
+}
+
+function extractJsonPreviewField(inputPreview: string, field: 'path' | 'from' | 'to'): string | null {
+  const matcher = new RegExp(`"${field}"\\s*:\\s*"([^"]+)"`)
+  const match = inputPreview.match(matcher)
+  if (!match?.[1]) return null
+  return match[1]
+}
+
+function resolveToolActivityTarget(activity: AgentToolActivity): string {
+  if (activity.readPath?.trim()) return activity.readPath.trim()
+  if (activity.writePath?.trim()) return activity.writePath.trim()
+  const inputPreview = activity.inputPreview ?? ''
+  const path = extractJsonPreviewField(inputPreview, 'path')
+  if (path) return path
+  const from = extractJsonPreviewField(inputPreview, 'from')
+  const to = extractJsonPreviewField(inputPreview, 'to')
+  if (from && to) return `${from} -> ${to}`
+  return ''
+}
+
+function buildRetryContextFromToolEvents(toolEvents: AgentToolActivity[] | undefined, t: TranslateText): string {
+  if (!toolEvents || toolEvents.length === 0) return ''
+  const failed = toolEvents.filter((event) => event.status === 'error')
+  if (failed.length === 0) return ''
+  const recentFailed = failed.slice(-3)
+  const lines = recentFailed.map((event, idx) => {
+    const target = resolveToolActivityTarget(event)
+    const detailSource =
+      event.observationPreview || event.readPreview || event.writePreview || event.inputPreview || ''
+    const detail = shortText(detailSource.replace(/\s+/g, ' ').trim(), 220)
+    const targetPart = target ? ` | ${target}` : ''
+    const detailPart = detail ? ` | ${detail}` : ''
+    return `${idx + 1}. #${event.step} ${event.tool}${targetPart}${detailPart}`
+  })
+  return `${t('chat.retryContext.header')}\n${lines.join('\n')}\n${t('chat.retryContext.instruction')}`
 }
 
 function App() {
@@ -2574,7 +2615,7 @@ function App() {
   }, [forceFinalizeStream, t])
 
   const resolveAssistantReplayContext = useCallback(
-    (assistantMessageId?: string): AssistantReplayContext | null => {
+    (assistantMessageId?: string, options?: ResolveReplayOptions): AssistantReplayContext | null => {
       if (chatMessagesRef.current.some((m) => m.streaming)) return null
       const history = chatMessagesRef.current
       if (history.length === 0) return null
@@ -2605,7 +2646,8 @@ function App() {
 
       const targetAssistant = history[assistantIndex]
       const versionGroupId = targetAssistant.versionGroupId ?? targetAssistant.id
-      if (targetAssistant.content.trim()) {
+      const shouldPersistVersion = options?.persistCurrentVersion !== false
+      if (shouldPersistVersion && targetAssistant.content.trim()) {
         upsertAssistantVersion(versionGroupId, {
           content: targetAssistant.content,
           changeSet: targetAssistant.changeSet,
@@ -2618,16 +2660,20 @@ function App() {
       const replayHistory = history.slice(0, assistantIndex)
       const replayUser = replayHistory[replayHistory.length - 1]
       if (!replayUser || replayUser.role !== 'user') return null
-      return { replayHistory, replayUser, versionGroupId }
+      const retryContext = buildRetryContextFromToolEvents(targetAssistant.toolEvents, t)
+      return { replayHistory, replayUser, versionGroupId, retryContext }
     },
-    [upsertAssistantVersion],
+    [t, upsertAssistantVersion],
   )
 
   const onRegenerateAssistant = useCallback(
     async (assistantMessageId?: string) => {
       const replay = resolveAssistantReplayContext(assistantMessageId)
       if (!replay) return
-      await onSendChat(replay.replayUser.content, {
+      const replayPrompt = replay.retryContext
+        ? `${replay.replayUser.content}\n\n${replay.retryContext}`
+        : replay.replayUser.content
+      await onSendChat(replayPrompt, {
         sourceMessages: replay.replayHistory,
         useExistingLastUser: true,
         hideUserEcho: true,
@@ -2683,7 +2729,10 @@ function App() {
         await persistAppSettings(next, prev)
       }
 
-      await onSendChat(replay.replayUser.content, {
+      const replayPrompt = replay.retryContext
+        ? `${replay.replayUser.content}\n\n${replay.retryContext}`
+        : replay.replayUser.content
+      await onSendChat(replayPrompt, {
         sourceMessages: replay.replayHistory,
         useExistingLastUser: true,
         hideUserEcho: true,
@@ -2701,6 +2750,13 @@ function App() {
       resolveAssistantReplayContext,
       t,
     ],
+  )
+  const getRetryContextText = useCallback(
+    (assistantMessageId?: string): string => {
+      const replay = resolveAssistantReplayContext(assistantMessageId, { persistCurrentVersion: false })
+      return replay?.retryContext ?? ''
+    },
+    [resolveAssistantReplayContext],
   )
 
   const onGenerateAssistantCandidates = useCallback(
@@ -4509,6 +4565,7 @@ function App() {
                 canRegenerateLatest={canRegenerateLatest}
                 latestCompletedAssistantId={latestCompletedAssistant?.id}
                 onRegenerateAssistant={onRegenerateAssistant}
+                getRetryContextText={getRetryContextText}
                 onGenerateAssistantCandidates={onGenerateAssistantCandidates}
                 onRetryWithFallbackProvider={onRetryWithFallbackProvider}
                 onOpenModelSettings={openModelSettings}
