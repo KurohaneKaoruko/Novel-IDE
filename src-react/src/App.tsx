@@ -789,34 +789,34 @@ function App() {
   }, [])
   const getStreamPhaseLabel = useCallback(
     (streamId?: string): string => {
-      if (!streamId) return 'AI processing...'
+      if (!streamId) return t('chat.phase.processing')
       const phase = streamPhaseById[streamId]
       const now = Date.now()
       const startedAt = streamStartedAtRef.current.get(streamId) ?? now
       const lastTokenAt = streamLastTokenAtRef.current.get(streamId) ?? startedAt
       const elapsedSec = Math.max(0, Math.floor((now - startedAt) / 1000))
       const idleSec = Math.max(0, Math.floor((now - lastTokenAt) / 1000))
-      let base = 'AI processing...'
+      let base = t('chat.phase.processing')
       switch (phase) {
         case 'initializing':
-          base = 'AI initializing...'
+          base = t('chat.phase.initializing')
           break
         case 'thinking':
-          base = 'AI thinking...'
+          base = t('chat.phase.thinking')
           break
         case 'responding':
-          base = idleSec >= 15 ? 'AI waiting for next chunk...' : 'AI streaming...'
+          base = idleSec >= 15 ? t('chat.phase.waitingNextChunk') : t('chat.phase.streaming')
           break
         case 'retrying':
-          base = 'AI auto retrying...'
+          base = t('chat.phase.retrying')
           break
         default:
-          base = 'AI processing...'
+          base = t('chat.phase.processing')
           break
       }
       return elapsedSec > 0 ? `${base} (${formatElapsedLabel(elapsedSec)})` : base
     },
-    [streamPhaseById, streamUiTick],
+    [streamPhaseById, streamUiTick, t],
   )
 
   const effectiveProviderId = useMemo(() => {
@@ -2125,7 +2125,7 @@ function App() {
         cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: 'Tauri runtime is required for this AI capability.', streaming: false } : m,
+            m.id === assistantId ? { ...m, content: t('chat.error.tauriRequired'), streaming: false } : m,
           ),
         )
         return null
@@ -2135,7 +2135,7 @@ function App() {
         cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: 'No workspace is currently opened.', streaming: false } : m,
+            m.id === assistantId ? { ...m, content: t('chat.error.noWorkspace'), streaming: false } : m,
           ),
         )
         return null
@@ -2387,7 +2387,7 @@ function App() {
       if (chatMessagesRef.current.some((m) => m.streaming)) return
 
       const assistantId = streamAssistantIdRef.current.get(streamId) ?? active.id
-      setError('AI response timed out repeatedly. Please check your network and try again.')
+      setError(t('chat.error.retryTimeout'))
       const history = chatMessagesRef.current
       const assistantIndex = history.findIndex((m) => m.id === assistantId && m.role === 'assistant' && !m.streaming)
       if (assistantIndex < 0) return
@@ -2418,7 +2418,7 @@ function App() {
         versionGroupId,
       })
     },
-    [onSendChat, upsertAssistantVersion],
+    [onSendChat, t, upsertAssistantVersion],
   )
   useEffect(() => {
     if (!activeStreamId) return
@@ -2444,16 +2444,16 @@ function App() {
         const idleTimeoutMs = hasOutput ? STREAM_IDLE_HARD_TIMEOUT_MS : STREAM_PRETOKEN_HARD_TIMEOUT_MS
 
         if (manualCancelledStreamsRef.current.has(streamId) && idleMs >= STREAM_MANUAL_CANCEL_GRACE_MS) {
-          forceFinalizeStream(streamId, 'AI generation cancelled.', true)
+          forceFinalizeStream(streamId, t('chat.error.generationCancelled'), true)
           continue
         }
         if (idleMs >= idleTimeoutMs || totalMs >= STREAM_TOTAL_HARD_TIMEOUT_MS) {
-          forceFinalizeStream(streamId, 'AI request timed out and was auto-stopped. Please retry.')
+          forceFinalizeStream(streamId, t('chat.error.timeoutAutoStopped'))
         }
       }
     }, 5_000)
     return () => window.clearInterval(timer)
-  }, [forceFinalizeStream])
+  }, [forceFinalizeStream, t])
 
   const resolveAssistantReplayContext = useCallback(
     (assistantMessageId?: string): AssistantReplayContext | null => {
@@ -3419,10 +3419,10 @@ function App() {
               const normalizedContent =
                 !mergedCancelled && !hasVisibleOutput
                   ? hasChangeSet
-                    ? 'Changes were applied. Open Diff for details.'
+                    ? t('chat.collapsedForDiff')
                     : !hasOutput && !sanitizedTrim
-                      ? 'AI returned empty response. Please retry.'
-                      : 'AI completed actions. No direct chat output was returned.'
+                      ? t('chat.error.emptyResponseRetry')
+                      : t('chat.error.actionsNoDirectOutput')
                   : sanitizedContent
               const registered = upsertAssistantVersion(groupId, {
                 content: normalizedContent,
@@ -3539,9 +3539,9 @@ function App() {
       const lowerMessage = rawMessage.toLowerCase()
       const message =
         stage === 'timeout'
-          ? 'AI request timed out and was stopped. Please retry with a smaller single task.'
+          ? t('chat.error.timeoutStoppedSmallerTask')
           : lowerMessage.includes('no api key configured') || lowerMessage.includes('api key not found')
-            ? 'No API key is configured for the current provider. Please set an API key in Settings > Models.'
+            ? t('chat.error.noApiKeyConfigured')
             : rawMessage
       const extra = [provider ? `provider=${provider}` : '', stage ? `stage=${stage}` : ''].filter(Boolean).join(' ')
       setChatMessages((prev) =>
@@ -3573,7 +3573,7 @@ function App() {
       disposed = true
       for (const u of unlistenFns) u()
     }
-  }, [appSettings, diffContext, onOpenDiffView, refreshTree, upsertAssistantVersion])
+  }, [appSettings, diffContext, onOpenDiffView, refreshTree, t, upsertAssistantVersion])
 
   useEffect(() => {
     if (!isTauriApp()) return
