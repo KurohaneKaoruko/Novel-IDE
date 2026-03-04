@@ -987,7 +987,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                 (toolEvent.startedAt ?? toolEvent.timestamp))
                             const target = resolveToolEventTarget(toolEvent)
                             const canExpandDetail = hasLiveToolDetail(toolEvent)
-                            const expandedLiveItem = expandedLiveItems[liveToolId] === true
+                            const hasManualLiveItemExpand = Object.prototype.hasOwnProperty.call(expandedLiveItems, liveToolId)
+                            const expandedLiveItem = hasManualLiveItemExpand
+                              ? expandedLiveItems[liveToolId] === true
+                              : toolEvent.status !== 'success'
                             return (
                               <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
                                 <div className="ai-live-ops-item-main">
