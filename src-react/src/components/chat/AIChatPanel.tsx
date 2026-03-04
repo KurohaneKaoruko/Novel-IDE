@@ -761,6 +761,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 toolStageFilter === 'all'
                   ? modeFilteredToolEvents
                   : modeFilteredToolEvents.filter((event) => toolStageKey(event.tool) === toolStageFilter)
+              const hasToolFilterApplied = toolFilter !== 'all' || toolStageFilter !== 'all'
               const groupedToolEvents = groupToolEventsByStage(visibleToolEvents)
               const hasManualToolCollapse = Object.prototype.hasOwnProperty.call(collapsedToolPanels, message.id)
               const toolPanelCollapsed = hasToolEvents
@@ -999,7 +1000,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           </div>
                         ) : null}
                         {visibleToolEvents.length === 0 ? (
-                          <div className="message-tool-empty">{t('chat.noFailedOps')}</div>
+                          <div className="message-tool-empty">{hasToolFilterApplied ? t('chat.noOpsForFilters') : t('chat.noFailedOps')}</div>
                         ) : null}
                         {groupedToolEvents.map((group) => {
                           const stageId = `${message.id}-stage-${group.stage}`
@@ -1264,7 +1265,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
                 ) : null}
                 {activeLiveToolCount > 0 && visibleLiveToolEvents.length === 0 ? (
-                  <div className="ai-live-ops-empty">{t('chat.noFailedOps')}</div>
+                  <div className="ai-live-ops-empty">
+                    {liveOpsFilter !== 'all' || liveStageFilter !== 'all' ? t('chat.noOpsForFilters') : t('chat.noFailedOps')}
+                  </div>
                 ) : null}
                 {groupedLiveToolEvents.map((group) => {
                   const stageId = `${activeLiveStreamId || 'live'}-live-stage-${group.stage}`
