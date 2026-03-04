@@ -2667,11 +2667,12 @@ function App() {
   )
 
   const onRegenerateAssistant = useCallback(
-    async (assistantMessageId?: string) => {
+    async (assistantMessageId?: string, retryContextOverride?: string) => {
       const replay = resolveAssistantReplayContext(assistantMessageId)
       if (!replay) return
-      const replayPrompt = replay.retryContext
-        ? `${replay.replayUser.content}\n\n${replay.retryContext}`
+      const resolvedRetryContext = typeof retryContextOverride === 'string' ? retryContextOverride.trim() : replay.retryContext
+      const replayPrompt = resolvedRetryContext
+        ? `${replay.replayUser.content}\n\n${resolvedRetryContext}`
         : replay.replayUser.content
       await onSendChat(replayPrompt, {
         sourceMessages: replay.replayHistory,

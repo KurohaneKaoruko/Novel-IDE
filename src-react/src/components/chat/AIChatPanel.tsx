@@ -82,7 +82,7 @@ type AIChatPanelProps = {
   isChatStreaming: boolean
   canRegenerateLatest: boolean
   latestCompletedAssistantId?: string
-  onRegenerateAssistant: (messageId?: string) => void | Promise<unknown>
+  onRegenerateAssistant: (messageId?: string, retryContextOverride?: string) => void | Promise<unknown>
   getRetryContextText?: (messageId?: string) => string
   onGenerateAssistantCandidates: (messageId?: string, count?: number) => void | Promise<unknown>
   onRetryWithFallbackProvider: (messageId?: string) => void | Promise<unknown>
@@ -494,6 +494,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [collapsedToolPanels, setCollapsedToolPanels] = useState<Record<string, boolean>>({})
   const [collapsedToolStages, setCollapsedToolStages] = useState<Record<string, boolean>>({})
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
+  const [retryContextCollapsedByMessage, setRetryContextCollapsedByMessage] = useState<Record<string, boolean>>({})
+  const [retryContextDraftByMessage, setRetryContextDraftByMessage] = useState<Record<string, string>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
@@ -561,6 +563,20 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const setToolFilter = useCallback((messageId: string, next: 'all' | 'error') => {
     setToolFilterByMessage((prev) => ({ ...prev, [messageId]: next }))
+  }, [])
+  const toggleRetryContextPanel = useCallback((messageId: string) => {
+    setRetryContextCollapsedByMessage((prev) => ({ ...prev, [messageId]: !(prev[messageId] ?? true) }))
+  }, [])
+  const updateRetryContextDraft = useCallback((messageId: string, value: string) => {
+    setRetryContextDraftByMessage((prev) => ({ ...prev, [messageId]: value }))
+  }, [])
+  const resetRetryContextDraft = useCallback((messageId: string) => {
+    setRetryContextDraftByMessage((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, messageId)) return prev
+      const next = { ...prev }
+      delete next[messageId]
+      return next
+    })
   }, [])
   const toggleToolStage = useCallback((stageId: string) => {
     setCollapsedToolStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
@@ -673,7 +689,12 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const latestToolEvent = hasToolEvents ? toolEvents[toolEvents.length - 1] : null
               const thoughtSummary = hasToolEvents ? buildThoughtSummary(toolEvents, t) : ''
               const failedToolCount = hasToolEvents ? toolEvents.filter((event) => event.status === 'error').length : 0
-              const retryContextText = failedToolCount > 0 ? (getRetryContextText?.(message.id) ?? '') : ''
+              const retryContextDefaultText = failedToolCount > 0 ? (getRetryContextText?.(message.id) ?? '') : ''
+              const hasRetryContextDraft = Object.prototype.hasOwnProperty.call(retryContextDraftByMessage, message.id)
+              const retryContextDraft = hasRetryContextDraft ? (retryContextDraftByMessage[message.id] ?? '') : retryContextDefaultText
+              const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? true
+              const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
+              const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
               const toolFilter = toolFilterByMessage[message.id] ?? 'all'
               const visibleToolEvents =
                 toolFilter === 'error' ? toolEvents.filter((event) => event.status === 'error') : toolEvents
@@ -812,22 +833,69 @@ export function AIChatPanel(props: AIChatPanelProps) {
                             <button
                               className="message-tool-filter"
                               type="button"
-                              disabled={!retryContextText.trim()}
-                              onClick={() => void copyWithFeedback(`${message.id}-retryctx`, retryContextText)}
+                              onClick={() => toggleRetryContextPanel(message.id)}
                             >
-                              {copiedMarker === `${message.id}-retryctx` ? t('chat.copied') : t('chat.copyErrorContext')}
+                              {retryContextCollapsed ? t('chat.retryContext.showEditor') : t('chat.retryContext.hideEditor')}
                             </button>
                           ) : null}
                           {!message.streaming && failedToolCount > 0 ? (
                             <button
                               className="message-tool-filter"
                               type="button"
-                              onClick={() => void onRegenerateAssistant(message.id)}
+                              onClick={() => void onRegenerateAssistant(message.id, hasRetryContextDraft ? retryContextDraft : undefined)}
                             >
                               {t('chat.recovery.retryTurn')}
                             </button>
                           ) : null}
                         </div>
+                        {!message.streaming && failedToolCount > 0 ? (
+                          <div className="message-retry-context">
+                            <button
+                              className="message-retry-context-head"
+                              type="button"
+                              onClick={() => toggleRetryContextPanel(message.id)}
+                              aria-expanded={!retryContextCollapsed}
+                            >
+                              <span className={`message-retry-context-chevron${retryContextCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+                                {'>'}
+                              </span>
+                              <span className="message-retry-context-title">{t('chat.retryContext.title')}</span>
+                              <span className="message-retry-context-count">{t('chat.retryContext.lineCount', { count: retryContextLineCount })}</span>
+                              {retryContextEdited ? <span className="message-retry-context-edited">{t('chat.retryContext.edited')}</span> : null}
+                              <span className="message-retry-context-toggle">
+                                {retryContextCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}
+                              </span>
+                            </button>
+                            <div className={`message-retry-context-body-wrap${retryContextCollapsed ? ' collapsed' : ''}`}>
+                              <div className="message-retry-context-body">
+                                <textarea
+                                  className="message-retry-context-input"
+                                  value={retryContextDraft}
+                                  placeholder={t('chat.retryContext.placeholder')}
+                                  onChange={(event) => updateRetryContextDraft(message.id, event.target.value)}
+                                />
+                                <div className="message-retry-context-actions">
+                                  <button
+                                    className="message-tool-filter"
+                                    type="button"
+                                    disabled={!retryContextDraft.trim()}
+                                    onClick={() => void copyWithFeedback(`${message.id}-retryctx`, retryContextDraft)}
+                                  >
+                                    {copiedMarker === `${message.id}-retryctx` ? t('chat.copied') : t('chat.copyErrorContext')}
+                                  </button>
+                                  <button
+                                    className="message-tool-filter"
+                                    type="button"
+                                    disabled={!hasRetryContextDraft}
+                                    onClick={() => resetRetryContextDraft(message.id)}
+                                  >
+                                    {t('chat.retryContext.reset')}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                         {visibleToolEvents.length === 0 ? (
                           <div className="message-tool-empty">{t('chat.noFailedOps')}</div>
                         ) : null}
