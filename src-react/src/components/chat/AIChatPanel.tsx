@@ -147,6 +147,7 @@ type ToolStageKey = 'context' | 'filesystem' | 'memory' | 'other'
 type ToolFilterMode = 'all' | 'error'
 type ToolStageFilter = 'all' | ToolStageKey
 type ToolCounters = { running: number; done: number; failed: number; total: number }
+type RetryPromptMode = 'concise' | 'detailed'
 
 type RecoveryActions = {
   showRetry: boolean
@@ -333,10 +334,23 @@ function buildFailedOpsDigest(toolEvents: AIChatToolEvent[], t: TranslateFn, lim
   return `${t('chat.failedOpsDigestHeader', { count: failed.length })}\n${lines.join('\n')}${hiddenSuffix}`
 }
 
-function buildRetryPromptTemplate(retryContextText: string, failedOpsDigest: string, t: TranslateFn): string {
+function buildRetryPromptTemplate(mode: RetryPromptMode, retryContextText: string, failedOpsDigest: string, t: TranslateFn): string {
   const retryContext = retryContextText.trim()
   const failedOps = failedOpsDigest.trim()
   if (!retryContext && !failedOps) return ''
+  if (mode === 'concise') {
+    const lines = [t('chat.retryPrompt.conciseHeader')]
+    if (failedOps) {
+      const digest = compactPlainText(failedOps.replace(/\s+/g, ' ').trim(), 240)
+      lines.push(`${t('chat.retryPrompt.conciseFailedPrefix')} ${digest}`)
+    }
+    if (retryContext) {
+      const context = compactPlainText(retryContext.replace(/\s+/g, ' ').trim(), 220)
+      lines.push(`${t('chat.retryPrompt.conciseContextPrefix')} ${context}`)
+    }
+    lines.push(t('chat.retryPrompt.conciseInstruction'))
+    return lines.join('\n').trim()
+  }
   const sections: string[] = [t('chat.retryPrompt.header')]
   if (failedOps) {
     sections.push('')
@@ -575,6 +589,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [toolStageFilterByMessage, setToolStageFilterByMessage] = useState<Record<string, ToolStageFilter>>({})
   const [retryContextCollapsedByMessage, setRetryContextCollapsedByMessage] = useState<Record<string, boolean>>({})
   const [retryContextDraftByMessage, setRetryContextDraftByMessage] = useState<Record<string, string>>({})
+  const [retryPromptModeByMessage, setRetryPromptModeByMessage] = useState<Record<string, RetryPromptMode>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
@@ -679,6 +694,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
       delete next[messageId]
       return next
     })
+  }, [])
+  const setRetryPromptMode = useCallback((messageId: string, next: RetryPromptMode) => {
+    setRetryPromptModeByMessage((prev) => ({ ...prev, [messageId]: next }))
   }, [])
   const toggleToolStage = useCallback((stageId: string) => {
     setCollapsedToolStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
@@ -808,7 +826,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const failedOpsDigest = failedToolCount > 0 ? buildFailedOpsDigest(toolEvents, t) : ''
               const hasRetryContextDraft = Object.prototype.hasOwnProperty.call(retryContextDraftByMessage, message.id)
               const retryContextDraft = hasRetryContextDraft ? (retryContextDraftByMessage[message.id] ?? '') : retryContextDefaultText
-              const retryPromptTemplate = failedToolCount > 0 ? buildRetryPromptTemplate(retryContextDraft, failedOpsDigest, t) : ''
+              const retryPromptMode = retryPromptModeByMessage[message.id] ?? 'concise'
+              const retryPromptTemplate =
+                failedToolCount > 0 ? buildRetryPromptTemplate(retryPromptMode, retryContextDraft, failedOpsDigest, t) : ''
               const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? false
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
@@ -976,6 +996,24 @@ export function AIChatPanel(props: AIChatPanelProps) {
                               onClick={() => void copyWithFeedback(`${message.id}-failed-ops`, failedOpsDigest)}
                             >
                               {copiedMarker === `${message.id}-failed-ops` ? t('chat.copied') : t('chat.copyFailedOps')}
+                            </button>
+                          ) : null}
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className={`message-tool-filter${retryPromptMode === 'concise' ? ' active' : ''}`}
+                              type="button"
+                              onClick={() => setRetryPromptMode(message.id, 'concise')}
+                            >
+                              {t('chat.retryPrompt.modeConcise')}
+                            </button>
+                          ) : null}
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className={`message-tool-filter${retryPromptMode === 'detailed' ? ' active' : ''}`}
+                              type="button"
+                              onClick={() => setRetryPromptMode(message.id, 'detailed')}
+                            >
+                              {t('chat.retryPrompt.modeDetailed')}
                             </button>
                           ) : null}
                           {!message.streaming && failedToolCount > 0 ? (
