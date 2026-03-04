@@ -43,6 +43,8 @@ export type AIChatToolEvent = {
 export type AIChatOption = {
   id: string
   name: string
+  statusLabel?: string
+  disabled?: boolean
 }
 
 type AIChatPanelProps = {
@@ -89,6 +91,7 @@ type AIChatPanelProps = {
   onActiveAgentChange: (id: string) => void
   activeProviderId: string
   providers: AIChatOption[]
+  providerSelectInvalid?: boolean
   onActiveProviderChange: (id: string) => void
 }
 
@@ -452,6 +455,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     onActiveAgentChange,
     activeProviderId,
     providers,
+    providerSelectInvalid = false,
     onActiveProviderChange,
   } = props
 
@@ -461,6 +465,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
+  const [liveOpsFilter, setLiveOpsFilter] = useState<'all' | 'error'>('all')
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
   const [expandedLiveItems, setExpandedLiveItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
@@ -484,7 +489,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const activeLiveToolCount = activeLiveToolEvents.length
   const activeLiveLatestTool = activeLiveToolCount > 0 ? activeLiveToolEvents[activeLiveToolCount - 1] : null
   const activeLiveSummary = activeLiveToolCount > 0 ? buildThoughtSummary(activeLiveToolEvents, t) : ''
-  const groupedLiveToolEvents = groupToolEventsByStage(activeLiveToolEvents)
+  const liveFailedToolCount = activeLiveToolEvents.filter((event) => event.status === 'error').length
+  const visibleLiveToolEvents =
+    liveOpsFilter === 'error' ? activeLiveToolEvents.filter((event) => event.status === 'error') : activeLiveToolEvents
+  const groupedLiveToolEvents = groupToolEventsByStage(visibleLiveToolEvents)
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -499,10 +507,12 @@ export function AIChatPanel(props: AIChatPanelProps) {
     const prev = latestLiveStreamIdRef.current
     if (activeLiveStreamId && activeLiveStreamId !== prev) {
       setLiveOpsCollapsed(false)
+      setLiveOpsFilter('all')
       setCollapsedLiveStages({})
       setExpandedLiveItems({})
     } else if (!activeLiveStreamId && prev) {
       setLiveOpsCollapsed(true)
+      setLiveOpsFilter('all')
       setCollapsedLiveStages({})
       setExpandedLiveItems({})
     }
@@ -949,9 +959,28 @@ export function AIChatPanel(props: AIChatPanelProps) {
             <div className="ai-live-ops-body">
               <div className="ai-live-ops-phase">{getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
               {activeLiveSummary ? <div className="ai-live-ops-summary">{activeLiveSummary}</div> : null}
+              <div className="message-tool-toolbar ai-live-ops-toolbar">
+                <button
+                  className={`message-tool-filter${liveOpsFilter === 'all' ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => setLiveOpsFilter('all')}
+                >
+                  {t('chat.filterAll')}
+                </button>
+                <button
+                  className={`message-tool-filter${liveOpsFilter === 'error' ? ' active' : ''}`}
+                  type="button"
+                  onClick={() => setLiveOpsFilter('error')}
+                >
+                  {t('chat.filterFailed', { count: liveFailedToolCount })}
+                </button>
+              </div>
               <div className="ai-live-ops-list">
                 {activeLiveToolCount === 0 ? (
                   <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
+                ) : null}
+                {activeLiveToolCount > 0 && visibleLiveToolEvents.length === 0 ? (
+                  <div className="ai-live-ops-empty">{t('chat.noFailedOps')}</div>
                 ) : null}
                 {groupedLiveToolEvents.map((group) => {
                   const stageId = `${activeLiveStreamId || 'live'}-live-stage-${group.stage}`
@@ -1109,10 +1138,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 </option>
               ))}
             </select>
-            <select className="ai-select ai-select-compact" value={activeProviderId} onChange={(event) => onActiveProviderChange(event.target.value)}>
+            <select
+              className={`ai-select ai-select-compact${providerSelectInvalid ? ' ai-select-compact-warning' : ''}`}
+              value={activeProviderId}
+              onChange={(event) => onActiveProviderChange(event.target.value)}
+            >
               {providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.name}
+                <option key={provider.id} value={provider.id} disabled={provider.disabled}>
+                  {provider.statusLabel ? `${provider.name} (${provider.statusLabel})` : provider.name}
                 </option>
               ))}
             </select>

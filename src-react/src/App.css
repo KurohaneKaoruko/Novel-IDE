@@ -1812,6 +1812,10 @@ body {
   color: var(--text-secondary);
 }
 
+.ai-live-ops-toolbar {
+  margin-top: -2px;
+}
+
 .ai-live-ops-list {
   display: flex;
   flex-direction: column;
@@ -2231,6 +2235,11 @@ body {
 .ai-select-compact {
   flex: 0 1 48%;
   min-width: 0;
+}
+
+.ai-select-compact-warning {
+  border-color: color-mix(in srgb, var(--error-text) 58%, var(--border-subtle));
+  background: color-mix(in srgb, var(--error-bg) 20%, var(--surface-2));
 }
 
 .ai-empty-state {

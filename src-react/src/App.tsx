@@ -583,6 +583,25 @@ async function preflightChatProviderIssue(
   return null
 }
 
+function getProviderAvailability(
+  provider: ModelProvider,
+  hasApiKey: boolean,
+  apiKeyKnown: boolean,
+  tauriRuntime: boolean,
+  t: TranslateText,
+): { ready: boolean; statusLabel: string } {
+  if (!provider.base_url.trim()) {
+    return { ready: false, statusLabel: t('chat.provider.missingBaseUrl') }
+  }
+  if (!provider.model_name.trim()) {
+    return { ready: false, statusLabel: t('chat.provider.missingModel') }
+  }
+  if (tauriRuntime && apiKeyKnown && !hasApiKey) {
+    return { ready: false, statusLabel: t('chat.provider.missingApiKey') }
+  }
+  return { ready: true, statusLabel: t('chat.provider.ready') }
+}
+
 function App() {
   const { locale, setLocale, t } = useI18n()
 
@@ -797,8 +816,22 @@ function App() {
   }, [scrollChatToBottom])
   const chatAgentOptions = useMemo(() => agentsList.map((agent) => ({ id: agent.id, name: agent.name })), [agentsList])
   const chatProviderOptions = useMemo(
-    () => (appSettings?.providers ?? []).map((provider) => ({ id: provider.id, name: provider.name })),
-    [appSettings],
+    () => {
+      const tauriRuntime = isTauriApp()
+      return (appSettings?.providers ?? []).map((provider) => {
+        const hasInlineKey = provider.api_key.trim().length > 0
+        const hasPersistedKey = apiKeyStatus[provider.id] === true
+        const apiKeyKnown = hasInlineKey || Object.prototype.hasOwnProperty.call(apiKeyStatus, provider.id)
+        const availability = getProviderAvailability(provider, hasInlineKey || hasPersistedKey, apiKeyKnown, tauriRuntime, t)
+        return {
+          id: provider.id,
+          name: provider.name,
+          statusLabel: availability.statusLabel,
+          disabled: !availability.ready,
+        }
+      })
+    },
+    [apiKeyStatus, appSettings, t],
   )
   const upsertAssistantVersion = useCallback((groupId: string, version: AssistantVersion): { index: number; count: number } => {
     const map = assistantVersionsRef.current
@@ -857,6 +890,11 @@ function App() {
     if (active && appSettings.providers.some((p) => p.id === active)) return active
     return appSettings.providers[0]?.id ?? ''
   }, [appSettings])
+  const activeChatProviderOption = useMemo(
+    () => chatProviderOptions.find((provider) => provider.id === effectiveProviderId) ?? null,
+    [chatProviderOptions, effectiveProviderId],
+  )
+  const activeChatProviderInvalid = activeChatProviderOption ? activeChatProviderOption.disabled === true : false
 
   // Editor configuration for Lexical
   const editorConfig: EditorConfig = useMemo(() => ({
@@ -3234,7 +3272,6 @@ function App() {
 
   useEffect(() => {
     if (!isTauriApp()) return
-    if (!showSettings) return
     if (!appSettings) return
     void (async () => {
       const entries = await Promise.all(
@@ -3251,7 +3288,7 @@ function App() {
       for (const [id, ok] of entries) next[id] = ok
       setApiKeyStatus(next)
     })()
-  }, [appSettings, showSettings])
+  }, [appSettings])
 
   useEffect(() => {
     const updateLayout = () => {
@@ -4480,6 +4517,7 @@ function App() {
                 onActiveAgentChange={onChatAgentChange}
                 activeProviderId={effectiveProviderId}
                 providers={chatProviderOptions}
+                providerSelectInvalid={activeChatProviderInvalid}
                 onActiveProviderChange={onChatProviderChange}
               />
             ) : null}
