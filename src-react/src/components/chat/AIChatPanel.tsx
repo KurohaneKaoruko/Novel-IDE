@@ -451,6 +451,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [toolFilterByMessage, setToolFilterByMessage] = useState<Record<string, 'all' | 'error'>>({})
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
+  const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
   const latestLiveStreamIdRef = useRef<string>('')
 
@@ -472,7 +473,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const activeLiveToolCount = activeLiveToolEvents.length
   const activeLiveLatestTool = activeLiveToolCount > 0 ? activeLiveToolEvents[activeLiveToolCount - 1] : null
   const activeLiveSummary = activeLiveToolCount > 0 ? buildThoughtSummary(activeLiveToolEvents, t) : ''
-  const activeLiveVisibleTools = activeLiveToolCount > 7 ? activeLiveToolEvents.slice(activeLiveToolCount - 7) : activeLiveToolEvents
+  const groupedLiveToolEvents = groupToolEventsByStage(activeLiveToolEvents)
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -487,8 +488,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
     const prev = latestLiveStreamIdRef.current
     if (activeLiveStreamId && activeLiveStreamId !== prev) {
       setLiveOpsCollapsed(false)
+      setCollapsedLiveStages({})
     } else if (!activeLiveStreamId && prev) {
       setLiveOpsCollapsed(true)
+      setCollapsedLiveStages({})
     }
     latestLiveStreamIdRef.current = activeLiveStreamId
   }, [activeLiveStreamId])
@@ -507,6 +510,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }, [])
   const toggleToolItem = useCallback((itemId: string) => {
     setExpandedToolItems((prev) => ({ ...prev, [itemId]: !prev[itemId] }))
+  }, [])
+  const toggleLiveStage = useCallback((stageId: string) => {
+    setCollapsedLiveStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
   }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -928,29 +934,55 @@ export function AIChatPanel(props: AIChatPanelProps) {
               <div className="ai-live-ops-phase">{getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
               {activeLiveSummary ? <div className="ai-live-ops-summary">{activeLiveSummary}</div> : null}
               <div className="ai-live-ops-list">
-                {activeLiveVisibleTools.length === 0 ? (
+                {activeLiveToolCount === 0 ? (
                   <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
                 ) : null}
-                {activeLiveVisibleTools.map((toolEvent, idx) => {
-                  const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
-                  const durationMs =
-                    toolEvent.durationMs ??
-                    ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
-                      (toolEvent.startedAt ?? toolEvent.timestamp))
-                  const target = resolveToolEventTarget(toolEvent)
+                {groupedLiveToolEvents.map((group) => {
+                  const stageId = `${activeLiveStreamId || 'live'}-live-stage-${group.stage}`
+                  const hasManualLiveStageCollapse = Object.prototype.hasOwnProperty.call(collapsedLiveStages, stageId)
+                  const liveStageCollapsed = hasManualLiveStageCollapse
+                    ? collapsedLiveStages[stageId] === true
+                    : shouldCollapseStageByDefault(group.stage, group.items, activeLiveLatestTool)
+                  const liveStageState = stageStatus(group.items)
                   return (
-                    <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
-                      <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
-                      <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
-                      {target ? (
-                        <span className="ai-live-ops-item-target" title={target}>
-                          {target}
+                    <div key={stageId} className="ai-live-ops-stage">
+                      <button className="ai-live-ops-stage-head" type="button" onClick={() => toggleLiveStage(stageId)}>
+                        <span className={`ai-live-ops-stage-chevron${liveStageCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+                          {'>'}
                         </span>
-                      ) : null}
-                      <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
-                      <span className="ai-live-ops-item-duration">
-                        {formatDurationLabel(durationMs, toolEvent.status === 'running')}
-                      </span>
+                        <span className="ai-live-ops-stage-title">{toolStageLabel(group.stage, t)}</span>
+                        <span className={`ai-live-ops-stage-status ai-live-ops-stage-status-${liveStageState}`}>
+                          {toolStatusLabel(liveStageState, t)}
+                        </span>
+                        <span className="ai-live-ops-stage-count">{t('chat.operationCount', { count: group.items.length })}</span>
+                      </button>
+                      {liveStageCollapsed ? null : (
+                        <div className="ai-live-ops-stage-list">
+                          {group.items.map((toolEvent, idx) => {
+                            const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                            const durationMs =
+                              toolEvent.durationMs ??
+                              ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                                (toolEvent.startedAt ?? toolEvent.timestamp))
+                            const target = resolveToolEventTarget(toolEvent)
+                            return (
+                              <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
+                                <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
+                                <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
+                                {target ? (
+                                  <span className="ai-live-ops-item-target" title={target}>
+                                    {target}
+                                  </span>
+                                ) : null}
+                                <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
+                                <span className="ai-live-ops-item-duration">
+                                  {formatDurationLabel(durationMs, toolEvent.status === 'running')}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   )
                 })}

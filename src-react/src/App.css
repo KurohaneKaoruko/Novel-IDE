@@ -1820,6 +1820,77 @@ body {
   overflow-y: auto;
 }
 
+.ai-live-ops-stage {
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 90%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  overflow: hidden;
+}
+
+.ai-live-ops-stage-head {
+  width: 100%;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+}
+
+.ai-live-ops-stage-head:hover {
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--accent-primary));
+}
+
+.ai-live-ops-stage-chevron {
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.ai-live-ops-stage-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.ai-live-ops-stage-title {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ai-live-ops-stage-status {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: auto;
+}
+
+.ai-live-ops-stage-status-running {
+  color: var(--accent-primary);
+}
+
+.ai-live-ops-stage-status-success {
+  color: var(--success-text);
+}
+
+.ai-live-ops-stage-status-error {
+  color: var(--error-text);
+}
+
+.ai-live-ops-stage-count {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.ai-live-ops-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
 .ai-live-ops-empty {
   border: 1px dashed var(--border-subtle);
   border-radius: var(--radius-sm);
