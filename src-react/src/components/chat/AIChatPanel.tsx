@@ -114,6 +114,7 @@ function writerModeUpper(mode: WriterMode, t: (key: string) => string): string {
 const DEFAULT_COLLAPSE_CHAR_LIMIT = 900
 const DEFAULT_COLLAPSE_LINE_LIMIT = 14
 const RETRY_PROMPT_HISTORY_LIMIT = 5
+const SHARED_RETRY_PROMPT_HISTORY_LIMIT = 20
 
 function countLines(text: string): number {
   if (!text) return 0
@@ -153,6 +154,9 @@ type RetryPromptHistoryEntry = {
   id: string
   mode: RetryPromptMode
   text: string
+  pinned?: boolean
+  sourceMessageId?: string
+  createdAt?: number
 }
 
 type RecoveryActions = {
@@ -598,6 +602,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [retryPromptModeByMessage, setRetryPromptModeByMessage] = useState<Record<string, RetryPromptMode>>({})
   const [retryPromptPreviewCollapsedByMessage, setRetryPromptPreviewCollapsedByMessage] = useState<Record<string, boolean>>({})
   const [retryPromptHistoryByMessage, setRetryPromptHistoryByMessage] = useState<Record<string, RetryPromptHistoryEntry[]>>({})
+  const [sharedRetryPromptHistory, setSharedRetryPromptHistory] = useState<RetryPromptHistoryEntry[]>([])
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
@@ -712,19 +717,80 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const rememberRetryPrompt = useCallback((messageId: string, mode: RetryPromptMode, prompt: string) => {
     const text = prompt.trim()
     if (!text) return
+    const now = Date.now()
     setRetryPromptHistoryByMessage((prev) => {
       const current = prev[messageId] ?? []
       const withoutDup = current.filter((entry) => entry.text !== text)
       const next: RetryPromptHistoryEntry[] = [
         {
-          id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+          id: `${now}-${Math.random().toString(16).slice(2, 8)}`,
           mode,
           text,
+          sourceMessageId: messageId,
+          createdAt: now,
         },
         ...withoutDup,
       ].slice(0, RETRY_PROMPT_HISTORY_LIMIT)
       return { ...prev, [messageId]: next }
     })
+    setSharedRetryPromptHistory((prev) => {
+      const existing = prev.find((entry) => entry.text === text)
+      const pinned = existing?.pinned === true
+      const withoutDup = prev.filter((entry) => entry.text !== text)
+      const nextEntry: RetryPromptHistoryEntry = {
+        id: existing?.id ?? `${now}-${Math.random().toString(16).slice(2, 8)}`,
+        mode,
+        text,
+        pinned,
+        sourceMessageId: messageId,
+        createdAt: now,
+      }
+      const merged = [nextEntry, ...withoutDup]
+      const pinnedItems = merged.filter((entry) => entry.pinned)
+      const regularItems = merged.filter((entry) => !entry.pinned).slice(0, Math.max(0, SHARED_RETRY_PROMPT_HISTORY_LIMIT - pinnedItems.length))
+      return [...pinnedItems, ...regularItems]
+    })
+  }, [])
+  const setRetryPromptPinned = useCallback((text: string, pinned: boolean, fallbackMode: RetryPromptMode, sourceMessageId: string) => {
+    const payload = text.trim()
+    if (!payload) return
+    const now = Date.now()
+    setSharedRetryPromptHistory((prev) => {
+      const existing = prev.find((entry) => entry.text === payload)
+      if (existing) {
+        return prev
+          .map((entry) => (entry.text === payload ? { ...entry, pinned } : entry))
+          .sort((a, b) => {
+            if ((a.pinned ? 1 : 0) !== (b.pinned ? 1 : 0)) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)
+            return (b.createdAt ?? 0) - (a.createdAt ?? 0)
+          })
+      }
+      if (!pinned) return prev
+      const nextEntry: RetryPromptHistoryEntry = {
+        id: `${now}-${Math.random().toString(16).slice(2, 8)}`,
+        mode: fallbackMode,
+        text: payload,
+        pinned: true,
+        sourceMessageId,
+        createdAt: now,
+      }
+      const merged = [nextEntry, ...prev]
+      const pinnedItems = merged.filter((entry) => entry.pinned)
+      const regularItems = merged.filter((entry) => !entry.pinned).slice(0, Math.max(0, SHARED_RETRY_PROMPT_HISTORY_LIMIT - pinnedItems.length))
+      return [...pinnedItems, ...regularItems]
+    })
+  }, [])
+  const deleteRetryPromptEntry = useCallback((messageId: string, text: string) => {
+    const payload = text.trim()
+    if (!payload) return
+    setRetryPromptHistoryByMessage((prev) => {
+      const current = prev[messageId] ?? []
+      if (current.length === 0) return prev
+      const next = current.filter((entry) => entry.text !== payload)
+      if (next.length === current.length) return prev
+      return { ...prev, [messageId]: next }
+    })
+    setSharedRetryPromptHistory((prev) => prev.filter((entry) => entry.text !== payload))
   }, [])
   const toggleToolStage = useCallback((stageId: string) => {
     setCollapsedToolStages((prev) => ({ ...prev, [stageId]: !prev[stageId] }))
@@ -777,6 +843,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
     },
     [insertPromptToComposer, rememberRetryPrompt],
   )
+  const toggleRetryPromptPin = useCallback(
+    (messageId: string, mode: RetryPromptMode, text: string, nextPinned: boolean) => {
+      setRetryPromptPinned(text, nextPinned, mode, messageId)
+    },
+    [setRetryPromptPinned],
+  )
+  const removeRetryPrompt = useCallback((messageId: string, text: string) => {
+    deleteRetryPromptEntry(messageId, text)
+  }, [deleteRetryPromptEntry])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !chatInput.trim()) {
@@ -877,7 +952,14 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 failedToolCount > 0 ? buildRetryPromptTemplate(retryPromptMode, retryContextDraft, failedOpsDigest, t) : ''
               const retryPromptPreviewCollapsed = retryPromptPreviewCollapsedByMessage[message.id] ?? true
               const retryPromptLineCount = retryPromptTemplate.trim() ? countLines(retryPromptTemplate.trim()) : 0
-              const retryPromptHistory = retryPromptHistoryByMessage[message.id] ?? []
+              const retryPromptHistoryBase = retryPromptHistoryByMessage[message.id] ?? []
+              const retryPromptHistory = retryPromptHistoryBase.map((entry) => {
+                const sharedEntry = sharedRetryPromptHistory.find((candidate) => candidate.text === entry.text)
+                return sharedEntry ? { ...entry, pinned: sharedEntry.pinned, createdAt: sharedEntry.createdAt ?? entry.createdAt } : entry
+              })
+              const sharedRetryPromptEntries = sharedRetryPromptHistory.filter(
+                (entry) => !retryPromptHistory.some((localEntry) => localEntry.text === entry.text),
+              )
               const retryContextCollapsed = retryContextCollapsedByMessage[message.id] ?? false
               const retryContextEdited = hasRetryContextDraft && retryContextDraft.trim() !== retryContextDefaultText.trim()
               const retryContextLineCount = retryContextDraft.trim() ? countLines(retryContextDraft.trim()) : 0
@@ -1172,41 +1254,112 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                   </button>
                                 </div>
                                 <div className="message-retry-history">
-                                  <div className="message-retry-history-title">{t('chat.retryPrompt.historyTitle')}</div>
-                                  {retryPromptHistory.length === 0 ? (
-                                    <div className="message-retry-history-empty">{t('chat.retryPrompt.historyEmpty')}</div>
-                                  ) : (
-                                    retryPromptHistory.map((entry, idx) => (
-                                      <div key={`${message.id}-retry-history-${entry.id}`} className="message-retry-history-item">
-                                        <div className="message-retry-history-meta">
-                                          <span className="message-retry-history-index">#{idx + 1}</span>
-                                          <span className="message-retry-history-mode">
-                                            {entry.mode === 'concise' ? t('chat.retryPrompt.modeConcise') : t('chat.retryPrompt.modeDetailed')}
-                                          </span>
-                                          <span className="message-retry-history-lines">
-                                            {t('chat.retryPrompt.lineCount', { count: countLines(entry.text) })}
-                                          </span>
+                                  <div className="message-retry-history-section">
+                                    <div className="message-retry-history-title">{t('chat.retryPrompt.historyTitle')}</div>
+                                    {retryPromptHistory.length === 0 ? (
+                                      <div className="message-retry-history-empty">{t('chat.retryPrompt.historyEmpty')}</div>
+                                    ) : (
+                                      retryPromptHistory.map((entry, idx) => (
+                                        <div key={`${message.id}-retry-history-${entry.id}`} className="message-retry-history-item">
+                                          <div className="message-retry-history-meta">
+                                            <span className="message-retry-history-index">#{idx + 1}</span>
+                                            <span className="message-retry-history-mode">
+                                              {entry.mode === 'concise' ? t('chat.retryPrompt.modeConcise') : t('chat.retryPrompt.modeDetailed')}
+                                            </span>
+                                            {entry.pinned ? <span className="message-retry-history-pin">{t('chat.retryPrompt.pinned')}</span> : null}
+                                            <span className="message-retry-history-lines">
+                                              {t('chat.retryPrompt.lineCount', { count: countLines(entry.text) })}
+                                            </span>
+                                          </div>
+                                          <pre className="message-retry-history-preview">{compactSnippet(entry.text, 300, 4)}</pre>
+                                          <div className="message-retry-history-actions">
+                                            <button
+                                              className="message-tool-filter"
+                                              type="button"
+                                              onClick={() => useRetryPrompt(message.id, entry.mode, entry.text)}
+                                            >
+                                              {t('chat.retryPrompt.historyUse')}
+                                            </button>
+                                            <button
+                                              className="message-tool-filter"
+                                              type="button"
+                                              onClick={() => copyRetryPrompt(`${message.id}-retry-history-${entry.id}`, message.id, entry.mode, entry.text)}
+                                            >
+                                              {copiedMarker === `${message.id}-retry-history-${entry.id}` ? t('chat.copied') : t('chat.copy')}
+                                            </button>
+                                            <button
+                                              className={`message-tool-filter${entry.pinned ? ' active' : ''}`}
+                                              type="button"
+                                              onClick={() => toggleRetryPromptPin(message.id, entry.mode, entry.text, !(entry.pinned ?? false))}
+                                            >
+                                              {entry.pinned ? t('chat.retryPrompt.unpin') : t('chat.retryPrompt.pin')}
+                                            </button>
+                                            <button
+                                              className="message-tool-filter message-retry-history-delete"
+                                              type="button"
+                                              onClick={() => removeRetryPrompt(message.id, entry.text)}
+                                            >
+                                              {t('chat.retryPrompt.delete')}
+                                            </button>
+                                          </div>
                                         </div>
-                                        <pre className="message-retry-history-preview">{compactSnippet(entry.text, 300, 4)}</pre>
-                                        <div className="message-retry-history-actions">
-                                          <button
-                                            className="message-tool-filter"
-                                            type="button"
-                                            onClick={() => useRetryPrompt(message.id, entry.mode, entry.text)}
-                                          >
-                                            {t('chat.retryPrompt.historyUse')}
-                                          </button>
-                                          <button
-                                            className="message-tool-filter"
-                                            type="button"
-                                            onClick={() => copyRetryPrompt(`${message.id}-retry-history-${entry.id}`, message.id, entry.mode, entry.text)}
-                                          >
-                                            {copiedMarker === `${message.id}-retry-history-${entry.id}` ? t('chat.copied') : t('chat.copy')}
-                                          </button>
+                                      ))
+                                    )}
+                                  </div>
+                                  <div className="message-retry-history-section">
+                                    <div className="message-retry-history-title">{t('chat.retryPrompt.sharedTitle')}</div>
+                                    {sharedRetryPromptEntries.length === 0 ? (
+                                      <div className="message-retry-history-empty">{t('chat.retryPrompt.sharedEmpty')}</div>
+                                    ) : (
+                                      sharedRetryPromptEntries.map((entry, idx) => (
+                                        <div key={`${message.id}-retry-shared-history-${entry.id}`} className="message-retry-history-item">
+                                          <div className="message-retry-history-meta">
+                                            <span className="message-retry-history-index">#{idx + 1}</span>
+                                            <span className="message-retry-history-mode">
+                                              {entry.mode === 'concise' ? t('chat.retryPrompt.modeConcise') : t('chat.retryPrompt.modeDetailed')}
+                                            </span>
+                                            {entry.pinned ? <span className="message-retry-history-pin">{t('chat.retryPrompt.pinned')}</span> : null}
+                                            <span className="message-retry-history-lines">
+                                              {t('chat.retryPrompt.lineCount', { count: countLines(entry.text) })}
+                                            </span>
+                                          </div>
+                                          <pre className="message-retry-history-preview">{compactSnippet(entry.text, 300, 4)}</pre>
+                                          <div className="message-retry-history-actions">
+                                            <button
+                                              className="message-tool-filter"
+                                              type="button"
+                                              onClick={() => useRetryPrompt(message.id, entry.mode, entry.text)}
+                                            >
+                                              {t('chat.retryPrompt.historyUse')}
+                                            </button>
+                                            <button
+                                              className="message-tool-filter"
+                                              type="button"
+                                              onClick={() =>
+                                                copyRetryPrompt(`${message.id}-retry-shared-history-${entry.id}`, message.id, entry.mode, entry.text)
+                                              }
+                                            >
+                                              {copiedMarker === `${message.id}-retry-shared-history-${entry.id}` ? t('chat.copied') : t('chat.copy')}
+                                            </button>
+                                            <button
+                                              className={`message-tool-filter${entry.pinned ? ' active' : ''}`}
+                                              type="button"
+                                              onClick={() => toggleRetryPromptPin(message.id, entry.mode, entry.text, !(entry.pinned ?? false))}
+                                            >
+                                              {entry.pinned ? t('chat.retryPrompt.unpin') : t('chat.retryPrompt.pin')}
+                                            </button>
+                                            <button
+                                              className="message-tool-filter message-retry-history-delete"
+                                              type="button"
+                                              onClick={() => removeRetryPrompt(message.id, entry.text)}
+                                            >
+                                              {t('chat.retryPrompt.delete')}
+                                            </button>
+                                          </div>
                                         </div>
-                                      </div>
-                                    ))
-                                  )}
+                                      ))
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </div>

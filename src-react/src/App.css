@@ -1497,6 +1497,12 @@ body {
   gap: 6px;
 }
 
+.message-retry-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .message-retry-history-title {
   color: var(--text-secondary);
   font-size: 11px;
@@ -1538,6 +1544,16 @@ body {
   line-height: 1.6;
 }
 
+.message-retry-history-pin {
+  color: var(--warning-text);
+  border: 1px solid color-mix(in srgb, var(--warning-border) 68%, transparent);
+  background: color-mix(in srgb, var(--warning-bg) 72%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
 .message-retry-history-lines {
   margin-left: auto;
   color: var(--text-muted);
@@ -1565,6 +1581,14 @@ body {
   justify-content: flex-end;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.message-retry-history-delete {
+  color: var(--status-red);
+}
+
+.message-retry-history-delete:hover:not(:disabled) {
+  border-color: var(--status-red);
 }
 
 .message-retry-context {
