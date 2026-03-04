@@ -805,6 +805,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           >
                             {t('chat.filterFailed', { count: failedToolCount })}
                           </button>
+                          {!message.streaming && failedToolCount > 0 ? (
+                            <button
+                              className="message-tool-filter"
+                              type="button"
+                              onClick={() => void onRegenerateAssistant(message.id)}
+                            >
+                              {t('chat.recovery.retryTurn')}
+                            </button>
+                          ) : null}
                         </div>
                         {visibleToolEvents.length === 0 ? (
                           <div className="message-tool-empty">{t('chat.noFailedOps')}</div>
