@@ -591,7 +591,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const hasToolEvents = message.role === 'assistant' && toolEvents.length > 0
               const hasDiff = !!message.changeSet && message.changeSet.modifications.length > 0
               const rawContent = message.content || ''
-              const cleanedContent = hasToolEvents ? stripToolTraceContent(rawContent) : rawContent
+              const cleanedContent = message.role === 'assistant' ? stripToolTraceContent(rawContent) : rawContent
               const canCollapse = shouldCollapseMessage(message, cleanedContent)
               const expanded = canCollapse ? expandedAssistantIds[message.id] === true : false
               const preview = hasDiff
