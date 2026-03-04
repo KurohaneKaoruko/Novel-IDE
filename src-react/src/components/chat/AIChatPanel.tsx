@@ -9,6 +9,7 @@ export type AIChatMessage = {
   content: string
   streaming?: boolean
   cancelled?: boolean
+  failureKind?: 'provider' | 'timeout' | 'runtime' | 'generic' | 'cancelled'
   streamId?: string
   changeSet?: ChangeSet
   toolEvents?: AIChatToolEvent[]
@@ -81,6 +82,7 @@ type AIChatPanelProps = {
   latestCompletedAssistantId?: string
   onRegenerateAssistant: (messageId?: string) => void | Promise<unknown>
   onGenerateAssistantCandidates: (messageId?: string, count?: number) => void | Promise<unknown>
+  onOpenModelSettings: () => void
   activeAgentId: string
   agents: AIChatOption[]
   onActiveAgentChange: (id: string) => void
@@ -137,6 +139,11 @@ function shouldCollapseMessage(message: AIChatMessage, contentOverride?: string)
 
 type TranslateFn = (key: string, params?: Record<string, string | number>) => string
 type ToolStageKey = 'context' | 'filesystem' | 'memory' | 'other'
+
+type RecoveryActions = {
+  showRetry: boolean
+  showOpenModelSettings: boolean
+}
 
 function toolStatusLabel(status: AIChatToolEvent['status'], t: TranslateFn): string {
   if (status === 'running') return t('chat.operationRunning')
@@ -297,6 +304,33 @@ function stripToolTraceContent(content: string): string {
   return next
 }
 
+function messageRecoveryActions(message: AIChatMessage, text: string): RecoveryActions | null {
+  if (message.role !== 'assistant') return null
+  if (message.streaming) return null
+  const kind = message.failureKind
+  if (!kind && !text) return null
+  if (kind === 'cancelled') return null
+
+  const lower = text.toLowerCase()
+  const providerLike =
+    kind === 'provider' ||
+    lower.includes('api key') ||
+    lower.includes('provider=') ||
+    lower.includes('base url') ||
+    lower.includes('model id') ||
+    lower.includes('keyring')
+  const timeoutLike = kind === 'timeout' || lower.includes('timeout') || lower.includes('timed out')
+  const runtimeLike = kind === 'runtime' || lower.includes('workspace') || lower.includes('tauri runtime')
+  const genericLike = kind === 'generic' || lower.includes('error') || lower.includes('failed')
+
+  if (!providerLike && !timeoutLike && !runtimeLike && !genericLike) return null
+
+  return {
+    showRetry: !runtimeLike,
+    showOpenModelSettings: providerLike,
+  }
+}
+
 function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): string {
   if (toolEvent.status === 'running') return t('chat.stepInProgress')
   if (toolEvent.tool === 'fs_exists' && typeof toolEvent.exists === 'boolean') {
@@ -375,6 +409,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     latestCompletedAssistantId,
     onRegenerateAssistant,
     onGenerateAssistantCandidates,
+    onOpenModelSettings,
     activeAgentId,
     agents,
     onActiveAgentChange,
@@ -507,6 +542,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 canCollapse && !expanded
                   ? preview
                   : cleanedContent
+              const recoveryActions = messageRecoveryActions(message, cleanedContent)
               const latestToolEvent = hasToolEvents ? toolEvents[toolEvents.length - 1] : null
               const thoughtSummary = hasToolEvents ? buildThoughtSummary(toolEvents, t) : ''
               const failedToolCount = hasToolEvents ? toolEvents.filter((event) => event.status === 'error').length : 0
@@ -573,6 +609,28 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   <button className="message-collapse-toggle" onClick={() => toggleAssistantMessage(message.id)} type="button">
                     {expanded ? t('chat.collapseDetails') : t('chat.expandDetails')}
                   </button>
+                ) : null}
+                {recoveryActions ? (
+                  <div className="message-recovery-actions">
+                    {recoveryActions.showOpenModelSettings ? (
+                      <button
+                        className="message-recovery-button"
+                        type="button"
+                        onClick={() => onOpenModelSettings()}
+                      >
+                        {t('chat.recovery.openModels')}
+                      </button>
+                    ) : null}
+                    {recoveryActions.showRetry ? (
+                      <button
+                        className="message-recovery-button"
+                        type="button"
+                        onClick={() => void onRegenerateAssistant(message.id)}
+                      >
+                        {t('chat.recovery.retryTurn')}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {hasToolEvents ? (
                   <div className="message-tool-activity">

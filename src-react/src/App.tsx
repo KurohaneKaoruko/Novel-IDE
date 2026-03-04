@@ -104,6 +104,7 @@ type ChatItem = {
   content: string
   streaming?: boolean
   cancelled?: boolean
+  failureKind?: ChatFailureKind
   streamId?: string
   changeSet?: ChangeSet
   toolEvents?: AgentToolActivity[]
@@ -117,8 +118,11 @@ type AssistantVersion = {
   content: string
   changeSet?: ChangeSet
   cancelled?: boolean
+  failureKind?: ChatFailureKind
   timestamp: number
 }
+
+type ChatFailureKind = 'provider' | 'timeout' | 'runtime' | 'generic' | 'cancelled'
 
 type BackendChangeSet = {
   id: string
@@ -453,6 +457,31 @@ function shortText(text: string, max = 180): string {
   return `${trimmed.slice(0, max)}...`
 }
 
+function inferFailureKindFromText(rawMessage: string, stage?: string): ChatFailureKind {
+  const lower = rawMessage.toLowerCase()
+  if (stage === 'timeout' || lower.includes('timed out') || lower.includes('timeout')) return 'timeout'
+  if (
+    stage === 'provider' ||
+    lower.includes('api key') ||
+    lower.includes('provider=') ||
+    lower.includes('base url') ||
+    lower.includes('model id') ||
+    lower.includes('keyring') ||
+    lower.includes('no providers configured')
+  ) {
+    return 'provider'
+  }
+  if (
+    lower.includes('tauri runtime') ||
+    lower.includes('workspace') ||
+    lower.includes('not currently opened') ||
+    lower.includes('init')
+  ) {
+    return 'runtime'
+  }
+  return 'generic'
+}
+
 function formatProviderProbeErrorMessage(rawMessage: string): string {
   const raw = rawMessage.trim()
   if (!raw) return 'Connectivity check failed. Please try again.'
@@ -681,6 +710,7 @@ function App() {
   const [appSettings, setAppSettingsState] = useState<AppSettings | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('general')
+  const settingsOpenTabRef = useRef<SettingsTabKey | null>(null)
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [agentsList, setAgentsList] = useState<Agent[]>([])
   const [agentEditorId, setAgentEditorId] = useState<string>('')
@@ -779,6 +809,7 @@ function App() {
         ...existing,
         changeSet: version.changeSet ?? existing.changeSet,
         cancelled: version.cancelled ?? existing.cancelled,
+        failureKind: version.failureKind ?? existing.failureKind,
       }
       map.set(groupId, list)
       return { index: existingIndex, count: list.length }
@@ -1854,6 +1885,10 @@ function App() {
     },
     [appSettings, persistAppSettings],
   )
+  const openModelSettings = useCallback(() => {
+    settingsOpenTabRef.current = 'models'
+    setShowSettings(true)
+  }, [])
 
   const settingsDirty = useMemo(() => {
     if (!showSettings) return false
@@ -1882,7 +1917,9 @@ function App() {
 
   useEffect(() => {
     if (!showSettings) return
-    setSettingsTab('general')
+    const requested = settingsOpenTabRef.current
+    settingsOpenTabRef.current = null
+    setSettingsTab(requested ?? 'general')
   }, [showSettings])
 
   useEffect(() => {
@@ -2125,7 +2162,9 @@ function App() {
         cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: t('chat.error.tauriRequired'), streaming: false } : m,
+            m.id === assistantId
+              ? { ...m, content: t('chat.error.tauriRequired'), streaming: false, failureKind: 'runtime' }
+              : m,
           ),
         )
         return null
@@ -2135,7 +2174,9 @@ function App() {
         cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: t('chat.error.noWorkspace'), streaming: false } : m,
+            m.id === assistantId
+              ? { ...m, content: t('chat.error.noWorkspace'), streaming: false, failureKind: 'runtime' }
+              : m,
           ),
         )
         return null
@@ -2144,10 +2185,18 @@ function App() {
       try {
         await initNovel()
       } catch (e) {
+        const rawMessage = e instanceof Error ? e.message : String(e)
         cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: rawMessage,
+                  streaming: false,
+                  failureKind: inferFailureKindFromText(rawMessage, 'runtime'),
+                }
+              : m,
           ),
         )
         return null
@@ -2180,6 +2229,7 @@ function App() {
         })
         return streamId
       } catch (e) {
+        const rawMessage = e instanceof Error ? e.message : String(e)
         cleanupStreamRefs(streamRefs, streamId)
         setStreamPhaseById((prev) => {
           const next = { ...prev }
@@ -2188,7 +2238,14 @@ function App() {
         })
         setChatMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: e instanceof Error ? e.message : String(e), streaming: false } : m,
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: rawMessage,
+                  streaming: false,
+                  failureKind: inferFailureKindFromText(rawMessage),
+                }
+              : m,
           ),
         )
         return null
@@ -2225,18 +2282,21 @@ function App() {
     }
   }, [activeStreamId])
   const forceFinalizeStream = useCallback(
-    (streamId: string, message: string, cancelled = false) => {
+    (streamId: string, message: string, cancelled = false, failureKind?: ChatFailureKind) => {
       setChatMessages((prev) => {
         let changed = false
         const next = prev.map((m) => {
           if (m.role !== 'assistant' || m.streamId !== streamId || !m.streaming) return m
           changed = true
           const nextContent = m.content.trim() ? `${m.content}\n\n${message}` : message
+          const resolvedFailureKind =
+            failureKind ?? (cancelled ? 'cancelled' : inferFailureKindFromText(message))
           return {
             ...m,
             content: nextContent,
             streaming: false,
             cancelled: cancelled || m.cancelled,
+            failureKind: resolvedFailureKind,
           }
         })
         return changed ? next : prev
@@ -2408,6 +2468,7 @@ function App() {
           content: targetAssistant.content,
           changeSet: targetAssistant.changeSet,
           cancelled: targetAssistant.cancelled,
+          failureKind: targetAssistant.failureKind,
           timestamp: Date.now(),
         })
       }
@@ -2444,11 +2505,11 @@ function App() {
         const idleTimeoutMs = hasOutput ? STREAM_IDLE_HARD_TIMEOUT_MS : STREAM_PRETOKEN_HARD_TIMEOUT_MS
 
         if (manualCancelledStreamsRef.current.has(streamId) && idleMs >= STREAM_MANUAL_CANCEL_GRACE_MS) {
-          forceFinalizeStream(streamId, t('chat.error.generationCancelled'), true)
+          forceFinalizeStream(streamId, t('chat.error.generationCancelled'), true, 'cancelled')
           continue
         }
         if (idleMs >= idleTimeoutMs || totalMs >= STREAM_TOTAL_HARD_TIMEOUT_MS) {
-          forceFinalizeStream(streamId, t('chat.error.timeoutAutoStopped'))
+          forceFinalizeStream(streamId, t('chat.error.timeoutAutoStopped'), false, 'timeout')
         }
       }
     }, 5_000)
@@ -2492,6 +2553,7 @@ function App() {
           content: targetAssistant.content,
           changeSet: targetAssistant.changeSet,
           cancelled: targetAssistant.cancelled,
+          failureKind: targetAssistant.failureKind,
           timestamp: Date.now(),
         })
       }
@@ -2570,6 +2632,7 @@ function App() {
         content: selected.content,
         changeSet: selected.changeSet,
         cancelled: selected.cancelled,
+        failureKind: selected.failureKind,
         versionIndex: nextIndex,
         versionCount: versions.length,
       }
@@ -3424,10 +3487,16 @@ function App() {
                       ? t('chat.error.emptyResponseRetry')
                       : t('chat.error.actionsNoDirectOutput')
                   : sanitizedContent
+              const normalizedFailureKind: ChatFailureKind | undefined = mergedCancelled
+                ? 'cancelled'
+                : !hasVisibleOutput
+                  ? (m.failureKind ?? (hasChangeSet ? undefined : inferFailureKindFromText(normalizedContent)))
+                  : undefined
               const registered = upsertAssistantVersion(groupId, {
                 content: normalizedContent,
                 changeSet: m.changeSet,
                 cancelled: mergedCancelled,
+                failureKind: normalizedFailureKind,
                 timestamp: Date.now(),
               })
               return {
@@ -3435,6 +3504,7 @@ function App() {
                 content: normalizedContent,
                 streaming: false,
                 cancelled: mergedCancelled,
+                failureKind: normalizedFailureKind,
                 versionGroupId: groupId,
                 versionIndex: registered.index,
                 versionCount: registered.count,
@@ -3543,11 +3613,12 @@ function App() {
           : lowerMessage.includes('no api key configured') || lowerMessage.includes('api key not found')
             ? t('chat.error.noApiKeyConfigured')
             : rawMessage
+      const failureKind = inferFailureKindFromText(message, stage)
       const extra = [provider ? `provider=${provider}` : '', stage ? `stage=${stage}` : ''].filter(Boolean).join(' ')
       setChatMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && m.streamId === streamId
-            ? { ...m, content: extra ? `${message}\n(${extra})` : message, streaming: false }
+            ? { ...m, content: extra ? `${message}\n(${extra})` : message, streaming: false, failureKind }
             : m,
         ),
       )
@@ -4317,6 +4388,7 @@ function App() {
                 latestCompletedAssistantId={latestCompletedAssistant?.id}
                 onRegenerateAssistant={onRegenerateAssistant}
                 onGenerateAssistantCandidates={onGenerateAssistantCandidates}
+                onOpenModelSettings={openModelSettings}
                 activeAgentId={appSettings?.active_agent_id ?? ''}
                 agents={chatAgentOptions}
                 onActiveAgentChange={onChatAgentChange}

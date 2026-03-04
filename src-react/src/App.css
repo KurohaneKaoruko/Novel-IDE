@@ -1207,6 +1207,30 @@ body {
   border-color: var(--border-hover);
 }
 
+.message-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.message-recovery-button {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.message-recovery-button:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--surface-3));
+}
+
 .message-tool-activity {
   margin-top: 10px;
   border: 1px solid var(--border-subtle);
