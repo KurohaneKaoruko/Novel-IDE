@@ -368,6 +368,7 @@ type AssistantReplayContext = {
 
 type ResolveReplayOptions = {
   persistCurrentVersion?: boolean
+  allowWhenStreaming?: boolean
 }
 
 type SettingsTabKey = 'general' | 'editor' | 'models' | 'agents'
@@ -2616,7 +2617,8 @@ function App() {
 
   const resolveAssistantReplayContext = useCallback(
     (assistantMessageId?: string, options?: ResolveReplayOptions): AssistantReplayContext | null => {
-      if (chatMessagesRef.current.some((m) => m.streaming)) return null
+      const allowWhenStreaming = options?.allowWhenStreaming === true
+      if (!allowWhenStreaming && chatMessagesRef.current.some((m) => m.streaming)) return null
       const history = chatMessagesRef.current
       if (history.length === 0) return null
 
@@ -2685,7 +2687,7 @@ function App() {
   )
 
   const onRetryWithFallbackProvider = useCallback(
-    async (assistantMessageId?: string) => {
+    async (assistantMessageId?: string, retryContextOverride?: string) => {
       if (!appSettings) {
         setError(t('chat.recovery.noSettingsLoaded'))
         openModelSettings()
@@ -2730,8 +2732,9 @@ function App() {
         await persistAppSettings(next, prev)
       }
 
-      const replayPrompt = replay.retryContext
-        ? `${replay.replayUser.content}\n\n${replay.retryContext}`
+      const resolvedRetryContext = typeof retryContextOverride === 'string' ? retryContextOverride.trim() : replay.retryContext
+      const replayPrompt = resolvedRetryContext
+        ? `${replay.replayUser.content}\n\n${resolvedRetryContext}`
         : replay.replayUser.content
       await onSendChat(replayPrompt, {
         sourceMessages: replay.replayHistory,
@@ -2754,7 +2757,10 @@ function App() {
   )
   const getRetryContextText = useCallback(
     (assistantMessageId?: string): string => {
-      const replay = resolveAssistantReplayContext(assistantMessageId, { persistCurrentVersion: false })
+      const replay = resolveAssistantReplayContext(assistantMessageId, {
+        persistCurrentVersion: false,
+        allowWhenStreaming: true,
+      })
       return replay?.retryContext ?? ''
     },
     [resolveAssistantReplayContext],

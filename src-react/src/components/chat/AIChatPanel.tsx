@@ -85,7 +85,7 @@ type AIChatPanelProps = {
   onRegenerateAssistant: (messageId?: string, retryContextOverride?: string) => void | Promise<unknown>
   getRetryContextText?: (messageId?: string) => string
   onGenerateAssistantCandidates: (messageId?: string, count?: number) => void | Promise<unknown>
-  onRetryWithFallbackProvider: (messageId?: string) => void | Promise<unknown>
+  onRetryWithFallbackProvider: (messageId?: string, retryContextOverride?: string) => void | Promise<unknown>
   onOpenModelSettings: () => void
   activeAgentId: string
   agents: AIChatOption[]
@@ -890,6 +890,13 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                     onClick={() => resetRetryContextDraft(message.id)}
                                   >
                                     {t('chat.retryContext.reset')}
+                                  </button>
+                                  <button
+                                    className="message-tool-filter"
+                                    type="button"
+                                    onClick={() => void onRetryWithFallbackProvider(message.id, hasRetryContextDraft ? retryContextDraft : undefined)}
+                                  >
+                                    {t('chat.recovery.switchProviderRetry')}
                                   </button>
                                 </div>
                               </div>
