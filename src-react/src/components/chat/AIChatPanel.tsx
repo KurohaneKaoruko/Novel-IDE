@@ -605,7 +605,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [sharedRetryPromptHistory, setSharedRetryPromptHistory] = useState<RetryPromptHistoryEntry[]>([])
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
-  const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(false)
+  const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(true)
   const [liveOpsFilter, setLiveOpsFilter] = useState<ToolFilterMode>('all')
   const [liveStageFilter, setLiveStageFilter] = useState<ToolStageFilter>('all')
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
@@ -657,7 +657,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   useEffect(() => {
     const prev = latestLiveStreamIdRef.current
     if (activeLiveStreamId && activeLiveStreamId !== prev) {
-      setLiveOpsCollapsed(false)
+      setLiveOpsCollapsed(true)
       setLiveOpsFilter('all')
       setLiveStageFilter('all')
       setCollapsedLiveStages({})
@@ -980,10 +980,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
               const toolPanelCollapsed = hasToolEvents
                 ? hasManualToolCollapse
                   ? collapsedToolPanels[message.id] === true
-                  : message.streaming
-                    ? false
-                    : failedToolCount === 0
+                  : true
                 : true
+              const showInlineToolActivity =
+                hasToolEvents && !(message.streaming && activeStreamingMessage && activeStreamingMessage.id === message.id)
 
               return (
               <div key={message.id} className={message.role === 'user' ? 'message user' : 'message assistant'}>
@@ -1069,7 +1069,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     ) : null}
                   </div>
                 ) : null}
-                {hasToolEvents ? (
+                {showInlineToolActivity ? (
                   <div className="message-tool-activity">
                     <button className="message-tool-summary" onClick={() => toggleToolPanel(message.id)} type="button">
                       <span className={`message-tool-summary-chevron${toolPanelCollapsed ? '' : ' expanded'}`} aria-hidden="true">
