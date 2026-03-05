@@ -606,6 +606,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [expandedToolItems, setExpandedToolItems] = useState<Record<string, boolean>>({})
   const [copiedMarker, setCopiedMarker] = useState<string | null>(null)
   const [liveOpsCollapsed, setLiveOpsCollapsed] = useState(true)
+  const [liveOpsAdvanced, setLiveOpsAdvanced] = useState(false)
   const [liveOpsFilter, setLiveOpsFilter] = useState<ToolFilterMode>('all')
   const [liveStageFilter, setLiveStageFilter] = useState<ToolStageFilter>('all')
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
@@ -658,6 +659,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     const prev = latestLiveStreamIdRef.current
     if (activeLiveStreamId && activeLiveStreamId !== prev) {
       setLiveOpsCollapsed(true)
+      setLiveOpsAdvanced(false)
       setLiveOpsFilter('all')
       setLiveStageFilter('all')
       setCollapsedLiveStages({})
@@ -665,6 +667,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
       setCopiedMarker(null)
     } else if (!activeLiveStreamId && prev) {
       setLiveOpsCollapsed(true)
+      setLiveOpsAdvanced(false)
       setLiveOpsFilter('all')
       setLiveStageFilter('all')
       setCollapsedLiveStages({})
@@ -1644,20 +1647,6 @@ export function AIChatPanel(props: AIChatPanelProps) {
               <div className="ai-live-ops-phase">{getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
               {activeLiveSummary ? <div className="ai-live-ops-summary">{activeLiveSummary}</div> : null}
               <div className="message-tool-toolbar ai-live-ops-toolbar">
-                <button
-                  className={`message-tool-filter${liveOpsFilter === 'all' ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => setLiveOpsFilter('all')}
-                >
-                  {t('chat.filterAll')}
-                </button>
-                <button
-                  className={`message-tool-filter${liveOpsFilter === 'error' ? ' active' : ''}`}
-                  type="button"
-                  onClick={() => setLiveOpsFilter('error')}
-                >
-                  {t('chat.filterFailed', { count: liveFailedToolCount })}
-                </button>
                 {liveFailedToolCount > 0 ? (
                   <button
                     className="message-tool-filter"
@@ -1668,171 +1657,232 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     {copiedMarker === 'live-failed-ops' ? t('chat.copied') : t('chat.copyFailedOps')}
                   </button>
                 ) : null}
-              </div>
-              <div className="message-tool-toolbar message-tool-stage-toolbar ai-live-ops-toolbar">
                 <button
-                  className={`message-tool-filter${liveStageFilter === 'all' ? ' active' : ''}`}
+                  className={`message-tool-filter${liveOpsAdvanced ? ' active' : ''}`}
                   type="button"
-                  onClick={() => setLiveStageFilter('all')}
+                  onClick={() => setLiveOpsAdvanced((prev) => !prev)}
                 >
-                  {t('chat.stageFilterAll')}
+                  {liveOpsAdvanced ? t('chat.collapseDetails') : t('chat.expandDetails')}
                 </button>
-                {(['context', 'filesystem', 'memory', 'other'] as const).map((stageKey) => (
-                  <button
-                    key={`live-stage-filter-${stageKey}`}
-                    className={`message-tool-filter${liveStageFilter === stageKey ? ' active' : ''}`}
-                    type="button"
-                    disabled={liveStageCounts[stageKey] === 0}
-                    onClick={() => setLiveStageFilter(stageKey)}
-                  >
-                    {toolStageLabel(stageKey, t)} ({liveStageCounts[stageKey]})
-                  </button>
-                ))}
               </div>
-              <div className="message-tool-stats">
-                {liveStageFilter === 'all'
-                  ? t('chat.opsStats', liveModeFilteredStats)
-                  : t('chat.opsStatsFiltered', {
-                      visible: liveVisibleStats.total,
-                      total: liveModeFilteredStats.total,
-                      running: liveVisibleStats.running,
-                      done: liveVisibleStats.done,
-                      failed: liveVisibleStats.failed,
-                    })}
-              </div>
-              <div className="ai-live-ops-list" ref={liveOpsListRef}>
-                {activeLiveToolCount === 0 ? (
-                  <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
-                ) : null}
-                {activeLiveToolCount > 0 && visibleLiveToolEvents.length === 0 ? (
-                  <div className="ai-live-ops-empty">
-                    {liveOpsFilter !== 'all' || liveStageFilter !== 'all' ? t('chat.noOpsForFilters') : t('chat.noFailedOps')}
-                  </div>
-                ) : null}
-                {groupedLiveToolEvents.map((group) => {
-                  const stageId = `${activeLiveStreamId || 'live'}-live-stage-${group.stage}`
-                  const hasManualLiveStageCollapse = Object.prototype.hasOwnProperty.call(collapsedLiveStages, stageId)
-                  const liveStageCollapsed = hasManualLiveStageCollapse
-                    ? collapsedLiveStages[stageId] === true
-                    : shouldCollapseStageByDefault(group.stage, group.items, activeLiveLatestTool)
-                  const liveStageState = stageStatus(group.items)
-                  return (
-                    <div key={stageId} className="ai-live-ops-stage">
-                      <button
-                        className="ai-live-ops-stage-head"
-                        type="button"
-                        onClick={() => toggleLiveStage(stageId)}
-                        aria-expanded={!liveStageCollapsed}
-                      >
-                        <span className={`ai-live-ops-stage-chevron${liveStageCollapsed ? '' : ' expanded'}`} aria-hidden="true">
-                          {'>'}
-                        </span>
-                        <span className="ai-live-ops-stage-title">{toolStageLabel(group.stage, t)}</span>
-                        <span className={`ai-live-ops-stage-status ai-live-ops-stage-status-${liveStageState}`}>
-                          {toolStatusLabel(liveStageState, t)}
-                        </span>
-                        <span className="ai-live-ops-stage-count">{t('chat.operationCount', { count: group.items.length })}</span>
-                      </button>
-                      <div className={`ai-live-ops-stage-content${liveStageCollapsed ? ' collapsed' : ''}`}>
-                        <div className="ai-live-ops-stage-list">
-                          {group.items.map((toolEvent, idx) => {
-                            const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
-                            const durationMs =
-                              toolEvent.durationMs ??
-                              ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
-                                (toolEvent.startedAt ?? toolEvent.timestamp))
-                            const target = resolveToolEventTarget(toolEvent)
-                            const canExpandDetail = hasLiveToolDetail(toolEvent)
-                            const hasManualLiveItemExpand = Object.prototype.hasOwnProperty.call(expandedLiveItems, liveToolId)
-                            const expandedLiveItem = hasManualLiveItemExpand
-                              ? expandedLiveItems[liveToolId] === true
-                              : toolEvent.status !== 'success'
-                            return (
-                              <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
-                                <div className="ai-live-ops-item-main">
-                                  <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
-                                  <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
-                                  {target ? (
-                                    <span className="ai-live-ops-item-target" title={target}>
-                                      {target}
-                                    </span>
-                                  ) : null}
-                                  <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
-                                  <span className="ai-live-ops-item-duration">
-                                    {formatDurationLabel(durationMs, toolEvent.status === 'running')}
-                                  </span>
-                                  {canExpandDetail ? (
-                                    <button
-                                      className="ai-live-ops-item-toggle"
-                                      type="button"
-                                      onClick={() => toggleLiveItem(liveToolId)}
-                                      aria-expanded={expandedLiveItem}
-                                    >
-                                      {expandedLiveItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
-                                    </button>
-                                  ) : null}
-                                </div>
-                                {canExpandDetail ? (
-                                  <div className={`ai-live-ops-item-detail-wrap${expandedLiveItem ? ' expanded' : ''}`}>
-                                    <div className="ai-live-ops-item-detail">
-                                      {toolEvent.inputPreview ? (
-                                        <div className="ai-live-ops-item-line-wrap">
-                                          <pre className="ai-live-ops-item-line" title={toolEvent.inputPreview}>
-                                            <span className="ai-live-ops-item-label">{t('chat.input')}</span>{' '}
-                                            {toolEvent.inputPreview}
-                                          </pre>
-                                          <button
-                                            className="message-tool-copy-button"
-                                            type="button"
-                                            onClick={() =>
-                                              void copyWithFeedback(`${liveToolId}-input`, `${t('chat.input')} ${toolEvent.inputPreview}`)
-                                            }
-                                          >
-                                            {copiedMarker === `${liveToolId}-input` ? t('chat.copied') : t('chat.copy')}
-                                          </button>
-                                        </div>
-                                      ) : null}
-                                      {toolEvent.observationPreview ? (
-                                        <div className="ai-live-ops-item-line-wrap">
-                                          <pre className="ai-live-ops-item-line" title={toolEvent.observationPreview}>
-                                            <span className="ai-live-ops-item-label">{t('chat.output')}</span>{' '}
-                                            {toolEvent.observationPreview}
-                                          </pre>
-                                          <button
-                                            className="message-tool-copy-button"
-                                            type="button"
-                                            onClick={() =>
-                                              void copyWithFeedback(`${liveToolId}-output`, `${t('chat.output')} ${toolEvent.observationPreview ?? ''}`)
-                                            }
-                                          >
-                                            {copiedMarker === `${liveToolId}-output` ? t('chat.copied') : t('chat.copy')}
-                                          </button>
-                                        </div>
-                                      ) : null}
-                                      {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
-                                        <div className="ai-live-ops-item-tree">
-                                          {toolEvent.listItems.map((item, treeIdx) => (
-                                            <div key={`${item.kind}-${item.name}-${treeIdx}`} className="ai-live-ops-item-tree-entry">
-                                              <span className={`ai-live-ops-item-tree-kind ai-live-ops-item-tree-kind-${item.kind}`}>
-                                                {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
-                                              </span>
-                                              <span className="ai-live-ops-item-tree-name">{item.name}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
-                            )
-                          })}
+              {!liveOpsAdvanced ? (
+                <div className="ai-live-ops-list" ref={liveOpsListRef}>
+                  {activeLiveToolCount === 0 ? (
+                    <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
+                  ) : null}
+                  {activeLiveToolEvents.slice(-6).map((toolEvent, idx) => {
+                    const quickToolId = `live-quick-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                    const durationMs =
+                      toolEvent.durationMs ??
+                      ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                        (toolEvent.startedAt ?? toolEvent.timestamp))
+                    const target = resolveToolEventTarget(toolEvent)
+                    return (
+                      <div key={quickToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
+                        <div className="ai-live-ops-item-main">
+                          <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
+                          <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
+                          {target ? (
+                            <span className="ai-live-ops-item-target" title={target}>
+                              {target}
+                            </span>
+                          ) : null}
+                          <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
+                          <span className="ai-live-ops-item-duration">
+                            {formatDurationLabel(durationMs, toolEvent.status === 'running')}
+                          </span>
                         </div>
                       </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <>
+                  <div className="message-tool-toolbar ai-live-ops-toolbar">
+                    <button
+                      className={`message-tool-filter${liveOpsFilter === 'all' ? ' active' : ''}`}
+                      type="button"
+                      onClick={() => setLiveOpsFilter('all')}
+                    >
+                      {t('chat.filterAll')}
+                    </button>
+                    <button
+                      className={`message-tool-filter${liveOpsFilter === 'error' ? ' active' : ''}`}
+                      type="button"
+                      onClick={() => setLiveOpsFilter('error')}
+                    >
+                      {t('chat.filterFailed', { count: liveFailedToolCount })}
+                    </button>
+                  </div>
+                  <div className="message-tool-toolbar message-tool-stage-toolbar ai-live-ops-toolbar">
+                    <button
+                      className={`message-tool-filter${liveStageFilter === 'all' ? ' active' : ''}`}
+                      type="button"
+                      onClick={() => setLiveStageFilter('all')}
+                    >
+                      {t('chat.stageFilterAll')}
+                    </button>
+                    {(['context', 'filesystem', 'memory', 'other'] as const).map((stageKey) => (
+                      <button
+                        key={`live-stage-filter-${stageKey}`}
+                        className={`message-tool-filter${liveStageFilter === stageKey ? ' active' : ''}`}
+                        type="button"
+                        disabled={liveStageCounts[stageKey] === 0}
+                        onClick={() => setLiveStageFilter(stageKey)}
+                      >
+                        {toolStageLabel(stageKey, t)} ({liveStageCounts[stageKey]})
+                      </button>
+                    ))}
+                  </div>
+                  <div className="message-tool-stats">
+                    {liveStageFilter === 'all'
+                      ? t('chat.opsStats', liveModeFilteredStats)
+                      : t('chat.opsStatsFiltered', {
+                          visible: liveVisibleStats.total,
+                          total: liveModeFilteredStats.total,
+                          running: liveVisibleStats.running,
+                          done: liveVisibleStats.done,
+                          failed: liveVisibleStats.failed,
+                        })}
+                  </div>
+                  <div className="ai-live-ops-list" ref={liveOpsListRef}>
+                    {activeLiveToolCount === 0 ? (
+                      <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
+                    ) : null}
+                    {activeLiveToolCount > 0 && visibleLiveToolEvents.length === 0 ? (
+                      <div className="ai-live-ops-empty">
+                        {liveOpsFilter !== 'all' || liveStageFilter !== 'all' ? t('chat.noOpsForFilters') : t('chat.noFailedOps')}
+                      </div>
+                    ) : null}
+                    {groupedLiveToolEvents.map((group) => {
+                      const stageId = `${activeLiveStreamId || 'live'}-live-stage-${group.stage}`
+                      const hasManualLiveStageCollapse = Object.prototype.hasOwnProperty.call(collapsedLiveStages, stageId)
+                      const liveStageCollapsed = hasManualLiveStageCollapse
+                        ? collapsedLiveStages[stageId] === true
+                        : shouldCollapseStageByDefault(group.stage, group.items, activeLiveLatestTool)
+                      const liveStageState = stageStatus(group.items)
+                      return (
+                        <div key={stageId} className="ai-live-ops-stage">
+                          <button
+                            className="ai-live-ops-stage-head"
+                            type="button"
+                            onClick={() => toggleLiveStage(stageId)}
+                            aria-expanded={!liveStageCollapsed}
+                          >
+                            <span className={`ai-live-ops-stage-chevron${liveStageCollapsed ? '' : ' expanded'}`} aria-hidden="true">
+                              {'>'}
+                            </span>
+                            <span className="ai-live-ops-stage-title">{toolStageLabel(group.stage, t)}</span>
+                            <span className={`ai-live-ops-stage-status ai-live-ops-stage-status-${liveStageState}`}>
+                              {toolStatusLabel(liveStageState, t)}
+                            </span>
+                            <span className="ai-live-ops-stage-count">{t('chat.operationCount', { count: group.items.length })}</span>
+                          </button>
+                          <div className={`ai-live-ops-stage-content${liveStageCollapsed ? ' collapsed' : ''}`}>
+                            <div className="ai-live-ops-stage-list">
+                              {group.items.map((toolEvent, idx) => {
+                                const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                                const durationMs =
+                                  toolEvent.durationMs ??
+                                  ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
+                                    (toolEvent.startedAt ?? toolEvent.timestamp))
+                                const target = resolveToolEventTarget(toolEvent)
+                                const canExpandDetail = hasLiveToolDetail(toolEvent)
+                                const hasManualLiveItemExpand = Object.prototype.hasOwnProperty.call(expandedLiveItems, liveToolId)
+                                const expandedLiveItem = hasManualLiveItemExpand
+                                  ? expandedLiveItems[liveToolId] === true
+                                  : toolEvent.status !== 'success'
+                                return (
+                                  <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
+                                    <div className="ai-live-ops-item-main">
+                                      <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
+                                      <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
+                                      {target ? (
+                                        <span className="ai-live-ops-item-target" title={target}>
+                                          {target}
+                                        </span>
+                                      ) : null}
+                                      <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
+                                      <span className="ai-live-ops-item-duration">
+                                        {formatDurationLabel(durationMs, toolEvent.status === 'running')}
+                                      </span>
+                                      {canExpandDetail ? (
+                                        <button
+                                          className="ai-live-ops-item-toggle"
+                                          type="button"
+                                          onClick={() => toggleLiveItem(liveToolId)}
+                                          aria-expanded={expandedLiveItem}
+                                        >
+                                          {expandedLiveItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                    {canExpandDetail ? (
+                                      <div className={`ai-live-ops-item-detail-wrap${expandedLiveItem ? ' expanded' : ''}`}>
+                                        <div className="ai-live-ops-item-detail">
+                                          {toolEvent.inputPreview ? (
+                                            <div className="ai-live-ops-item-line-wrap">
+                                              <pre className="ai-live-ops-item-line" title={toolEvent.inputPreview}>
+                                                <span className="ai-live-ops-item-label">{t('chat.input')}</span>{' '}
+                                                {toolEvent.inputPreview}
+                                              </pre>
+                                              <button
+                                                className="message-tool-copy-button"
+                                                type="button"
+                                                onClick={() =>
+                                                  void copyWithFeedback(`${liveToolId}-input`, `${t('chat.input')} ${toolEvent.inputPreview}`)
+                                                }
+                                              >
+                                                {copiedMarker === `${liveToolId}-input` ? t('chat.copied') : t('chat.copy')}
+                                              </button>
+                                            </div>
+                                          ) : null}
+                                          {toolEvent.observationPreview ? (
+                                            <div className="ai-live-ops-item-line-wrap">
+                                              <pre className="ai-live-ops-item-line" title={toolEvent.observationPreview}>
+                                                <span className="ai-live-ops-item-label">{t('chat.output')}</span>{' '}
+                                                {toolEvent.observationPreview}
+                                              </pre>
+                                              <button
+                                                className="message-tool-copy-button"
+                                                type="button"
+                                                onClick={() =>
+                                                  void copyWithFeedback(
+                                                    `${liveToolId}-output`,
+                                                    `${t('chat.output')} ${toolEvent.observationPreview ?? ''}`,
+                                                  )
+                                                }
+                                              >
+                                                {copiedMarker === `${liveToolId}-output` ? t('chat.copied') : t('chat.copy')}
+                                              </button>
+                                            </div>
+                                          ) : null}
+                                          {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
+                                            <div className="ai-live-ops-item-tree">
+                                              {toolEvent.listItems.map((item, treeIdx) => (
+                                                <div key={`${item.kind}-${item.name}-${treeIdx}`} className="ai-live-ops-item-tree-entry">
+                                                  <span className={`ai-live-ops-item-tree-kind ai-live-ops-item-tree-kind-${item.kind}`}>
+                                                    {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
+                                                  </span>
+                                                  <span className="ai-live-ops-item-tree-name">{item.name}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
