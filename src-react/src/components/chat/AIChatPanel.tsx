@@ -424,6 +424,10 @@ function hasLiveToolDetail(toolEvent: AIChatToolEvent): boolean {
   return false
 }
 
+function toolEventIdentityKey(toolEvent: AIChatToolEvent): string {
+  return `${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}`
+}
+
 async function copyTextToClipboard(text: string): Promise<boolean> {
   const payload = text.trim()
   if (!payload) return false
@@ -645,6 +649,28 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const liveVisibleStats = buildToolCounters(visibleLiveToolEvents)
   const groupedLiveToolEvents = groupToolEventsByStage(visibleLiveToolEvents)
   const liveFailedOpsDigest = liveFailedToolCount > 0 ? buildFailedOpsDigest(activeLiveToolEvents, t) : ''
+  const quickLiveToolEvents = (() => {
+    if (activeLiveToolCount === 0) return [] as AIChatToolEvent[]
+    if (activeLiveToolCount <= 3) return activeLiveToolEvents
+
+    const selected = new Set<string>()
+    const latestTool = activeLiveToolEvents[activeLiveToolCount - 1]
+    if (latestTool) selected.add(toolEventIdentityKey(latestTool))
+
+    for (let i = activeLiveToolCount - 1; i >= 0; i -= 1) {
+      const event = activeLiveToolEvents[i]
+      if (event.status === 'running' || event.status === 'error') {
+        selected.add(toolEventIdentityKey(event))
+      }
+      if (selected.size >= 5) break
+    }
+
+    for (let i = activeLiveToolCount - 1; i >= 0 && selected.size < 3; i -= 1) {
+      selected.add(toolEventIdentityKey(activeLiveToolEvents[i]))
+    }
+
+    return activeLiveToolEvents.filter((event) => selected.has(toolEventIdentityKey(event))).slice(-5)
+  })()
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -1670,7 +1696,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   {activeLiveToolCount === 0 ? (
                     <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
                   ) : null}
-                  {activeLiveToolEvents.slice(-6).map((toolEvent, idx) => {
+                  {quickLiveToolEvents.map((toolEvent, idx) => {
                     const quickToolId = `live-quick-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
                     const durationMs =
                       toolEvent.durationMs ??
