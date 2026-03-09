@@ -8,6 +8,7 @@ export type AIChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  timestamp?: number
   streaming?: boolean
   cancelled?: boolean
   failureKind?: 'provider' | 'timeout' | 'runtime' | 'generic' | 'cancelled'
@@ -688,9 +689,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     onRejectReviewModification,
     activeDocumentPath,
     activeDocumentLabel,
-    activeDocumentCharCount,
     activeDocumentDirty,
-    activeDocumentPreview,
     activeWorkLabel,
     activeAssistantId,
     assistants,
@@ -722,6 +721,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [expandedLiveItems, setExpandedLiveItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
   const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<'chat' | 'planner' | 'review' | 'memory'>('chat')
+  const [activeChatDrawer, setActiveChatDrawer] = useState<'sessions' | 'workspace' | null>(null)
+  const [showComposerOptions, setShowComposerOptions] = useState(false)
+  const [activeSessionMenuId, setActiveSessionMenuId] = useState<string | null>(null)
   const [sessionFilter, setSessionFilter] = useState('')
   const [pinnedSessionIds, setPinnedSessionIds] = useState<string[]>([])
   const [archivedSessionIds, setArchivedSessionIds] = useState<string[]>([])
@@ -756,6 +758,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const activeLiveToolCount = activeLiveToolEvents.length
   const activeLiveLatestTool = activeLiveToolCount > 0 ? activeLiveToolEvents[activeLiveToolCount - 1] : null
   const activeLiveSummary = activeLiveToolCount > 0 ? buildThoughtSummary(activeLiveToolEvents, t) : ''
+  const activeLivePhaseLabel = activeStreamingMessage ? getStreamPhaseLabel(activeStreamingMessage.streamId) : ''
+  const activeLiveInlineSummary = activeLiveSummary && activeLiveSummary !== activeLivePhaseLabel ? activeLiveSummary : ''
   const liveFailedToolCount = activeLiveToolEvents.filter((event) => event.status === 'error').length
   const modeFilteredLiveToolEvents =
     liveOpsFilter === 'error' ? activeLiveToolEvents.filter((event) => event.status === 'error') : activeLiveToolEvents
@@ -793,8 +797,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
 
   const activeAssistant = assistants.find((assistant) => assistant.id === activeAssistantId) ?? null
   const activeProvider = providers.find((provider) => provider.id === activeProviderId) ?? null
-  const activeDocumentCrumbs = activeDocumentPath ? activeDocumentPath.split('/').filter(Boolean) : []
+  const activeSessionSummary = sessionSummaries.find((session) => session.id === activeSessionId) ?? null
   const activePlannerTask = plannerTasks.find((task) => task.status === 'running') ?? plannerTasks.find((task) => task.status === 'todo' || task.status === 'retry') ?? null
+  const activeProviderLabel = activeProvider?.statusLabel ? `${activeProvider.name} · ${activeProvider.statusLabel}` : activeProvider?.name ?? t('chat.modelSelect')
   const reviewSummary = reviewChangeSets.map((changeSet) => ({
     id: changeSet.id,
     filePath: changeSet.filePath,
@@ -818,6 +823,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
       120,
     ),
   }))
+  const plannerOpenCount = plannerTasks.filter((task) => task.status !== 'done').length
+  const reviewPendingCount = reviewSummary.filter((item) => item.pending > 0).length
+  const memoryIndexCount = [characterStateIndexMeta, foreshadowIndexMeta].filter(Boolean).length
 
   const insertQuickPrompt = useCallback(
     (prompt: string, mode?: WriterMode) => {
@@ -857,6 +865,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
       })
     },
     [locale, t],
+  )
+  const messageTimeLabel = useCallback(
+    (timestamp?: number) => {
+      if (!Number.isFinite(timestamp) || !timestamp || timestamp <= 0) return ''
+      return new Date(timestamp).toLocaleTimeString(locale, {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    },
+    [locale],
   )
 
   useEffect(() => {
@@ -953,13 +971,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
       return !keyword || session.id.toLowerCase().includes(keyword) || timeLabel.includes(keyword) || titleLabel.includes(keyword)
     })
     return [...base].sort((left, right) => {
+      const leftActive = left.id === activeSessionId
+      const rightActive = right.id === activeSessionId
+      if (leftActive !== rightActive) return leftActive ? -1 : 1
       const leftPinned = pinnedSessionIds.includes(left.id)
       const rightPinned = pinnedSessionIds.includes(right.id)
       if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
       return right.updatedAt - left.updatedAt
     })
-  }, [archivedSessionIds, deletedSessionIds, pinnedSessionIds, sessionFilter, sessionSummaries, sessionTimeLabel, sessionTitleOverrides])
-  const visibleSessions = filteredSessions.slice(0, 8)
+  }, [activeSessionId, archivedSessionIds, deletedSessionIds, pinnedSessionIds, sessionFilter, sessionSummaries, sessionTimeLabel, sessionTitleOverrides])
   const archivedSessions = useMemo(
     () =>
       sessionSummaries
@@ -1043,7 +1063,10 @@ export function AIChatPanel(props: AIChatPanelProps) {
     ],
     [insertQuickPrompt, onSmartComplete, t],
   )
-
+  const activeSessionTitle =
+    sessionTitleOverrides[activeSessionId] ||
+    activeSessionSummary?.title ||
+    (activeSessionSummary ? sessionTimeLabel(activeSessionSummary.updatedAt) : t('chat.sessionCurrent'))
   const applySlashPrompt = useCallback(
     (prompt: string, mode?: WriterMode) => {
       if (mode && mode !== writerMode) {
@@ -1075,6 +1098,41 @@ export function AIChatPanel(props: AIChatPanelProps) {
         : slashCommands.filter((command) => command.label.slice(1).includes(slashQuery)).slice(0, 6),
     [chatInput, slashCommands, slashQuery],
   )
+  const workbenchLinks = useMemo(
+    () => [
+      {
+        id: 'planner' as const,
+        label: t('chat.tabPlanner'),
+        badge: plannerBusy ? '...' : plannerOpenCount > 0 ? String(plannerOpenCount) : '',
+      },
+      {
+        id: 'review' as const,
+        label: t('chat.tabReview'),
+        badge: reviewPendingCount > 0 ? String(reviewPendingCount) : '',
+      },
+      {
+        id: 'memory' as const,
+        label: t('chat.tabMemory'),
+        badge: memoryIndexLoading ? '...' : memoryIndexCount > 0 ? String(memoryIndexCount) : '',
+      },
+    ],
+    [memoryIndexCount, memoryIndexLoading, plannerBusy, plannerOpenCount, reviewPendingCount, t],
+  )
+  const activeWorkbenchItem = workbenchLinks.find((item) => item.id === activeWorkbenchTab) ?? null
+  const headerSubtitle =
+    activeWorkbenchTab === 'chat'
+      ? [activeSessionTitle, activeAssistant?.name ?? t('chat.noAgents'), activeProviderLabel].filter(Boolean).join(' · ')
+      : [activeWorkbenchItem?.label ?? '', activeDocumentLabel ?? activeWorkLabel ?? ''].filter(Boolean).join(' · ')
+  const headerMetaItems = [
+    activeWorkbenchTab === 'chat'
+      ? { label: writerModeLabel(writerMode, t), tone: 'default' as const }
+      : activeWorkbenchItem
+        ? { label: activeWorkbenchItem.label, tone: 'default' as const }
+        : null,
+    activeDocumentLabel ? { label: activeDocumentLabel, tone: 'default' as const } : null,
+    activeDocumentDirty ? { label: t('chat.documentDirty'), tone: 'dirty' as const } : null,
+    autoLongWriteEnabled ? { label: t('chat.autoWrite'), tone: 'accent' as const } : null,
+  ].filter((item): item is { label: string; tone: 'default' | 'dirty' | 'accent' } => item !== null)
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -1106,6 +1164,21 @@ export function AIChatPanel(props: AIChatPanelProps) {
     }
     latestLiveStreamIdRef.current = activeLiveStreamId
   }, [activeLiveStreamId])
+  useEffect(() => {
+    if (activeWorkbenchTab !== 'chat') {
+      setActiveChatDrawer(null)
+    }
+  }, [activeWorkbenchTab])
+  useEffect(() => {
+    if (activeChatDrawer !== 'sessions') {
+      setActiveSessionMenuId(null)
+    }
+  }, [activeChatDrawer])
+  useEffect(() => {
+    if (providerSelectInvalid) {
+      setShowComposerOptions(true)
+    }
+  }, [providerSelectInvalid])
   useEffect(() => {
     if (liveOpsCollapsed) return
     const list = liveOpsListRef.current
@@ -1285,6 +1358,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const removeRetryPrompt = useCallback((messageId: string, text: string) => {
     deleteRetryPromptEntry(messageId, text)
   }, [deleteRetryPromptEntry])
+  const toggleChatDrawer = useCallback((drawer: 'sessions' | 'workspace') => {
+    setActiveChatDrawer((prev) => (prev === drawer ? null : drawer))
+  }, [])
 
   const handleComposerKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !chatInput.trim()) {
@@ -1322,294 +1398,322 @@ export function AIChatPanel(props: AIChatPanelProps) {
   }
 
   return (
-    <>
-      <div className="ai-header">
+    <div className={`ai-chat-panel${activeWorkbenchTab === 'chat' ? ' is-chat-mode' : ' is-tool-mode'}`}>
+      <div className="ai-chat-top">
+      <div className="ai-header ai-header-compact">
         <div className="ai-title-row">
-          <span>{t('chat.title')}</span>
+          <div className="ai-title-group">
+            <span className="ai-title-text">{t('chat.title')}</span>
+            <span className="ai-mode-brief">{headerSubtitle}</span>
+          </div>
           <div className="ai-title-actions">
-            <button className="icon-button ai-new-session-btn" onClick={() => void onNewSession()} title={t('chat.newSession')}>
-              {t('chat.newSession')}
+            {activeWorkbenchTab === 'chat' ? (
+              <>
+                <button
+                  type="button"
+                  className={`ai-header-chip${activeChatDrawer === 'sessions' ? ' active' : ''}`}
+                  onClick={() => toggleChatDrawer('sessions')}
+                >
+                  {t('chat.sessionsTitle')}
+                </button>
+                <button
+                  type="button"
+                  className={`ai-header-chip${activeChatDrawer === 'workspace' ? ' active' : ''}`}
+                  onClick={() => toggleChatDrawer('workspace')}
+                >
+                  {t('chat.utilityHub')}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="ai-header-chip"
+                onClick={() => setActiveWorkbenchTab('chat')}
+              >
+                {t('chat.backToChat')}
+              </button>
+            )}
+            {providerSelectInvalid ? (
+              <button className="ai-header-link" type="button" onClick={onOpenModelSettings}>
+                {t('chat.recovery.openModels')}
+              </button>
+            ) : null}
+            <button className="icon-button ai-new-session-btn" type="button" onClick={() => void onNewSession()} title={t('chat.newSession')}>
+              <AppIcon name="add" size={13} />
             </button>
           </div>
         </div>
-        <div className="ai-mode-brief">{writerModeLabel(writerMode, t)}</div>
+        {headerMetaItems.length > 0 ? (
+          <div className={`ai-chat-meta-row${headerMetaItems.length <= 1 ? ' minimal' : ''}`}>
+            {headerMetaItems.map((item, index) => (
+              <span key={`${item.label}-${index}`} className={`ai-chat-meta-pill ${item.tone}`}>
+                {item.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
         {plannerLastRunError ? <div className="planner-error-text">{plannerLastRunError}</div> : null}
       </div>
 
-      <div className="ai-workbench">
-        <div className="ai-status-card">
-          <div className="ai-status-main">
-            <div className="ai-status-title">{activeAssistant?.name ?? t('chat.noAgents')}</div>
-            <div className="ai-status-subtitle">
-              {activeProvider?.statusLabel ? `${activeProvider.name} · ${activeProvider.statusLabel}` : activeProvider?.name ?? t('chat.modelSelect')}
-            </div>
-          </div>
-          <div className="ai-status-tags">
-            <span className="ai-status-tag">{writerModeLabel(writerMode, t)}</span>
-            <span className="ai-status-tag">{autoLongWriteEnabled ? t('chat.autoWrite') : t('chat.sessionManual')}</span>
-            <span className="ai-status-tag">{t('chat.sessionCount', { count: sessionSummaries.length })}</span>
-          </div>
-        </div>
-
-        <div className="ai-document-card">
-          <div className="ai-section-head">
-            <span>{t('chat.documentTitle')}</span>
-            <span className="ai-status-tag">{activeDocumentDirty ? t('chat.documentDirty') : t('chat.documentSaved')}</span>
-          </div>
-          {activeDocumentPath ? (
-            <>
-              <div className="ai-document-breadcrumbs">
-                {activeDocumentCrumbs.map((crumb, index) => (
-                  <span key={`${crumb}-${index}`} className="ai-document-crumb">
-                    {crumb}
-                  </span>
-                ))}
-              </div>
-              <div className="ai-document-title">{activeDocumentLabel ?? activeDocumentPath}</div>
-              <div className="ai-document-meta">{t('chat.documentChars', { count: activeDocumentCharCount })}</div>
-              <div className="ai-document-preview">{activeDocumentPreview || t('chat.documentPreviewEmpty')}</div>
-            </>
-          ) : (
-            <div className="ai-session-empty">{t('chat.documentEmpty')}</div>
-          )}
-        </div>
-
-        <div className="ai-context-card">
-          <div className="ai-section-head">
-            <span>{t('chat.contextSourcesTitle')}</span>
-          </div>
-          <div className="ai-context-actions">
-            {activeWorkLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextWork', { name: activeWorkLabel })}</span> : null}
-            {activeDocumentLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextDocument', { name: activeDocumentLabel })}</span> : null}
-            {canUseEditorActions ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextEditorReady')}</span> : null}
-            {plannerTasks.length > 0 ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextPlanner', { count: plannerTasks.length })}</span> : null}
-            {reviewChangeSets.length > 0 ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextReview', { count: reviewChangeSets.length })}</span> : null}
-          </div>
-        </div>
-
-        {providerSelectInvalid ? (
-          <div className="ai-recovery-card">
-            <div className="ai-section-head">
-              <span>{t('chat.recoveryTitle')}</span>
-            </div>
-            <div className="ai-recovery-text">{t('chat.recoveryModelWarning')}</div>
-            <button className="ai-section-link" type="button" onClick={onOpenModelSettings}>
-              {t('chat.recovery.openModels')}
+      {activeWorkbenchTab !== 'chat' ? (
+      <div className="ai-workbench-strip" aria-label={t('chat.workbenchTabs')}>
+        <span className="ai-workbench-strip-label">{t('chat.utilityHub')}</span>
+        <div className="ai-workbench-links" role="tablist" aria-label={t('chat.workbenchTabs')}>
+          {workbenchLinks.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`ai-workbench-link${activeWorkbenchTab === item.id ? ' active' : ''}`}
+              onClick={() => setActiveWorkbenchTab(item.id)}
+            >
+              <span>{item.label}</span>
+              {item.badge ? <span className="ai-workbench-link-badge">{item.badge}</span> : null}
             </button>
-          </div>
-        ) : null}
+          ))}
+        </div>
+      </div>
+      ) : null}
+      </div>
 
-        <div className="ai-session-card">
-          <div className="ai-section-head">
-            <span>{t('chat.sessionsTitle')}</span>
-            <button className="ai-section-link" type="button" onClick={() => void onNewSession()}>
-              {t('chat.newSession')}
-            </button>
-          </div>
-          <input
-            className="ai-session-search"
-            value={sessionFilter}
-            onChange={(event) => setSessionFilter(event.target.value)}
-            placeholder={t('chat.sessionsFilterPlaceholder')}
-          />
-          <div className="ai-session-strip">
-            {sessionsLoading ? <div className="ai-session-empty">{t('chat.sessionsLoading')}</div> : null}
-            {!sessionsLoading && visibleSessions.length === 0 ? <div className="ai-session-empty">{t('chat.sessionsEmpty')}</div> : null}
-            {!sessionsLoading
-              ? visibleSessions.map((session) => (
-                  <button
-                    key={session.id}
-                    className={`ai-session-pill${session.id === activeSessionId ? ' active' : ''}`}
-                    type="button"
-                    onClick={() => void onOpenSession(session.id)}
-                  >
-                    <span className="ai-session-pill-title">
-                      {sessionTitleOverrides[session.id] || session.title || (session.id === activeSessionId ? t('chat.sessionCurrent') : sessionTimeLabel(session.updatedAt))}
-                    </span>
-                    <span className="ai-session-pill-meta">{t('chat.sessionMessages', { count: session.messageCount })}</span>
-                    <span className="ai-session-pill-meta">{sessionTimeLabel(session.updatedAt)}</span>
-                    <span
-                      role="button"
-                      className="ai-session-pin"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setPinnedSessionIds((prev) =>
-                          prev.includes(session.id) ? prev.filter((id) => id !== session.id) : [session.id, ...prev],
-                        )
-                      }}
-                    >
-                      {pinnedSessionIds.includes(session.id) ? t('chat.sessionPinned') : t('chat.sessionPin')}
-                    </span>
-                    <span
-                      role="button"
-                      className="ai-session-pin"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setArchivedSessionIds((prev) =>
-                          prev.includes(session.id) ? prev.filter((id) => id !== session.id) : [session.id, ...prev],
-                        )
-                      }}
-                    >
-                      {t('chat.sessionArchive')}
-                    </span>
-                    <span
-                      role="button"
-                      className="ai-session-pin"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setDeletedSessionIds((prev) => (prev.includes(session.id) ? prev : [session.id, ...prev]))
-                      }}
-                    >
-                      {t('chat.sessionDelete')}
-                    </span>
-                    <span
-                      role="button"
-                      className="ai-session-pin"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setEditingSessionId(session.id)
-                        setEditingSessionTitle(sessionTitleOverrides[session.id] || session.title || '')
-                      }}
-                    >
-                      {t('chat.sessionRename')}
-                    </span>
+      <div className="ai-chat-body">
+      {activeWorkbenchTab === 'chat' && activeChatDrawer ? (
+        <div className="ai-chat-overlay-layer" onClick={() => setActiveChatDrawer(null)}>
+          <div className={`ai-chat-overlay-panel ai-chat-drawer${activeChatDrawer === 'workspace' ? ' ai-chat-drawer-tools' : ''}`} onClick={(event) => event.stopPropagation()}>
+            {activeChatDrawer === 'sessions' ? (
+              <>
+                <div className="ai-chat-drawer-head">
+                  <span>{t('chat.sessionsTitle')}</span>
+                  <button className="ai-section-link" type="button" onClick={() => void onNewSession()}>
+                    {t('chat.newSession')}
                   </button>
-                ))
-              : null}
-          </div>
-          {editingSessionId ? (
-            <div className="ai-session-rename">
-              <input
-                className="ai-session-search"
-                value={editingSessionTitle}
-                onChange={(event) => setEditingSessionTitle(event.target.value)}
-                placeholder={t('chat.sessionRenamePlaceholder')}
-              />
-              <div className="ai-review-actions ai-review-actions-inline">
-                <button
-                  type="button"
-                  className="ai-context-chip"
-                  onClick={() => {
-                    const nextTitle = editingSessionTitle.trim()
-                    setSessionTitleOverrides((prev) => ({
-                      ...prev,
-                      [editingSessionId]: nextTitle,
-                    }))
-                    setEditingSessionId(null)
-                    setEditingSessionTitle('')
-                  }}
-                >
-                  {t('chat.sessionRenameSave')}
-                </button>
-                <button
-                  type="button"
-                  className="ai-context-chip"
-                  onClick={() => {
-                    setEditingSessionId(null)
-                    setEditingSessionTitle('')
-                  }}
-                >
-                  {t('common.cancel')}
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {archivedSessionIds.length > 0 ? (
-            <div className="ai-session-archived-note">
-              <span>{t('chat.sessionArchivedCount', { count: archivedSessionIds.length })}</span>
-              <button className="ai-section-link" type="button" onClick={() => setShowArchivedSessions((prev) => !prev)}>
-                {showArchivedSessions ? t('chat.sessionHideArchived') : t('chat.sessionShowArchived')}
-              </button>
-            </div>
-          ) : null}
-          {showArchivedSessions && archivedSessions.length > 0 ? (
-            <div className="ai-review-mod-list">
-              {archivedSessions.map((session) => (
-                <div key={session.id} className="ai-review-mod-item">
-                  <div className="ai-review-mod-head">
-                    <span className="ai-review-mod-type">{sessionTitleOverrides[session.id] || session.title || sessionTimeLabel(session.updatedAt)}</span>
-                    <span className="ai-review-mod-lines">{t('chat.sessionMessages', { count: session.messageCount })}</span>
+                </div>
+                <input
+                  className="ai-session-search"
+                  value={sessionFilter}
+                  onChange={(event) => setSessionFilter(event.target.value)}
+                  placeholder={t('chat.sessionsFilterPlaceholder')}
+                />
+                <div className="ai-session-list">
+                  {sessionsLoading ? <div className="ai-session-empty">{t('chat.sessionsLoading')}</div> : null}
+                  {!sessionsLoading && filteredSessions.length === 0 ? <div className="ai-session-empty">{t('chat.sessionsEmpty')}</div> : null}
+                  {!sessionsLoading
+                    ? filteredSessions.map((session) => (
+                        <div key={session.id} className={`ai-session-row${session.id === activeSessionId ? ' active' : ''}`}>
+                          <button
+                            className="ai-session-row-main"
+                            type="button"
+                            onClick={() => {
+                              setActiveChatDrawer(null)
+                              void onOpenSession(session.id)
+                            }}
+                          >
+                            <span className="ai-session-row-head">
+                              <span className="ai-session-row-title">
+                                {sessionTitleOverrides[session.id] || session.title || (session.id === activeSessionId ? t('chat.sessionCurrent') : sessionTimeLabel(session.updatedAt))}
+                              </span>
+                              <span className="ai-session-row-badges">
+                                {session.id === activeSessionId ? <span className="ai-session-row-badge current">{t('chat.sessionCurrent')}</span> : null}
+                                {pinnedSessionIds.includes(session.id) ? <span className="ai-session-row-badge">{t('chat.sessionPinned')}</span> : null}
+                              </span>
+                            </span>
+                            <span className="ai-session-row-meta">
+                              <span>{t('chat.sessionMessages', { count: session.messageCount })}</span>
+                              <span className="ai-session-row-meta-dot" aria-hidden="true">•</span>
+                              <span>{sessionTimeLabel(session.updatedAt)}</span>
+                            </span>
+                          </button>
+                          <div className="ai-session-row-side">
+                            <button
+                              type="button"
+                              className={`ai-session-row-menu-btn${activeSessionMenuId === session.id ? ' active' : ''}`}
+                              title={t('chat.sessionMore')}
+                              onClick={() => setActiveSessionMenuId((prev) => (prev === session.id ? null : session.id))}
+                            >
+                              ...
+                            </button>
+                            {activeSessionMenuId === session.id ? (
+                              <div className="ai-session-row-menu">
+                                <button
+                                  type="button"
+                                  className={`ai-session-row-action${pinnedSessionIds.includes(session.id) ? ' active' : ''}`}
+                                  onClick={() => {
+                                    setPinnedSessionIds((prev) =>
+                                      prev.includes(session.id) ? prev.filter((id) => id !== session.id) : [session.id, ...prev],
+                                    )
+                                    setActiveSessionMenuId(null)
+                                  }}
+                                >
+                                  {pinnedSessionIds.includes(session.id) ? t('chat.sessionPinned') : t('chat.sessionPin')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ai-session-row-action"
+                                  onClick={() => {
+                                    setEditingSessionId(session.id)
+                                    setEditingSessionTitle(sessionTitleOverrides[session.id] || session.title || '')
+                                    setActiveSessionMenuId(null)
+                                  }}
+                                >
+                                  {t('chat.sessionRename')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ai-session-row-action"
+                                  onClick={() => {
+                                    setArchivedSessionIds((prev) =>
+                                      prev.includes(session.id) ? prev.filter((id) => id !== session.id) : [session.id, ...prev],
+                                    )
+                                    setActiveSessionMenuId(null)
+                                  }}
+                                >
+                                  {t('chat.sessionArchive')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ai-session-row-action danger"
+                                  onClick={() => {
+                                    setDeletedSessionIds((prev) => (prev.includes(session.id) ? prev : [session.id, ...prev]))
+                                    setActiveSessionMenuId(null)
+                                  }}
+                                >
+                                  {t('chat.sessionDelete')}
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    : null}
+                </div>
+                {editingSessionId ? (
+                  <div className="ai-session-rename ai-chat-drawer-block">
+                    <input
+                      className="ai-session-search"
+                      value={editingSessionTitle}
+                      onChange={(event) => setEditingSessionTitle(event.target.value)}
+                      placeholder={t('chat.sessionRenamePlaceholder')}
+                    />
+                    <div className="ai-review-actions ai-review-actions-inline">
+                      <button
+                        type="button"
+                        className="ai-context-chip"
+                        onClick={() => {
+                          const nextTitle = editingSessionTitle.trim()
+                          setSessionTitleOverrides((prev) => ({
+                            ...prev,
+                            [editingSessionId]: nextTitle,
+                          }))
+                          setEditingSessionId(null)
+                          setEditingSessionTitle('')
+                        }}
+                      >
+                        {t('chat.sessionRenameSave')}
+                      </button>
+                      <button
+                        type="button"
+                        className="ai-context-chip"
+                        onClick={() => {
+                          setEditingSessionId(null)
+                          setEditingSessionTitle('')
+                        }}
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
                   </div>
-                  <div className="ai-review-actions ai-review-actions-inline">
+                ) : null}
+                {archivedSessionIds.length > 0 ? (
+                  <div className="ai-session-archived-note">
+                    <span>{t('chat.sessionArchivedCount', { count: archivedSessionIds.length })}</span>
+                    <button className="ai-section-link" type="button" onClick={() => setShowArchivedSessions((prev) => !prev)}>
+                      {showArchivedSessions ? t('chat.sessionHideArchived') : t('chat.sessionShowArchived')}
+                    </button>
+                  </div>
+                ) : null}
+                {showArchivedSessions && archivedSessions.length > 0 ? (
+                  <div className="ai-session-list ai-session-list-archived">
+                    {archivedSessions.map((session) => (
+                      <div key={session.id} className="ai-session-row">
+                        <div className="ai-session-row-main">
+                          <span className="ai-session-row-title">{sessionTitleOverrides[session.id] || session.title || sessionTimeLabel(session.updatedAt)}</span>
+                          <span className="ai-session-row-meta">{t('chat.sessionMessages', { count: session.messageCount })}</span>
+                        </div>
+                        <div className="ai-session-row-actions">
+                          <button
+                            type="button"
+                            className="ai-session-row-action"
+                            onClick={() => setArchivedSessionIds((prev) => prev.filter((id) => id !== session.id))}
+                          >
+                            {t('chat.sessionRestore')}
+                          </button>
+                          <button
+                            type="button"
+                            className="ai-session-row-action"
+                            onClick={() => {
+                              setActiveChatDrawer(null)
+                              void onOpenSession(session.id)
+                            }}
+                          >
+                            {t('chat.sessionCurrent')}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            {activeChatDrawer === 'workspace' ? (
+              <>
+                <div className="ai-chat-drawer-head">
+                  <span>{t('chat.utilityHub')}</span>
+                </div>
+                <div className="ai-tool-hub-grid">
+                  {workbenchLinks.map((item) => (
                     <button
+                      key={item.id}
                       type="button"
-                      className="ai-context-chip"
-                      onClick={() => setArchivedSessionIds((prev) => prev.filter((id) => id !== session.id))}
+                      className="ai-tool-hub-card"
+                      onClick={() => {
+                        setActiveChatDrawer(null)
+                        setActiveWorkbenchTab(item.id)
+                      }}
                     >
-                      {t('chat.sessionRestore')}
+                      <span className="ai-tool-hub-card-title">{item.label}</span>
+                      <span className="ai-tool-hub-card-meta">{item.badge || 'Open'}</span>
                     </button>
-                    <button type="button" className="ai-context-chip" onClick={() => void onOpenSession(session.id)}>
-                      {t('chat.sessionCurrent')}
-                    </button>
+                  ))}
+                </div>
+                <div className="ai-chat-drawer-card">
+                  <div className="ai-chat-drawer-subtitle">
+                    <span>{t('chat.quickTitle')}</span>
+                  </div>
+                  <div className="ai-quick-grid ai-quick-grid-compact">
+                    {quickActions.map((item) => (
+                      <button key={item.id} type="button" className="ai-quick-action" onClick={item.action}>
+                        <span className="ai-quick-action-title">{item.label}</span>
+                        <span className="ai-quick-action-subtitle">{item.description}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="ai-quick-card">
-          <div className="ai-section-head">
-            <span>{t('chat.quickTitle')}</span>
-          </div>
-          <div className="ai-quick-grid">
-            {quickActions.map((item) => (
-              <button key={item.id} type="button" className="ai-quick-action" onClick={item.action}>
-                <span className="ai-quick-action-title">{item.label}</span>
-                <span className="ai-quick-action-subtitle">{item.description}</span>
-              </button>
-            ))}
+                {(activeWorkLabel || activeDocumentLabel) ? (
+                  <div className="ai-chat-drawer-card">
+                    <div className="ai-chat-drawer-subtitle">
+                      <span>{t('chat.contextSourcesTitle')}</span>
+                    </div>
+                    <div className="ai-context-actions">
+                      {activeWorkLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextWork', { name: activeWorkLabel })}</span> : null}
+                      {activeDocumentLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextDocument', { name: activeDocumentLabel })}</span> : null}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
-
-        <div className="ai-context-card">
-          <div className="ai-section-head">
-            <span>{t('chat.contextTitle')}</span>
-          </div>
-          <div className="ai-context-actions">
-            <button type="button" className="ai-context-chip" disabled={!canUseEditorActions} onClick={onQuoteSelection}>
-              {t('chat.quoteSelection')}
-            </button>
-            <button type="button" className="ai-context-chip" disabled={!canUseEditorActions} onClick={() => void onSmartComplete()}>
-              {t('chat.quick.continueScene')}
-            </button>
-            <button type="button" className="ai-context-chip" onClick={() => insertQuickPrompt(t('chat.quick.consistencyPrompt'), 'spec')}>
-              {t('chat.quick.consistency')}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="ai-workbench-tabs" role="tablist" aria-label={t('chat.workbenchTabs')}>
-        <button
-          type="button"
-          className={`ai-workbench-tab${activeWorkbenchTab === 'chat' ? ' active' : ''}`}
-          onClick={() => setActiveWorkbenchTab('chat')}
-        >
-          {t('chat.tabChat')}
-        </button>
-        <button
-          type="button"
-          className={`ai-workbench-tab${activeWorkbenchTab === 'planner' ? ' active' : ''}`}
-          onClick={() => setActiveWorkbenchTab('planner')}
-        >
-          {t('chat.tabPlanner')}
-        </button>
-        <button
-          type="button"
-          className={`ai-workbench-tab${activeWorkbenchTab === 'review' ? ' active' : ''}`}
-          onClick={() => setActiveWorkbenchTab('review')}
-        >
-          {t('chat.tabReview')}
-        </button>
-        <button
-          type="button"
-          className={`ai-workbench-tab${activeWorkbenchTab === 'memory' ? ' active' : ''}`}
-          onClick={() => setActiveWorkbenchTab('memory')}
-        >
-          {t('chat.tabMemory')}
-        </button>
-      </div>
+      ) : null}
 
       {activeWorkbenchTab === 'chat' ? (
       <>
@@ -1694,47 +1798,52 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 : true
               const showInlineToolActivity =
                 hasToolEvents && !(message.streaming && activeStreamingMessage && activeStreamingMessage.id === message.id)
+              const timeLabel = messageTimeLabel(message.timestamp)
+              const roleLabel = message.role === 'user' ? t('chat.you') : 'AI'
+              const modifiedFileName = message.changeSet?.filePath.split('/').pop() ?? ''
+              const compactToolSummary = thoughtSummary || t('chat.summaryDone', { done: toolEvents.length })
 
               return (
               <div key={message.id} className={message.role === 'user' ? 'message user' : 'message assistant'}>
-                <div className="message-meta">
-                  {message.role === 'user' ? (
-                    t('chat.you')
-                  ) : (
-                    <span className="ai-meta">
-                      AI
-                      {message.cancelled ? <span className="ai-cancelled-tag">{t('chat.stopped')}</span> : null}
-                      {message.streaming ? (
-                        <span className="ai-dot-pulse" aria-hidden="true">
-                          <span />
-                          <span />
-                          <span />
-                        </span>
-                      ) : null}
-                    </span>
-                  )}
-                </div>
-                {message.role === 'assistant' && !message.streaming && (message.versionCount ?? 0) > 1 ? (
-                  <div className="assistant-version-switch">
-                    <button
-                      className="icon-button assistant-version-btn"
-                      onClick={() => onSwitchAssistantVersion(message.id, -1)}
-                      title={t('chat.previousVersion')}
-                    >
-                      {'<'}
-                    </button>
-                    <span className="assistant-version-label">
-                      {(typeof message.versionIndex === 'number' ? message.versionIndex + 1 : message.versionCount)}/{message.versionCount}
-                    </span>
-                    <button
-                      className="icon-button assistant-version-btn"
-                      onClick={() => onSwitchAssistantVersion(message.id, 1)}
-                      title={t('chat.nextVersion')}
-                    >
-                      {'>'}
-                    </button>
+                <div className="message-head">
+                  <div className="message-meta">
+                    <span className={`message-role-pill ${message.role}`}>{roleLabel}</span>
+                    {timeLabel ? <span className="message-time">{timeLabel}</span> : null}
+                    {message.role === 'assistant' ? (
+                      <span className="ai-meta">
+                        {message.cancelled ? <span className="ai-cancelled-tag">{t('chat.stopped')}</span> : null}
+                        {message.streaming ? (
+                          <span className="ai-dot-pulse" aria-hidden="true">
+                            <span />
+                            <span />
+                            <span />
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : null}
                   </div>
-                ) : null}
+                  {message.role === 'assistant' && !message.streaming && (message.versionCount ?? 0) > 1 ? (
+                    <div className="assistant-version-switch">
+                      <button
+                        className="icon-button assistant-version-btn"
+                        onClick={() => onSwitchAssistantVersion(message.id, -1)}
+                        title={t('chat.previousVersion')}
+                      >
+                        {'<'}
+                      </button>
+                      <span className="assistant-version-label">
+                        {(typeof message.versionIndex === 'number' ? message.versionIndex + 1 : message.versionCount)}/{message.versionCount}
+                      </span>
+                      <button
+                        className="icon-button assistant-version-btn"
+                        onClick={() => onSwitchAssistantVersion(message.id, 1)}
+                        title={t('chat.nextVersion')}
+                      >
+                        {'>'}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
                 {renderedContent ? (
                   <div
                     className={`message-content${canCollapse && !expanded ? ' message-content-collapsed' : ''}`}
@@ -1780,27 +1889,30 @@ export function AIChatPanel(props: AIChatPanelProps) {
                   </div>
                 ) : null}
                 {showInlineToolActivity ? (
-                  <div className="message-tool-activity">
-                    <button className="message-tool-summary" onClick={() => toggleToolPanel(message.id)} type="button">
+                  <div className={`message-tool-activity${toolPanelCollapsed ? ' compact' : ''}${failedToolCount > 0 ? ' has-error' : ''}`}>
+                    <button className={`message-tool-summary${toolPanelCollapsed ? ' compact' : ''}`} onClick={() => toggleToolPanel(message.id)} type="button">
                       <span className={`message-tool-summary-chevron${toolPanelCollapsed ? '' : ' expanded'}`} aria-hidden="true">
                         {'>'}
                       </span>
-                      <span className="message-tool-summary-title">{t('chat.thoughtProcess')}</span>
-                      <span className="message-tool-summary-count">{t('chat.operationCount', { count: toolEvents.length })}</span>
-                      <span className={`message-tool-summary-status message-tool-summary-status-${latestToolEvent?.status ?? 'running'}`}>
-                        {toolStatusLabel(latestToolEvent?.status ?? 'running', t)}
+                      <span className="message-tool-summary-main">
+                        <span className="message-tool-summary-title">{toolPanelCollapsed && failedToolCount === 0 ? compactToolSummary : t('chat.thoughtProcess')}</span>
+                        {toolPanelCollapsed ? (
+                          <span className="message-tool-summary-inline">
+                            {failedToolCount > 0 ? compactToolSummary : t('chat.operationCount', { count: toolEvents.length })}
+                          </span>
+                        ) : null}
                       </span>
+                      {!toolPanelCollapsed ? <span className="message-tool-summary-count">{t('chat.operationCount', { count: toolEvents.length })}</span> : null}
+                      {!toolPanelCollapsed || failedToolCount > 0 ? (
+                        <span className={`message-tool-summary-status message-tool-summary-status-${latestToolEvent?.status ?? 'running'}`}>
+                          {toolStatusLabel(latestToolEvent?.status ?? 'running', t)}
+                        </span>
+                      ) : null}
                       <span className="message-tool-summary-toggle">
                         {toolPanelCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}
                       </span>
                     </button>
-                    {toolPanelCollapsed ? (
-                      thoughtSummary ? (
-                        <div className="message-tool-collapsed-line">
-                          {thoughtSummary}
-                        </div>
-                      ) : null
-                    ) : (
+                    {toolPanelCollapsed ? null : (
                       <div className="message-tool-list">
                         <div className="message-tool-summary-text">{thoughtSummary}</div>
                         <div className="message-tool-stats">
@@ -2300,21 +2412,19 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 ) : null}
                 {message.role === 'assistant' && message.changeSet && message.changeSet.modifications.length > 0 ? (
                   <div className="file-modifications">
-                    <div className="file-modifications-header">
-                      <span>{t('chat.modified')} {message.changeSet.filePath.split('/').pop()}</span>
-                    </div>
-                    <div className="file-modifications-list">
-                      <div className="file-modification-item" onClick={() => onOpenDiffView(message.changeSet!.id)} title={t('chat.clickViewDiff')}>
-                        <div className="file-modification-name">
-                          <span className="file-name">{message.changeSet.filePath.split('/').pop()}</span>
-                        </div>
-                        <div className="file-modification-path">{message.changeSet.filePath}</div>
-                        <div className="file-modification-stats">
-                          {message.changeSet.stats.additions > 0 ? <span className="stat-add">+{message.changeSet.stats.additions}</span> : null}
-                          {message.changeSet.stats.deletions > 0 ? <span className="stat-delete">-{message.changeSet.stats.deletions}</span> : null}
-                        </div>
-                      </div>
-                    </div>
+                    <button className="file-modification-item file-modification-item-compact" onClick={() => onOpenDiffView(message.changeSet!.id)} title={t('chat.clickViewDiff')}>
+                      <span className="file-modification-kind">{t('chat.modified')}</span>
+                      <span className="file-modification-main">
+                        <span className="file-modification-name">
+                          <span className="file-name">{modifiedFileName}</span>
+                        </span>
+                        <span className="file-modification-path">{message.changeSet.filePath}</span>
+                      </span>
+                      <span className="file-modification-stats">
+                        {message.changeSet.stats.additions > 0 ? <span className="stat-add">+{message.changeSet.stats.additions}</span> : null}
+                        {message.changeSet.stats.deletions > 0 ? <span className="stat-delete">-{message.changeSet.stats.deletions}</span> : null}
+                      </span>
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -2330,26 +2440,25 @@ export function AIChatPanel(props: AIChatPanelProps) {
       </div>
       {activeStreamingMessage ? (
         <div className={`ai-live-ops${liveOpsCollapsed ? ' collapsed' : ''}`}>
-          <button className="ai-live-ops-head" type="button" onClick={() => setLiveOpsCollapsed((prev) => !prev)}>
+          <button className={`ai-live-ops-head${liveOpsCollapsed ? ' compact' : ''}${liveFailedToolCount > 0 ? ' has-error' : ''}`} type="button" onClick={() => setLiveOpsCollapsed((prev) => !prev)}>
             <span className={`ai-live-ops-chevron${liveOpsCollapsed ? '' : ' expanded'}`} aria-hidden="true">
               {'>'}
             </span>
-            <span className="ai-live-ops-title">{t('chat.thoughtProcess')}</span>
-            <span className="ai-live-ops-count">{t('chat.operationCount', { count: activeLiveToolCount })}</span>
-            <span className={`ai-live-ops-status ai-live-ops-status-${activeLiveLatestTool?.status ?? 'running'}`}>
-              {toolStatusLabel(activeLiveLatestTool?.status ?? 'running', t)}
+            <span className="ai-live-ops-main">
+              <span className="ai-live-ops-title">{activeLivePhaseLabel || t('chat.phase.processing')}</span>
+              {activeLiveInlineSummary ? <span className="ai-live-ops-inline-summary">{activeLiveInlineSummary}</span> : null}
             </span>
+            {!liveOpsCollapsed ? <span className="ai-live-ops-count">{t('chat.operationCount', { count: activeLiveToolCount })}</span> : null}
+            {!liveOpsCollapsed || liveFailedToolCount > 0 ? (
+              <span className={`ai-live-ops-status ai-live-ops-status-${activeLiveLatestTool?.status ?? 'running'}`}>
+                {toolStatusLabel(activeLiveLatestTool?.status ?? 'running', t)}
+              </span>
+            ) : null}
             <span className="ai-live-ops-toggle">{liveOpsCollapsed ? t('chat.expandOps') : t('chat.collapseOps')}</span>
           </button>
-          {liveOpsCollapsed ? (
-            activeLiveSummary || activeStreamingMessage.streamId ? (
-              <div className="ai-live-ops-summary">
-                {activeLiveSummary || getStreamPhaseLabel(activeStreamingMessage.streamId)}
-              </div>
-            ) : null
-          ) : (
+          {liveOpsCollapsed ? null : (
             <div className="ai-live-ops-body">
-              <div className="ai-live-ops-phase">{getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
+              <div className="ai-live-ops-phase">{activeLivePhaseLabel || getStreamPhaseLabel(activeStreamingMessage.streamId)}</div>
               {activeLiveSummary ? <div className="ai-live-ops-summary">{activeLiveSummary}</div> : null}
               <div className="message-tool-toolbar ai-live-ops-toolbar">
                 {liveFailedToolCount > 0 ? (
@@ -2581,126 +2690,6 @@ export function AIChatPanel(props: AIChatPanelProps) {
         </div>
       ) : null}
 
-      <div className="ai-input-area">
-        <div className="ai-input-topbar">
-          <div className="ai-actions ai-input-tools">
-            <button className="icon-button" disabled={!canUseEditorActions} onClick={onQuoteSelection} title={t('chat.quoteSelection')}>
-              {t('chat.quote')}
-            </button>
-            <button className="icon-button" disabled={!canUseEditorActions} onClick={() => void onSmartComplete()} title={t('chat.smartComplete')}>
-              {t('chat.continue')}
-            </button>
-          </div>
-          <label className={`ai-auto-switch ${autoLongWriteEnabled ? 'active' : ''}`} title={t('chat.autoWrite')}>
-            <input
-              type="checkbox"
-              checked={autoLongWriteEnabled}
-              disabled={autoToggleDisabled}
-              onChange={(event) => {
-                onToggleAutoLongWrite(event.target.checked)
-              }}
-            />
-            <span className="ai-auto-switch-track">
-              <span className="ai-auto-switch-knob" />
-            </span>
-            <span className="ai-auto-switch-text">{t('chat.autoWrite')}</span>
-          </label>
-          <select className="ai-select ai-mode-select" value={writerMode} onChange={(event) => onWriterModeChange(event.target.value as WriterMode)}>
-            <option value="normal">{t('chat.mode.normal')}</option>
-            <option value="plan">{t('chat.mode.plan')}</option>
-            <option value="spec">{t('chat.mode.spec')}</option>
-          </select>
-        </div>
-        {autoLongWriteStatus ? <div className="ai-auto-status">{autoLongWriteStatus}</div> : null}
-        <textarea
-          ref={chatInputRef}
-          className="ai-textarea"
-          value={chatInput}
-          onChange={(event) => onChatInputChange(event.target.value)}
-          onKeyDown={handleComposerKeyDown}
-          placeholder={t('chat.placeholder')}
-        />
-        {visibleSlashCommands.length > 0 ? (
-          <div className="ai-slash-panel">
-            <div className="ai-slash-title">{t('chat.slashTitle')}</div>
-            <div className="ai-slash-list">
-              {visibleSlashCommands.map((command) => (
-                <button
-                  key={command.id}
-                  type="button"
-                  className="ai-slash-item"
-                  onClick={() => command.run()}
-                >
-                  <span className="ai-slash-item-label">{command.label}</span>
-                  <span className="ai-slash-item-hint">{command.hint}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        <div className="ai-composer-footer">
-          <div className="ai-composer-selects">
-            <select
-              className="ai-select ai-select-compact"
-              value={activeAssistantId}
-              onChange={(event) => onActiveAssistantChange(event.target.value)}
-              title={t('chat.assistantSelect')}
-              aria-label={t('chat.assistantSelect')}
-            >
-              {assistants.length === 0 ? <option value="">{t('chat.noAgents')}</option> : null}
-              {assistants.map((assistant) => (
-                <option key={assistant.id} value={assistant.id}>
-                  {assistant.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={`ai-select ai-select-compact${providerSelectInvalid ? ' ai-select-compact-warning' : ''}`}
-              value={activeProviderId}
-              onChange={(event) => onActiveProviderChange(event.target.value)}
-              title={t('chat.modelSelect')}
-              aria-label={t('chat.modelSelect')}
-            >
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id} disabled={provider.disabled}>
-                  {provider.statusLabel ? `${provider.name} (${provider.statusLabel})` : provider.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="ai-composer-main-actions">
-            {!isChatStreaming && canRegenerateLatest ? (
-              <button className="icon-button ai-regenerate-btn" onClick={() => void onRegenerateAssistant(latestCompletedAssistantId)} title={t('chat.regenerateLatest')}>
-                <AppIcon name="refresh" size={13} />
-              </button>
-            ) : null}
-            {!isChatStreaming && canRegenerateLatest ? (
-              <button className="icon-button ai-candidates-btn" onClick={() => void onGenerateAssistantCandidates(latestCompletedAssistantId, 2)} title={t('chat.generateCandidates')}>
-                <AppIcon name="add" size={13} />
-              </button>
-            ) : null}
-            {!showStopAction ? (
-              <button
-                className="icon-button ai-regenerate-btn"
-                disabled={!canRollbackLastTurn || busy || autoLongWriteRunning}
-                onClick={() => void onRollbackLastTurn()}
-                title={t('chat.rollbackHint')}
-              >
-                {t('chat.rollback')}
-              </button>
-            ) : null}
-            {showStopAction ? (
-              <button className="primary-button chat-stop-button" disabled={!canStop} onClick={() => void onStopChat()} title={t('chat.stop')}>
-                <AppIcon name="stop" size={13} />
-              </button>
-            ) : (
-              <button className="primary-button" disabled={busy || !chatInput.trim() || autoLongWriteRunning} onClick={() => void onSendChat()}>
-                {t('chat.send')}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
       </>
       ) : null}
 
@@ -2902,6 +2891,153 @@ export function AIChatPanel(props: AIChatPanelProps) {
           </div>
         </div>
       ) : null}
-    </>
+
+      </div>
+
+      <div className="ai-chat-bottom">
+      <div className="ai-input-area ai-input-area-compact">
+        {autoLongWriteStatus ? <div className="ai-auto-status">{autoLongWriteStatus}</div> : null}
+        <div className="ai-composer-shell">
+          <div className="ai-composer-head">
+            <div className="ai-input-shortcuts">
+              <button type="button" className="ai-shortcut-chip" disabled={!canUseEditorActions} onClick={onQuoteSelection}>
+                {t('chat.quoteSelection')}
+              </button>
+              <button type="button" className="ai-shortcut-chip" disabled={!canUseEditorActions} onClick={() => void onSmartComplete()}>
+                {t('chat.quick.continueScene')}
+              </button>
+            </div>
+            <button
+              type="button"
+              className={`ai-composer-toggle${showComposerOptions ? ' active' : ''}`}
+              onClick={() => setShowComposerOptions((prev) => !prev)}
+            >
+              <AppIcon name="settings" size={12} />
+              <span>{showComposerOptions ? t('chat.composerHideControls') : t('chat.composerControls')}</span>
+            </button>
+          </div>
+          {showComposerOptions ? (
+            <div className="ai-composer-options">
+              <div className="ai-composer-selects">
+                <select
+                  className="ai-select ai-select-compact"
+                  value={activeAssistantId}
+                  onChange={(event) => onActiveAssistantChange(event.target.value)}
+                  title={t('chat.assistantSelect')}
+                  aria-label={t('chat.assistantSelect')}
+                >
+                  {assistants.length === 0 ? <option value="">{t('chat.noAgents')}</option> : null}
+                  {assistants.map((assistant) => (
+                    <option key={assistant.id} value={assistant.id}>
+                      {assistant.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className={`ai-select ai-select-compact${providerSelectInvalid ? ' ai-select-compact-warning' : ''}`}
+                  value={activeProviderId}
+                  onChange={(event) => onActiveProviderChange(event.target.value)}
+                  title={t('chat.modelSelect')}
+                  aria-label={t('chat.modelSelect')}
+                >
+                  {providers.map((provider) => (
+                    <option key={provider.id} value={provider.id} disabled={provider.disabled}>
+                      {provider.statusLabel ? `${provider.name} (${provider.statusLabel})` : provider.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="ai-composer-controls">
+                <label className={`ai-auto-switch ${autoLongWriteEnabled ? 'active' : ''}`} title={t('chat.autoWrite')}>
+                  <input
+                    type="checkbox"
+                    checked={autoLongWriteEnabled}
+                    disabled={autoToggleDisabled}
+                    onChange={(event) => {
+                      onToggleAutoLongWrite(event.target.checked)
+                    }}
+                  />
+                  <span className="ai-auto-switch-track">
+                    <span className="ai-auto-switch-knob" />
+                  </span>
+                  <span className="ai-auto-switch-text">{t('chat.autoWrite')}</span>
+                </label>
+                <select className="ai-select ai-mode-select" value={writerMode} onChange={(event) => onWriterModeChange(event.target.value as WriterMode)}>
+                  <option value="normal">{t('chat.mode.normal')}</option>
+                  <option value="plan">{t('chat.mode.plan')}</option>
+                  <option value="spec">{t('chat.mode.spec')}</option>
+                </select>
+                {providerSelectInvalid ? (
+                  <button type="button" className="ai-composer-inline-link" onClick={onOpenModelSettings}>
+                    {t('chat.recovery.openModels')}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <textarea
+            ref={chatInputRef}
+            className="ai-textarea ai-textarea-compact"
+            value={chatInput}
+            onChange={(event) => onChatInputChange(event.target.value)}
+            onKeyDown={handleComposerKeyDown}
+            placeholder={t('chat.placeholder')}
+          />
+          {visibleSlashCommands.length > 0 ? (
+            <div className="ai-slash-panel">
+              <div className="ai-slash-title">{t('chat.slashTitle')}</div>
+              <div className="ai-slash-list">
+                {visibleSlashCommands.map((command) => (
+                  <button
+                    key={command.id}
+                    type="button"
+                    className="ai-slash-item"
+                    onClick={() => command.run()}
+                  >
+                    <span className="ai-slash-item-label">{command.label}</span>
+                    <span className="ai-slash-item-hint">{command.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className="ai-composer-footer">
+            <span className="ai-composer-hint">{t('chat.composerHint')}</span>
+            <div className="ai-composer-main-actions">
+              {!isChatStreaming && canRegenerateLatest ? (
+                <button className="icon-button ai-regenerate-btn" onClick={() => void onRegenerateAssistant(latestCompletedAssistantId)} title={t('chat.regenerateLatest')}>
+                  <AppIcon name="refresh" size={13} />
+                </button>
+              ) : null}
+              {!isChatStreaming && canRegenerateLatest ? (
+                <button className="icon-button ai-candidates-btn" onClick={() => void onGenerateAssistantCandidates(latestCompletedAssistantId, 2)} title={t('chat.generateCandidates')}>
+                  <AppIcon name="add" size={13} />
+                </button>
+              ) : null}
+              {!showStopAction ? (
+                <button
+                  className="icon-button ai-regenerate-btn"
+                  disabled={!canRollbackLastTurn || busy || autoLongWriteRunning}
+                  onClick={() => void onRollbackLastTurn()}
+                  title={t('chat.rollbackHint')}
+                >
+                  {t('chat.rollback')}
+                </button>
+              ) : null}
+              {showStopAction ? (
+                <button className="primary-button chat-stop-button" disabled={!canStop} onClick={() => void onStopChat()} title={t('chat.stop')}>
+                  <AppIcon name="stop" size={13} />
+                </button>
+              ) : (
+                <button className="primary-button" disabled={busy || !chatInput.trim() || autoLongWriteRunning} onClick={() => void onSendChat()}>
+                  {t('chat.send')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
   )
 }
