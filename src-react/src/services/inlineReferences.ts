@@ -1,4 +1,5 @@
 import { readText, resolveInlineReferences as resolveInlineReferencesCommand } from '../tauri'
+import { buildDocumentContextBlock } from './documentSummary'
 
 type ActiveFileLite = {
   path: string
@@ -10,12 +11,16 @@ type ResolveInlineReferencesInput = {
   selectionText: string
   activeFile: ActiveFileLite | null
   isTauriRuntime: boolean
-  workspaceRoot: string | null
+  workRoot: string | null
 }
 
 function pushBlock(blocks: string[], title: string, body: string) {
   const normalized = body.trim()
   blocks.push(`[${title}]\n${normalized || '(empty)'}`)
+}
+
+function pushDocumentBlock(blocks: string[], title: string, path: string, body: string) {
+  blocks.push(buildDocumentContextBlock(title, path, body))
 }
 
 async function resolveLocally(params: ResolveInlineReferencesInput): Promise<string> {
@@ -40,7 +45,7 @@ async function resolveLocally(params: ResolveInlineReferencesInput): Promise<str
 
   if (currentFileRegex.test(source)) {
     if (params.activeFile) {
-      pushBlock(blocks, `current file ${params.activeFile.path}`, params.activeFile.content)
+      pushDocumentBlock(blocks, `current file ${params.activeFile.path}`, params.activeFile.path, params.activeFile.content)
     } else {
       pushBlock(blocks, 'current file', '(no active file)')
     }
@@ -71,13 +76,13 @@ async function resolveLocally(params: ResolveInlineReferencesInput): Promise<str
     for (const ref of fileRefs) {
       const rel = ref.replace(/^\.?\//, '')
       if (!rel) continue
-      if (!params.workspaceRoot || !params.isTauriRuntime) {
+      if (!params.workRoot || !params.isTauriRuntime) {
         pushBlock(blocks, `file ${rel}`, '(project files are unavailable in current environment)')
         continue
       }
       try {
         const content = await readText(rel)
-        pushBlock(blocks, `file ${rel}`, content)
+        pushDocumentBlock(blocks, `file ${rel}`, rel, content)
       } catch (e) {
         pushBlock(blocks, `file ${rel}`, `read failed: ${e instanceof Error ? e.message : String(e)}`)
       }
@@ -96,15 +101,20 @@ export async function resolveInlineReferencesInput(params: ResolveInlineReferenc
   if (!source.includes('#')) return source
   if (!params.isTauriRuntime) return resolveLocally(params)
   try {
-    const result = await resolveInlineReferencesCommand(
-      source,
-      params.selectionText,
-      params.activeFile?.path ?? null,
-      params.activeFile?.content ?? null,
-    )
-    return result.resolved_input
+    return await resolveLocally(params)
   } catch {
-    return resolveLocally(params)
+    try {
+      const result = await resolveInlineReferencesCommand(
+        source,
+        params.selectionText,
+        params.activeFile?.path ?? null,
+        params.activeFile?.content ?? null,
+      )
+      return result.resolved_input
+    } catch {
+      return source
+    }
   }
 }
+
 

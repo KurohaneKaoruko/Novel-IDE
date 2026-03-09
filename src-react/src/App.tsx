@@ -10,49 +10,49 @@ import { LexicalEditor } from './components/LexicalEditor'
 import type { EditorConfig } from './types/editor'
 import { EDITOR_NAMESPACE } from './branding'
 import {
-  createHistorySnapshot,
   createFile,
   createDir,
   deleteEntry,
-  createNovelProject,
-  getAgents,
+  createNovelWork,
   getApiKeyStatus,
   getAppSettings,
-  forgetExternalProject,
-  getProjectPickerState,
+  forgetImportedWork,
+  getBookshelfState,
   initNovel,
   isTauriApp,
-  listWorkspaceTree,
+  listWorkTree,
   openFolderDialog,
   readText,
-  rememberExternalProject,
-  setAgents,
+  rememberImportedWork,
+  getWritingAssistants,
+  setWritingAssistants,
   setApiKey,
   setAppSettings,
   setLaunchMode,
   saveChatSession,
-  setWorkspace,
+  setWorkRoot,
   testProviderConnectivity,
   writeText,
-  type Agent,
   type AiEditApplyMode,
   type AppSettings,
   type FsEntry,
   type LaunchMode,
   type ModelProvider,
   type ProviderConnectivityResult,
-  type ProjectItem,
-  type ProjectSource,
+  type WorkItem,
+  type WorkSource,
+  type WritingAssistant,
 } from './tauri'
 import { useDiff } from './contexts/DiffContext'
-import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager, novelPlannerService } from './services'
-import type { AIAssistanceResponse, ChangeSet, EditorUserConfig, NovelTask, SessionPlannerState, WriterMode } from './services'
+import { modificationService, aiAssistanceService, editorManager, editorConfigManager, uiSettingsManager, novelPlannerService, upsertAIActionTrace } from './services'
+import type { AIAssistanceResponse, AIActionListItem, AIActionTraceItem, ChangeSet, EditorUserConfig, NovelTask, SessionPlannerState, WriterMode } from './services'
 import { runAutoLongWriteWorkflow } from './services/autoLongWriteWorkflow'
 import { runPlannerQueueWorkflow } from './services/plannerQueueWorkflow'
 import { cleanupStreamRefs, type StreamMapRefs } from './services/streamRefs'
 import { parseComposerInput } from './services/chatComposer'
 import { appendStreamTextWithOverlap, formatElapsedLabel } from './services/chatStreamText'
 import { resolveInlineReferencesInput } from './services/inlineReferences'
+import { useMemoryWorkbench } from './hooks/useMemoryWorkbench'
 import DiffView from './components/DiffView'
 import EditorContextMenu from './components/EditorContextMenu'
 import { ChapterManager } from './components/ChapterManager'
@@ -61,7 +61,6 @@ import { PlotLineManager } from './components/PlotLineManager'
 import { WritingGoalPanel } from './components/WritingGoalPanel'
 import { RiskPanel } from './components/RiskPanel'
 import { StatusBar } from './components/StatusBar'
-import { CommandPalette } from './components/CommandPalette'
 import { SearchPanel, type SearchResult } from './components/Search'
 import { TabBar } from './components/TabBar'
 import { handleFileSaveError, clearBackupContent } from './utils/fileSaveErrorHandler'
@@ -69,10 +68,11 @@ import { useAutoSave, clearAutoSavedContent } from './hooks/useAutoSave'
 import { useProjectWritingSettings } from './hooks/useProjectWritingSettings'
 import { useAutoStoryNavigation } from './hooks/useAutoStoryNavigation'
 import { useTaskQualityValidator } from './hooks/useTaskQualityValidator'
+import { useChatSessionWorkbench } from './hooks/useChatSessionWorkbench'
 import { APP_LOCALES, type AppLocale, useI18n } from './i18n'
 import { logError } from './utils/errorLogger'
 import { RecoveryDialog } from './components/RecoveryDialog'
-import { ProjectPickerPage } from './components/ProjectPickerPage'
+import { BookshelfPage } from './components/ProjectPickerPage'
 import { NovelStructurePanel } from './components/NovelStructurePanel'
 import { HistoryPanel } from './components/HistoryPanel'
 import { AppIcon } from './components/icons/AppIcon'
@@ -148,34 +148,8 @@ type ImportedChangeSet = {
   originalContent: string
 }
 
-type AgentToolListItem = {
-  name: string
-  kind: 'dir' | 'file'
-}
-
-type AgentToolActivity = {
-  step: number
-  tool: string
-  status: 'running' | 'success' | 'error'
-  inputPreview: string
-  observationPreview?: string
-  listItems?: AgentToolListItem[]
-  listTruncated?: boolean
-  exists?: boolean
-  existsKind?: 'dir' | 'file'
-  readPath?: string
-  readLines?: number
-  readChars?: number
-  readPreview?: string
-  writePath?: string
-  writeLines?: number
-  writeChars?: number
-  writePreview?: string
-  timestamp: number
-  startedAt?: number
-  finishedAt?: number
-  durationMs?: number
-}
+type AgentToolListItem = AIActionListItem
+type AgentToolActivity = AIActionTraceItem
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
@@ -265,41 +239,7 @@ function stripInternalToolTrace(text: string): string {
 }
 
 function upsertToolActivity(list: AgentToolActivity[] | undefined, incoming: AgentToolActivity): AgentToolActivity[] {
-  const base = list ?? []
-  const index = base.findIndex((item) => item.step === incoming.step && item.tool === incoming.tool)
-  if (index < 0) {
-    const normalizedIncoming: AgentToolActivity = {
-      ...incoming,
-      startedAt: incoming.startedAt ?? incoming.timestamp,
-    }
-    return [...base, normalizedIncoming].sort((a, b) => {
-      if (a.step !== b.step) return a.step - b.step
-      return a.timestamp - b.timestamp
-    })
-  }
-  const current = base[index]
-  const merged: AgentToolActivity = {
-    ...current,
-    ...incoming,
-    inputPreview: incoming.inputPreview || current.inputPreview,
-    observationPreview: incoming.observationPreview ?? current.observationPreview,
-    listItems: incoming.listItems ?? current.listItems,
-    listTruncated: incoming.listTruncated ?? current.listTruncated,
-    exists: incoming.exists ?? current.exists,
-    existsKind: incoming.existsKind ?? current.existsKind,
-    readPath: incoming.readPath ?? current.readPath,
-    readLines: incoming.readLines ?? current.readLines,
-    readChars: incoming.readChars ?? current.readChars,
-    readPreview: incoming.readPreview ?? current.readPreview,
-    writePath: incoming.writePath ?? current.writePath,
-    writeLines: incoming.writeLines ?? current.writeLines,
-    writeChars: incoming.writeChars ?? current.writeChars,
-    writePreview: incoming.writePreview ?? current.writePreview,
-    startedAt: incoming.startedAt ?? current.startedAt ?? incoming.timestamp,
-    finishedAt: incoming.finishedAt ?? current.finishedAt,
-    durationMs: incoming.durationMs ?? current.durationMs,
-  }
-  return [...base.slice(0, index), merged, ...base.slice(index + 1)]
+  return upsertAIActionTrace(list, incoming)
 }
 
 type ChatContextMenuState = {
@@ -371,7 +311,7 @@ type ResolveReplayOptions = {
   allowWhenStreaming?: boolean
 }
 
-type SettingsTabKey = 'general' | 'editor' | 'models' | 'agents'
+type SettingsTabKey = 'general' | 'editor' | 'models'
 
 type ProviderProbeViewResult = {
   kind: 'ok' | 'error'
@@ -656,8 +596,6 @@ function App() {
 
   // Modern UI State
   const initialUISettings = uiSettingsManager.getSettings() as UISettingsState
-  const [showCommandPalette, setShowCommandPalette] = useState(false)
-  const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState('')
   const [showSearchPanel, setShowSearchPanel] = useState(false)
   const [theme, setTheme] = useState<'light' | 'dark'>(initialUISettings.theme)
   const [uiDensity, setUiDensity] = useState<'compact' | 'comfortable'>(initialUISettings.density)
@@ -679,14 +617,14 @@ function App() {
   const [activeRightTab, setActiveRightTab] = useState<'chat' | 'graph' | 'writing-goal' | null>('chat')
 
   // Workspace & Files
-  const [appView, setAppView] = useState<'project-picker' | 'workspace'>('project-picker')
-  const [workspaceInput] = useState('')
-  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
-  const [defaultProjectsRoot, setDefaultProjectsRoot] = useState<string>('')
-  const [defaultProjects, setDefaultProjects] = useState<ProjectItem[]>([])
-  const [externalProjects, setExternalProjects] = useState<ProjectItem[]>([])
+  const [appView, setAppView] = useState<'bookshelf' | 'studio'>('bookshelf')
+  const [workPathInput] = useState('')
+  const [workRoot, setWorkRootState] = useState<string | null>(null)
+  const [bookshelfRoot, setBookshelfRoot] = useState<string>('')
+  const [recentWorks, setRecentWorks] = useState<WorkItem[]>([])
+  const [importedWorks, setImportedWorks] = useState<WorkItem[]>([])
   const [launchMode, setLaunchModeState] = useState<LaunchMode>('picker')
-  const [lastWorkspace, setLastWorkspace] = useState<string | null>(null)
+  const [lastWorkPath, setLastWorkPath] = useState<string | null>(null)
   const [tree, setTree] = useState<FsEntry | null>(null)
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
@@ -727,9 +665,6 @@ function App() {
   const chatSessionIdRef = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
   )
-  // Chat session management (future feature)
-  // const [chatSessions, setChatSessions] = useState<Array<{ id: string; name: string; updatedAt: number }>>([])
-  // const [showSessionManager, setShowSessionManager] = useState(false)
 
   // Planner / Writer Mode State
   const [writerMode, setWriterMode] = useState<WriterMode>('normal')
@@ -742,6 +677,24 @@ function App() {
   const [autoLongWriteEnabled, setAutoLongWriteEnabled] = useState(false)
   const [autoLongWriteRunning, setAutoLongWriteRunning] = useState(false)
   const [autoLongWriteStatus, setAutoLongWriteStatus] = useState('')
+
+  const {
+    memoryIndexLoading,
+    characterStateIndexContent,
+    foreshadowIndexContent,
+    characterStateIndexMeta,
+    foreshadowIndexMeta,
+    refreshMemoryIndices,
+    onSaveMemoryIndex,
+    onToggleMemoryIndexLock,
+    onRestoreMemoryIndexAuto,
+  } = useMemoryWorkbench({
+    workRoot,
+    activePath,
+    tree,
+    isTauriRuntime: isTauriApp(),
+    plannerService: novelPlannerService,
+  })
   const autoLongWriteStopRef = useRef(false)
   const plannerStopRef = useRef(false)
   const streamWaitersRef = useRef<Map<string, StreamWaiter>>(new Map())
@@ -774,10 +727,10 @@ function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('general')
   const settingsOpenTabRef = useRef<SettingsTabKey | null>(null)
   const [settingsError, setSettingsError] = useState<string | null>(null)
-  const [agentsList, setAgentsList] = useState<Agent[]>([])
-  const [agentEditorId, setAgentEditorId] = useState<string>('')
+  const [writingAssistantsState, setWritingAssistantsState] = useState<WritingAssistant[]>([])
+  const [assistantEditorId, setAssistantEditorId] = useState<string>('')
   const [settingsSnapshot, setSettingsSnapshot] = useState<AppSettings | null>(null)
-  const [agentsSnapshot, setAgentsSnapshot] = useState<Agent[] | null>(null)
+  const [writingAssistantSnapshots, setWritingAssistantSnapshots] = useState<WritingAssistant[] | null>(null)
   const [apiKeyStatus, setApiKeyStatus] = useState<Record<string, boolean>>({})
 
   // Recovery State
@@ -792,7 +745,7 @@ function App() {
     updateSettings: updateProjectWritingSettings,
     loadSettings: loadProjectWritingSettings,
     saveSettings: saveProjectWritingSettings,
-  } = useProjectWritingSettings(workspaceRoot)
+  } = useProjectWritingSettings(workRoot)
   const chapterWordTarget = projectWritingSettings.chapterWordTarget
   const autoLongWriteMaxRounds = projectWritingSettings.autoMaxRounds
   const autoLongWriteMinChars = projectWritingSettings.autoMinChars
@@ -816,6 +769,20 @@ function App() {
     if (!activeFile) return 0
     return activeFile.content.replace(/\s/g, '').length
   }, [activeFile])
+  const activeDocumentPreview = useMemo(() => {
+    if (!activeFile) return ''
+    const firstMeaningfulLine = activeFile.content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0)
+    if (!firstMeaningfulLine) return ''
+    return firstMeaningfulLine.length > 140 ? `${firstMeaningfulLine.slice(0, 140)}...` : firstMeaningfulLine
+  }, [activeFile])
+  const activeWorkLabel = useMemo(() => {
+    if (!workRoot) return null
+    const parts = workRoot.split(/[/\\]/).filter(Boolean)
+    return parts[parts.length - 1] ?? workRoot
+  }, [workRoot])
   const activeStreamingMessage = useMemo(
     () => [...chatMessages].reverse().find((m) => m.role === 'assistant' && m.streaming && m.streamId) ?? null,
     [chatMessages],
@@ -856,7 +823,8 @@ function App() {
     setChatAutoScroll(true)
     scrollChatToBottom(true)
   }, [scrollChatToBottom])
-  const chatAgentOptions = useMemo(() => agentsList.map((agent) => ({ id: agent.id, name: agent.name })), [agentsList])
+  const activeWritingAssistantId = appSettings?.active_writing_assistant_id ?? appSettings?.active_agent_id ?? ''
+  const chatAssistantOptions = useMemo(() => writingAssistantsState.map((assistant) => ({ id: assistant.id, name: assistant.name })), [writingAssistantsState])
   const chatProviderOptions = useMemo(
     () => {
       const tauriRuntime = isTauriApp()
@@ -1005,10 +973,6 @@ function App() {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))
   }, [])
 
-  const toggleDensity = useCallback(() => {
-    setUiDensity((prev) => (prev === 'comfortable' ? 'compact' : 'comfortable'))
-  }, [])
-
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev)
   }, [])
@@ -1083,10 +1047,10 @@ function App() {
   // --- Actions ---
 
   const refreshTree = useCallback(async () => {
-    if (!workspaceRoot) return
-    const t = await listWorkspaceTree(6)
+    if (!workRoot) return
+    const t = await listWorkTree(6)
     setTree(t)
-  }, [workspaceRoot])
+  }, [workRoot])
 
   const reloadAppSettings = useCallback(async () => {
     if (!isTauriApp()) return
@@ -1101,19 +1065,19 @@ function App() {
     }
   }, [])
 
-  const openWorkspacePath = useCallback(
+  const openWorkPath = useCallback(
     async (path: string) => {
       const p = path.trim()
       if (!p) return false
       setError(null)
       setBusy(true)
       try {
-        const info = await setWorkspace(p)
-        setWorkspaceRoot(info.root)
-        setLastWorkspace(info.root)
+        const info = await setWorkRoot(p)
+        setWorkRootState(info.root)
+        setLastWorkPath(info.root)
         return true
       } catch (e) {
-        setWorkspaceRoot(null)
+        setWorkRootState(null)
         setTree(null)
         setError(e instanceof Error ? e.message : String(e))
         return false
@@ -1138,14 +1102,14 @@ function App() {
   }, [])
 
   const refreshPlannerQueue = useCallback(async () => {
-    if (!workspaceRoot || !isTauriApp()) return
+    if (!workRoot || !isTauriApp()) return
     await novelPlannerService.ensurePlannerWorkspace()
     const queue = await novelPlannerService.loadRunQueue()
     setPlannerTasks(queue)
-  }, [workspaceRoot])
+  }, [workRoot])
 
   const loadPlannerSession = useCallback(async () => {
-    if (!workspaceRoot || !isTauriApp()) return
+    if (!workRoot || !isTauriApp()) return
     await novelPlannerService.ensurePlannerWorkspace()
     const sessionId = chatSessionIdRef.current
     const session = await novelPlannerService.getSessionState(sessionId)
@@ -1173,25 +1137,40 @@ function App() {
       chapterWordTarget,
     })
     setPlannerTasks(tasks)
-  }, [chapterWordTarget, workspaceRoot])
+  }, [chapterWordTarget, workRoot])
 
-  const onNewChatSession = useCallback(() => {
-    const nextSessionId =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    chatSessionIdRef.current = nextSessionId
-    setChatMessages([])
-    rollbackTurnStackRef.current = []
-    setChatAutoScroll(true)
-    void loadPlannerSession().catch((e) => {
-      setPlannerLastRunError(e instanceof Error ? e.message : String(e))
-    })
-  }, [loadPlannerSession])
+  const {
+    activeChatSessionId,
+    chatSessionOptions,
+    chatSessionsLoading,
+    refreshChatSessionSummaries,
+    onNewChatSession,
+    onOpenChatSession,
+  } = useChatSessionWorkbench({
+    workRoot,
+    isTauriRuntime: isTauriApp(),
+    onSessionActivated: async (sessionId) => {
+      chatSessionIdRef.current = sessionId
+      setChatMessages([])
+      rollbackTurnStackRef.current = []
+      setChatAutoScroll(true)
+      await loadPlannerSession()
+    },
+    onSessionOpened: async (sessionId, messages) => {
+      chatSessionIdRef.current = sessionId
+      rollbackTurnStackRef.current = []
+      setChatMessages(messages)
+      setChatAutoScroll(true)
+      setChatInput('')
+      await loadPlannerSession()
+    },
+    onError: (message) => setError(message),
+    hasStreamingMessages: () => chatMessagesRef.current.some((message) => message.streaming),
+  })
 
   const ensurePlanningArtifacts = useCallback(
     async (mode: WriterMode, instruction?: string) => {
-      if (!workspaceRoot || !isTauriApp()) return
+      if (!workRoot || !isTauriApp()) return
       if (mode === 'normal') return
       await novelPlannerService.ensurePlannerWorkspace()
       await novelPlannerService.ensureMasterPlan(mode, {
@@ -1211,12 +1190,12 @@ function App() {
       })
       setPlannerTasks(tasks)
     },
-    [chapterWordTarget, workspaceRoot],
+    [chapterWordTarget, workRoot],
   )
 
   const buildPromptByMode = useCallback(
     async (userInput: string, mode: WriterMode): Promise<string> => {
-      if (!workspaceRoot || !isTauriApp()) return userInput
+      if (!workRoot || !isTauriApp()) return userInput
       await novelPlannerService.ensurePlannerWorkspace()
       if (mode !== 'normal') {
         await ensurePlanningArtifacts(mode, userInput)
@@ -1224,7 +1203,7 @@ function App() {
       const context = await novelPlannerService.buildModeContext(mode, tree, activePath)
       return novelPlannerService.buildModePrompt(mode, userInput, context, activePath)
     },
-    [activePath, ensurePlanningArtifacts, tree, workspaceRoot],
+    [activePath, ensurePlanningArtifacts, tree, workRoot],
   )
 
   const waitForStreamCompletion = useCallback((streamId: string): Promise<void> => {
@@ -1241,7 +1220,7 @@ function App() {
   }, [t])
 
   const loadGraph = useCallback(async () => {
-    if (!workspaceRoot) return
+    if (!workRoot) return
     try {
       const [rawChars, rawRels] = await Promise.all([readText('concept/characters.md'), readText('concept/relations.md')])
 
@@ -1279,7 +1258,7 @@ function App() {
       setGraphNodes([])
       setGraphEdges([])
     }
-  }, [workspaceRoot])
+  }, [workRoot])
 
   const openSidebarTab = useCallback(
     (tab: 'files' | 'history' | 'chapters' | 'characters' | 'plotlines' | 'risk') => {
@@ -1303,19 +1282,6 @@ function App() {
     [activeSidebarTab, openSidebarTab],
   )
 
-  const openRightTab = useCallback(
-    (tab: 'chat' | 'graph' | 'writing-goal') => {
-      setActiveRightTab(tab)
-      if (tab === 'graph') {
-        void loadGraph()
-      }
-      if (isMobileLayout) {
-        setSidebarCollapsed(true)
-      }
-    },
-    [isMobileLayout, loadGraph],
-  )
-
   const toggleRightTab = useCallback(
     (tab: 'chat' | 'graph' | 'writing-goal') => {
       setActiveRightTab((prev) => {
@@ -1332,14 +1298,14 @@ function App() {
     [isMobileLayout, loadGraph],
   )
 
-  const refreshProjectPickerState = useCallback(async () => {
+  const refreshBookshelfState = useCallback(async () => {
     if (!isTauriApp()) return
     try {
-      const state = await getProjectPickerState()
-      setDefaultProjectsRoot(state.default_root)
-      setDefaultProjects(state.default_projects)
-      setExternalProjects(state.external_projects)
-      setLastWorkspace(state.last_workspace)
+      const state = await getBookshelfState()
+      setBookshelfRoot(state.default_root)
+      setRecentWorks(state.default_projects)
+      setImportedWorks(state.external_projects)
+      setLastWorkPath(state.last_workspace)
       setLaunchModeState(state.launch_mode)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -1347,26 +1313,26 @@ function App() {
   }, [])
 
   const onOpenProjectFromPicker = useCallback(
-    async (path: string, source: ProjectSource) => {
-      const ok = await openWorkspacePath(path)
+    async (path: string, source: WorkSource) => {
+      const ok = await openWorkPath(path)
       if (!ok) return
       if (isTauriApp() && source === 'external') {
         try {
-          await rememberExternalProject(path)
+          await rememberImportedWork(path)
         } catch {
           // Ignore memory persistence errors, project is still opened.
         }
       }
-      setAppView('workspace')
+      setAppView('studio')
       if (isMobileLayout) {
         setSidebarCollapsed(true)
         setActiveRightTab(null)
       }
       if (isTauriApp()) {
-        void refreshProjectPickerState()
+        void refreshBookshelfState()
       }
     },
-    [isMobileLayout, openWorkspacePath, refreshProjectPickerState],
+    [isMobileLayout, openWorkPath, refreshBookshelfState],
   )
 
   const onCreateProjectFromPicker = useCallback(
@@ -1375,58 +1341,58 @@ function App() {
       setError(null)
       setBusy(true)
       try {
-        const project = await createNovelProject(name)
-        const opened = await openWorkspacePath(project.path)
+        const project = await createNovelWork(name)
+        const opened = await openWorkPath(project.path)
         if (!opened) return
-        setAppView('workspace')
+        setAppView('studio')
         if (isMobileLayout) {
           setSidebarCollapsed(true)
           setActiveRightTab(null)
         }
-        await refreshProjectPickerState()
+        await refreshBookshelfState()
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setBusy(false)
       }
     },
-    [isMobileLayout, openWorkspacePath, refreshProjectPickerState],
+    [isMobileLayout, openWorkPath, refreshBookshelfState],
   )
 
   const onLoadExternalProject = useCallback(async () => {
     try {
       if (!isTauriApp()) {
-        const ok = await openWorkspacePath(workspaceInput)
-        if (ok) setAppView('workspace')
+        const ok = await openWorkPath(workPathInput)
+        if (ok) setAppView('studio')
         return
       }
       const selected = await openFolderDialog()
       if (!selected) return
-      const ok = await openWorkspacePath(selected)
+      const ok = await openWorkPath(selected)
       if (!ok) return
       try {
-        await rememberExternalProject(selected)
+        await rememberImportedWork(selected)
       } catch {
         // Keep opened state even if remembering fails.
       }
-      setAppView('workspace')
-      void refreshProjectPickerState()
+      setAppView('studio')
+      void refreshBookshelfState()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [openWorkspacePath, refreshProjectPickerState, workspaceInput])
+  }, [openWorkPath, refreshBookshelfState, workPathInput])
 
   const onForgetExternalProject = useCallback(
     async (path: string) => {
       if (!isTauriApp()) return
       try {
-        await forgetExternalProject(path)
-        await refreshProjectPickerState()
+        await forgetImportedWork(path)
+        await refreshBookshelfState()
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
     },
-    [refreshProjectPickerState],
+    [refreshBookshelfState],
   )
 
   const onLaunchModeChange = useCallback(
@@ -1435,12 +1401,12 @@ function App() {
       if (!isTauriApp()) return
       try {
         await setLaunchMode(mode)
-        await refreshProjectPickerState()
+        await refreshBookshelfState()
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       }
     },
-    [refreshProjectPickerState],
+    [refreshBookshelfState],
   )
 
   const onOpenByPath = useCallback(
@@ -1475,11 +1441,6 @@ function App() {
     },
     [openFiles],
   )
-
-  const openCommandPalette = useCallback((initialQuery = '') => {
-    setCommandPaletteInitialQuery(initialQuery)
-    setShowCommandPalette(true)
-  }, [])
 
   const onSearchInFiles = useCallback(
     async (query: string, options: SearchPanelOptions): Promise<SearchResult[]> => {
@@ -1616,7 +1577,7 @@ function App() {
   }, [t])
 
   const onNewChapter = useCallback(async () => {
-    if (!workspaceRoot) return
+    if (!workRoot) return
     setError(null)
     setBusy(true)
     try {
@@ -1624,7 +1585,7 @@ function App() {
       const yyyy = String(now.getFullYear())
       const mm = String(now.getMonth() + 1).padStart(2, '0')
       const dd = String(now.getDate()).padStart(2, '0')
-      const fileName = `stories/chapter-${yyyy}${mm}${dd}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}.txt`
+      const fileName = `stories/chapter-${yyyy}${mm}${dd}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}.md`
       try {
         await createFile(fileName)
       } catch (e) {
@@ -1644,11 +1605,11 @@ function App() {
     } finally {
       setBusy(false)
     }
-  }, [workspaceRoot, refreshTree, showConfirm])
+  }, [workRoot, refreshTree, showConfirm])
 
   const onCreateDraftInDir = useCallback(
     async (dir: string, prefix: string, ext: 'md' | 'txt' = 'md') => {
-      if (!workspaceRoot) return
+      if (!workRoot) return
       setError(null)
       setBusy(true)
       try {
@@ -1678,7 +1639,7 @@ function App() {
         setBusy(false)
       }
     },
-    [onOpenByPath, refreshTree, workspaceRoot],
+    [onOpenByPath, refreshTree, workRoot],
   )
 
   const onNewOutline = useCallback(async () => {
@@ -1690,7 +1651,7 @@ function App() {
   }, [onCreateDraftInDir])
 
   const onOpenMasterPlanDoc = useCallback(async () => {
-    if (!workspaceRoot) return
+    if (!workRoot) return
     setError(null)
     setBusy(true)
     try {
@@ -1726,11 +1687,11 @@ function App() {
     } finally {
       setBusy(false)
     }
-  }, [onOpenByPath, refreshTree, workspaceRoot])
+  }, [onOpenByPath, refreshTree, workRoot])
 
   const onDeleteStructurePath = useCallback(
     async (path: string) => {
-      if (!workspaceRoot || !path) return
+      if (!workRoot || !path) return
       const normalizedPath = path.replaceAll('\\', '/')
       const fileName = normalizedPath.split('/').filter(Boolean).pop() ?? normalizedPath
       const targetFile = openFiles.find((file) => file.path === path)
@@ -1760,7 +1721,7 @@ function App() {
         setBusy(false)
       }
     },
-    [activePath, openFiles, refreshTree, showConfirm, t, workspaceRoot],
+    [activePath, openFiles, refreshTree, showConfirm, t, workRoot],
   )
 
   const newId = useCallback(() => {
@@ -1946,11 +1907,11 @@ function App() {
     },
     [reloadAppSettings, showErrorDialog, t],
   )
-  const onChatAgentChange = useCallback(
+  const onChatAssistantChange = useCallback(
     (id: string) => {
       if (!appSettings) return
       const prev = appSettings
-      const next = { ...appSettings, active_agent_id: id }
+      const next = { ...appSettings, active_writing_assistant_id: id, active_agent_id: id }
       setAppSettingsState(next)
       void persistAppSettings(next, prev)
     },
@@ -1978,23 +1939,23 @@ function App() {
     const a = JSON.stringify(appSettings)
     const b = JSON.stringify(settingsSnapshot)
     if (a !== b) return true
-    if (!agentsSnapshot) return false
-    return JSON.stringify(agentsList) !== JSON.stringify(agentsSnapshot)
-  }, [agentsList, agentsSnapshot, appSettings, settingsSnapshot, showSettings])
+    if (!writingAssistantSnapshots) return false
+    return JSON.stringify(writingAssistantsState) !== JSON.stringify(writingAssistantSnapshots)
+  }, [writingAssistantsState, writingAssistantSnapshots, appSettings, settingsSnapshot, showSettings])
 
   useEffect(() => {
     if (!showSettings) {
       setSettingsSnapshot(null)
-      setAgentsSnapshot(null)
+      setWritingAssistantSnapshots(null)
       return
     }
     if (appSettings && !settingsSnapshot) {
       setSettingsSnapshot(appSettings)
     }
-    if (!agentsSnapshot) {
-      setAgentsSnapshot(agentsList)
+    if (!writingAssistantSnapshots) {
+      setWritingAssistantSnapshots(writingAssistantsState)
     }
-  }, [agentsList, agentsSnapshot, appSettings, settingsSnapshot, showSettings])
+  }, [writingAssistantsState, writingAssistantSnapshots, appSettings, settingsSnapshot, showSettings])
 
   useEffect(() => {
     if (!showSettings) return
@@ -2017,7 +1978,7 @@ function App() {
       return
     }
     try {
-      await setAgents(agentsList)
+      await setWritingAssistants(writingAssistantsState)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       await showErrorDialog(t('app.error.saveAgents', { msg }))
@@ -2025,7 +1986,7 @@ function App() {
     }
     await reloadAppSettings()
     setShowSettings(false)
-  }, [agentsList, appSettings, reloadAppSettings, showErrorDialog, t])
+  }, [writingAssistantsState, appSettings, reloadAppSettings, showErrorDialog, t])
 
   const requestCloseSettings = useCallback(() => {
     void (async () => {
@@ -2041,10 +2002,10 @@ function App() {
       const discard = await showConfirm(t('app.settings.discardUnsaved'))
       if (!discard) return
       if (settingsSnapshot) setAppSettingsState(settingsSnapshot)
-      if (agentsSnapshot) setAgentsList(agentsSnapshot)
+      if (writingAssistantSnapshots) setWritingAssistantsState(writingAssistantSnapshots)
       setShowSettings(false)
     })()
-  }, [agentsSnapshot, saveAndCloseSettings, settingsDirty, settingsSnapshot, showConfirm, t])
+  }, [writingAssistantSnapshots, saveAndCloseSettings, settingsDirty, settingsSnapshot, showConfirm, t])
 
   const openChatContextMenu = useCallback((e: MouseEvent, item: ChatItem) => {
     e.preventDefault()
@@ -2130,7 +2091,7 @@ function App() {
       const content = requestedMode ? parsedDirective.content : rawInput
       const applyRequestedMode = async (mode: WriterMode) => {
         if (mode === writerModeRef.current) return
-        if (!workspaceRoot || !isTauriApp()) {
+        if (!workRoot || !isTauriApp()) {
           setWriterMode(mode)
           writerModeRef.current = mode
           return
@@ -2169,7 +2130,7 @@ function App() {
           selectionText: getSelectionText(),
           activeFile: activeFile ? { path: activeFile.path, content: activeFile.content } : null,
           isTauriRuntime: isTauriApp(),
-          workspaceRoot,
+          workRoot,
         })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
@@ -2269,7 +2230,7 @@ function App() {
         return null
       }
 
-      if (!workspaceRoot) {
+      if (!workRoot) {
         cleanupStreamRefs(streamRefs, streamId)
         setChatMessages((prev) =>
           prev.map((m) =>
@@ -2323,7 +2284,7 @@ function App() {
           streamId,
           messages: messagesToSend,
           useMarkdown: appSettings?.output.use_markdown ?? false,
-          agentId: appSettings?.active_agent_id ?? null,
+          assistantId: activeWritingAssistantId || null,
           providerId: selectedProviderId || null,
         })
         return streamId
@@ -2353,6 +2314,7 @@ function App() {
     [
       activeFile,
       activeStreamId,
+      activeWritingAssistantId,
       autoLongWriteEnabled,
       appSettings,
       buildPromptByMode,
@@ -2363,7 +2325,7 @@ function App() {
       newId,
       refreshPlannerQueue,
       t,
-      workspaceRoot,
+      workRoot,
       writerMode,
     ],
   )
@@ -2853,7 +2815,7 @@ function App() {
   const getLatestFileCharCount = useCallback(
     async (filePath: string, fallback = ''): Promise<number> => {
       if (!filePath) return 0
-      if (workspaceRoot && isTauriApp()) {
+      if (workRoot && isTauriApp()) {
         try {
           const latest = await readText(filePath)
           return latest.replace(/\s/g, '').length
@@ -2863,12 +2825,12 @@ function App() {
       }
       return fallback.replace(/\s/g, '').length
     },
-    [workspaceRoot],
+    [workRoot],
   )
 
   const runAutoLongWrite = useCallback(async () => {
     await runAutoLongWriteWorkflow({
-      workspaceRoot,
+      workRoot,
       isTauriRuntime: isTauriApp(),
       activeFile: activeFile ? { path: activeFile.path } : null,
       activePath,
@@ -2917,23 +2879,23 @@ function App() {
     openFiles,
     validateTaskQuality,
     waitForStreamCompletion,
-    workspaceRoot,
+    workRoot,
     writerMode,
   ])
 
 
   useEffect(() => {
     if (!autoLongWriteEnabled) return
-    if (!workspaceRoot || !isTauriApp()) return
+    if (!workRoot || !isTauriApp()) return
     if (!activeFile) return
     if (autoLongWriteRunning) return
     if (chatMessages.some((m) => m.streaming)) return
     void runAutoLongWrite()
-  }, [activeFile, autoLongWriteEnabled, autoLongWriteRunning, chatMessages, runAutoLongWrite, workspaceRoot])
+  }, [activeFile, autoLongWriteEnabled, autoLongWriteRunning, chatMessages, runAutoLongWrite, workRoot])
 
   const onWriterModeChange = useCallback(
     async (mode: WriterMode) => {
-      if (!workspaceRoot || !isTauriApp()) {
+      if (!workRoot || !isTauriApp()) {
         setWriterMode(mode)
         writerModeRef.current = mode
         return
@@ -2956,45 +2918,13 @@ function App() {
         setPlannerBusy(false)
       }
     },
-    [ensurePlanningArtifacts, refreshPlannerQueue, workspaceRoot],
+    [ensurePlanningArtifacts, refreshPlannerQueue, workRoot],
   )
 
-  const onGeneratePlanAndTasks = useCallback(async () => {
-    if (!workspaceRoot || !isTauriApp()) return
-    if (writerMode === 'normal') {
-      await message('\u666e\u901a\u6a21\u5f0f\u4e0d\u751f\u6210\u5927\u7eb2\u4e0e\u7ec6\u7eb2\uff0c\u8bf7\u5207\u6362\u5230\u5927\u7eb2\u6a21\u5f0f\u6216\u7ec6\u7eb2\u6a21\u5f0f\u3002', { title: '\u63d0\u793a' })
-      return
-    }
-    setPlannerBusy(true)
-    setPlannerLastRunError(null)
-    try {
-      await novelPlannerService.generateMasterPlan(writerMode, {
-        instruction: chatInput,
-        targetWords: 1_200_000,
-        chapterWordTarget,
-      })
-      const tasks = await novelPlannerService.generateTasksFromPlan({
-        mode: writerMode,
-        targetWords: 1_200_000,
-        chapterWordTarget,
-      })
-      setPlannerTasks(tasks)
-      if (activePath !== MASTER_PLAN_RELATIVE_PATH) {
-        await onOpenByPath(MASTER_PLAN_RELATIVE_PATH)
-      }
-      if (tasks.length > 0) {
-        void runPlannerQueue(chatInput)
-      }
-    } catch (e) {
-      setPlannerLastRunError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setPlannerBusy(false)
-    }
-  }, [activePath, chapterWordTarget, chatInput, onOpenByPath, workspaceRoot, writerMode])
   const runPlannerQueue = useCallback(
     async (userInstruction = '') => {
       await runPlannerQueueWorkflow({
-        workspaceRoot,
+        workRoot,
         isTauriRuntime: isTauriApp(),
         writerMode,
         plannerQueueRunning,
@@ -3026,10 +2956,49 @@ function App() {
       refreshTree,
       validateTaskQuality,
       waitForStreamCompletion,
-      workspaceRoot,
+      workRoot,
       writerMode,
       tree,
     ],
+  )
+
+  const onRunNextPlannerTask = useCallback(async () => {
+    if (!workRoot || !isTauriApp()) return
+    if (plannerQueueRunning || plannerBusy) return
+    const nextTask = novelPlannerService.getNextExecutableTask(plannerTasks)
+    if (!nextTask) return
+    await onOpenByPath(nextTask.scope)
+    await runPlannerQueue(nextTask.task_prompt || nextTask.title)
+  }, [isTauriApp, onOpenByPath, plannerBusy, plannerQueueRunning, plannerTasks, runPlannerQueue, workRoot])
+
+  const onRetryPlannerTask = useCallback(
+    async (taskId: string) => {
+      if (!workRoot || !isTauriApp()) return
+      const next = await novelPlannerService.updateTask(writerMode, taskId, (task) => ({
+        ...task,
+        status: 'retry',
+        last_error: undefined,
+      }))
+      setPlannerTasks(next)
+    },
+    [isTauriApp, workRoot, writerMode],
+  )
+
+  const onMarkPlannerTaskDone = useCallback(
+    async (taskId: string) => {
+      if (!workRoot || !isTauriApp()) return
+      const target = plannerTasks.find((task) => task.id === taskId)
+      if (!target) return
+      const next = await novelPlannerService.updateTask(writerMode, taskId, (task) => ({
+        ...task,
+        status: 'done',
+        completed_at: new Date().toISOString(),
+        last_error: undefined,
+      }))
+      await novelPlannerService.appendContinuityEntry(target, 'Task marked done from AI sidebar')
+      setPlannerTasks(next)
+    },
+    [isTauriApp, plannerTasks, workRoot, writerMode],
   )
 
   // --- DiffView Handlers ---
@@ -3041,10 +3010,11 @@ function App() {
       if (updatedChangeSet) {
         diffContext.updateChangeSet(updatedChangeSet)
       }
+      await refreshMemoryIndices()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [diffContext])
+  }, [diffContext, refreshMemoryIndices])
 
   const onRejectModification = useCallback((changeSetId: string, modificationId: string) => {
     try {
@@ -3067,10 +3037,11 @@ function App() {
       }
       // Refresh tree after accepting all modifications
       await refreshTree()
+      await refreshMemoryIndices()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [diffContext, refreshTree])
+  }, [diffContext, refreshMemoryIndices, refreshTree])
 
   const onRejectAllModifications = useCallback((changeSetId: string) => {
     try {
@@ -3197,7 +3168,7 @@ function App() {
 
         modificationService.registerImportedChangeSet(changeSet, activeFile.content)
         diffContext.addChangeSet(changeSet)
-        const applyMode: AiEditApplyMode = appSettings?.ai_edit_apply_mode ?? 'auto_apply'
+        const applyMode: AiEditApplyMode = appSettings?.ai_edit_apply_mode ?? 'review'
         if (applyMode === 'auto_apply') {
           await modificationService.acceptAll(changeSet.id)
           const updatedChangeSet = modificationService.getChangeSet(changeSet.id)
@@ -3313,25 +3284,25 @@ function App() {
   useEffect(() => {
     if (!isTauriApp()) return
     void reloadAppSettings()
-    void getAgents()
+    void getWritingAssistants()
       .then((list) => {
-        setAgentsList(list)
-        setAgentEditorId((prev) => prev || list[0]?.id || '')
+        setWritingAssistantsState(list)
+        setAssistantEditorId((prev) => prev || list[0]?.id || '')
       })
-      .catch(() => setAgentsList([]))
+      .catch(() => setWritingAssistantsState([]))
   }, [reloadAppSettings])
 
   useEffect(() => {
     if (!appSettings) return
-    if (agentsList.length === 0) return
-    if (agentsList.some((agent) => agent.id === appSettings.active_agent_id)) return
-    const fallback = agentsList[0]?.id ?? ''
+    if (writingAssistantsState.length === 0) return
+    if (writingAssistantsState.some((agent) => agent.id === activeWritingAssistantId)) return
+    const fallback = writingAssistantsState[0]?.id ?? ''
     if (!fallback) return
     const prev = appSettings
-    const next = { ...appSettings, active_agent_id: fallback }
+    const next = { ...appSettings, active_writing_assistant_id: fallback, active_agent_id: fallback }
     setAppSettingsState(next)
     void persistAppSettings(next, prev)
-  }, [agentsList, appSettings, persistAppSettings])
+  }, [activeWritingAssistantId, writingAssistantsState, appSettings, persistAppSettings])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -3395,74 +3366,76 @@ function App() {
     autoOpenedRef.current = true
     void (async () => {
       if (!isTauriApp()) {
-        setAppView('project-picker')
+        setAppView('bookshelf')
         return
       }
       try {
-        const pickerState = await getProjectPickerState()
-        setDefaultProjectsRoot(pickerState.default_root)
-        setDefaultProjects(pickerState.default_projects)
-        setExternalProjects(pickerState.external_projects)
-        setLastWorkspace(pickerState.last_workspace)
+        const pickerState = await getBookshelfState()
+        setBookshelfRoot(pickerState.default_root)
+        setRecentWorks(pickerState.default_projects)
+        setImportedWorks(pickerState.external_projects)
+        setLastWorkPath(pickerState.last_workspace)
         setLaunchModeState(pickerState.launch_mode)
 
         if (pickerState.launch_mode === 'auto_last' && pickerState.last_workspace) {
-          const opened = await openWorkspacePath(pickerState.last_workspace)
+          const opened = await openWorkPath(pickerState.last_workspace)
           if (opened) {
-            setAppView('workspace')
+            setAppView('studio')
             return
           }
         }
-        setAppView('project-picker')
+        setAppView('bookshelf')
       } catch {
-        setAppView('project-picker')
-        setLastWorkspace(null)
+        setAppView('bookshelf')
+        setLastWorkPath(null)
       }
     })()
-  }, [openWorkspacePath])
+  }, [openWorkPath])
 
   useEffect(() => {
     if (!isTauriApp()) return
-    if (!workspaceRoot) return
+    if (!workRoot) return
     void (async () => {
       try {
-        const t = await listWorkspaceTree(6)
+        const t = await listWorkTree(6)
         setTree(t)
       } catch {
         setTree(null)
       }
     })()
     void loadProjectWritingSettings()
-    void refreshProjectPickerState()
-    setAppView((prev) => (prev === 'workspace' ? prev : 'workspace'))
-  }, [loadProjectWritingSettings, refreshProjectPickerState, workspaceRoot])
+    void refreshBookshelfState()
+    setAppView((prev) => (prev === 'studio' ? prev : 'studio'))
+  }, [loadProjectWritingSettings, refreshBookshelfState, workRoot])
 
   useEffect(() => {
     if (!isTauriApp()) return
-    if (!workspaceRoot) return
+    if (!workRoot) return
     void loadPlannerSession().catch((e) => {
       setPlannerLastRunError(e instanceof Error ? e.message : String(e))
     })
-  }, [loadPlannerSession, workspaceRoot])
+    void refreshChatSessionSummaries()
+    void refreshMemoryIndices()
+  }, [loadPlannerSession, refreshChatSessionSummaries, refreshMemoryIndices, workRoot])
 
   useEffect(() => {
-    if (!workspaceRoot || !isTauriApp()) return
+    if (!workRoot || !isTauriApp()) return
     if (writerMode === 'normal') return
     if (!(plannerState?.auto_run ?? false)) return
     if (plannerQueueRunning || plannerBusy) return
     const next = novelPlannerService.getNextExecutableTask(plannerTasks)
     if (!next) return
     void runPlannerQueue()
-  }, [isTauriApp, plannerBusy, plannerQueueRunning, plannerState, plannerTasks, runPlannerQueue, workspaceRoot, writerMode])
+  }, [isTauriApp, plannerBusy, plannerQueueRunning, plannerState, plannerTasks, runPlannerQueue, workRoot, writerMode])
 
   useEffect(() => {
     if (!isTauriApp()) return
-    if (!workspaceRoot) return
+    if (!workRoot) return
     const timer = window.setTimeout(() => {
       setShowRecoveryDialog(true)
     }, 1000)
     return () => window.clearTimeout(timer)
-  }, [workspaceRoot])
+  }, [workRoot])
 
   // Subscribe to editor config changes and apply CSS variables
   useEffect(() => {
@@ -3571,6 +3544,7 @@ function App() {
       if (!p) return
       const streamId = normalizeStreamId(p.streamId) ?? normalizeStreamId(p.stream_id)
       if (!streamId) return
+      streamLastTokenAtRef.current.set(streamId, Date.now())
       const stepRaw = typeof p.step === 'number' ? p.step : Number(p.step)
       if (!Number.isFinite(stepRaw)) return
       const tool = typeof p.tool === 'string' ? p.tool.trim() : ''
@@ -3579,6 +3553,7 @@ function App() {
       const ok = p.ok === false ? false : p.ok === true ? true : null
       const status: AgentToolActivity['status'] =
         phase === 'start' ? 'running' : ok === false ? 'error' : 'success'
+      const actionIdRaw = typeof p.actionId === 'string' ? p.actionId.trim() : ''
       const inputPreview = typeof p.inputPreview === 'string' ? p.inputPreview : ''
       const observationPreview = typeof p.observationPreview === 'string' ? p.observationPreview : undefined
       const listItems = Array.isArray(p.listItems)
@@ -3607,6 +3582,7 @@ function App() {
       const timestamp = typeof p.timestamp === 'number' ? p.timestamp : Date.now()
       const durationMsRaw = typeof p.durationMs === 'number' ? p.durationMs : Number(p.durationMs)
       const activity: AgentToolActivity = {
+        actionId: actionIdRaw || `step-${Math.max(1, Math.floor(stepRaw))}`,
         step: Math.max(1, Math.floor(stepRaw)),
         tool,
         status,
@@ -3762,8 +3738,8 @@ function App() {
         )
       }
 
-      const applyMode: AiEditApplyMode = appSettings?.ai_edit_apply_mode ?? 'auto_apply'
-      if (applyMode === 'auto_apply') {
+        const applyMode: AiEditApplyMode = appSettings?.ai_edit_apply_mode ?? 'review'
+        if (applyMode === 'auto_apply') {
         void (async () => {
           try {
             for (const item of imported) {
@@ -3833,7 +3809,7 @@ function App() {
 
   useEffect(() => {
     if (!isTauriApp()) return
-    if (!workspaceRoot) return
+    if (!workRoot) return
     let timer: number | null = null
     const unlistenFns: Array<() => void> = []
     const scheduleRefresh = () => {
@@ -3853,7 +3829,7 @@ function App() {
       if (timer) window.clearTimeout(timer)
       for (const u of unlistenFns) u()
     }
-  }, [workspaceRoot, refreshTree])
+  }, [workRoot, refreshTree])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -3893,20 +3869,10 @@ function App() {
         setShowSearchPanel(true)
         return
       }
-      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
-        e.preventDefault()
-        openCommandPalette('@')
-        return
-      }
-      // Command Palette: Ctrl+Shift+P
-      if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
-        e.preventDefault()
-        openCommandPalette('>')
-      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [closeActiveTab, focusNeighborTab, onSaveActive, openCommandPalette, toggleSidebar])
+  }, [closeActiveTab, focusNeighborTab, onSaveActive, toggleSidebar])
 
   useEffect(() => {
     if (!isTauriApp()) return
@@ -3932,12 +3898,16 @@ function App() {
     if (chatMessages.some((m) => m.streaming)) return
     void saveChatSession({
       id: chatSessionIdRef.current,
-      workspace_root: workspaceRoot ?? '',
+      workspace_root: workRoot ?? '',
       created_at: 0,
       updated_at: 0,
       messages: chatMessages.map((m) => ({ role: m.role, content: m.content })),
-    }).catch(() => {})
-  }, [chatMessages, workspaceRoot])
+    })
+      .then(() => {
+        void refreshChatSessionSummaries()
+      })
+      .catch(() => {})
+  }, [chatMessages, refreshChatSessionSummaries, workRoot])
 
   useEffect(() => {
     if (!activePath) return
@@ -4003,228 +3973,23 @@ function App() {
     }
   }, [activeRightTab, graphNodes, graphEdges]) // Re-render when tab changes or data changes
 
-  const quickOpenFileCommands = useMemo(
-    () =>
-      [...searchableFilePaths].sort((a, b) => a.localeCompare(b)).map((filePath) => {
-        const parts = filePath.split('/')
-        const fileName = parts[parts.length - 1] ?? filePath
-        const parent = parts.length > 1 ? parts.slice(0, -1).join('/') : '.'
-        return {
-          id: `open-file:${filePath}`,
-          kind: 'file' as const,
-          label: fileName,
-          description: parent,
-          keywords: [filePath, fileName, parent],
-          category: t('app.command.category.files'),
-          action: () => onOpenByPath(filePath),
-        }
-      }),
-    [onOpenByPath, searchableFilePaths, t],
-  )
-
-  const commandPaletteCommands = useMemo(
-    () => [
-      {
-        id: 'quickOpenFiles',
-        kind: 'command' as const,
-        label: t('app.command.quickOpen'),
-        category: t('app.command.category.file'),
-        shortcut: 'Ctrl+P',
-        action: () => {
-          window.setTimeout(() => {
-            openCommandPalette('@')
-          }, 0)
-        },
-      },
-      {
-        id: 'searchInFiles',
-        kind: 'command' as const,
-        label: t('app.command.searchInFiles'),
-        category: t('app.command.category.file'),
-        shortcut: 'Ctrl+Shift+F',
-        action: () => setShowSearchPanel(true),
-      },
-      { id: 'save', kind: 'command' as const, label: t('app.command.saveFile'), category: t('app.command.category.file'), shortcut: 'Ctrl+S', action: () => onSaveActive() },
-      {
-        id: 'closeTab',
-        kind: 'command' as const,
-        label: t('app.command.closeTab'),
-        category: t('app.command.category.file'),
-        shortcut: 'Ctrl+W',
-        action: closeActiveTab,
-      },
-      {
-        id: 'nextTab',
-        kind: 'command' as const,
-        label: t('app.command.nextTab'),
-        category: t('app.command.category.file'),
-        shortcut: 'Ctrl+Tab',
-        action: () => focusNeighborTab('next'),
-      },
-      {
-        id: 'prevTab',
-        kind: 'command' as const,
-        label: t('app.command.prevTab'),
-        category: t('app.command.category.file'),
-        shortcut: 'Ctrl+Shift+Tab',
-        action: () => focusNeighborTab('prev'),
-      },
-      { id: 'newChapter', kind: 'command' as const, label: t('app.command.newChapter'), category: t('app.command.category.file'), action: () => onNewChapter() },
-      {
-        id: 'switchProject',
-        kind: 'command' as const,
-        label: t('app.command.switchProject'),
-        category: t('app.command.category.file'),
-        action: () => {
-          setShowCommandPalette(false)
-          setAppView('project-picker')
-          void refreshProjectPickerState()
-        },
-      },
-      { id: 'toggleTheme', kind: 'command' as const, label: t('app.command.toggleTheme'), category: t('app.command.category.view'), action: toggleTheme },
-      { id: 'toggleDensity', kind: 'command' as const, label: t('app.command.toggleDensity'), category: t('app.command.category.view'), action: toggleDensity },
-      { id: 'toggleSidebar', kind: 'command' as const, label: t('app.command.toggleSidebar'), category: t('app.command.category.view'), shortcut: 'Ctrl+B', action: toggleSidebar },
-      { id: 'openSettings', kind: 'command' as const, label: t('app.command.openSettings'), category: t('app.command.category.settings'), shortcut: 'Ctrl+,', action: () => setShowSettings(true) },
-      {
-        id: 'aiChat',
-        kind: 'command' as const,
-        label: t('app.command.aiChat'),
-        category: t('app.command.category.ai'),
-        shortcut: 'Ctrl+Shift+L',
-        action: () => {
-          openRightTab('chat')
-          window.setTimeout(() => {
-            chatInputRef.current?.focus()
-          }, 0)
-        },
-      },
-      { id: 'smartComplete', kind: 'command' as const, label: t('app.command.smartComplete'), category: t('app.command.category.ai'), action: () => onSmartComplete() },
-      {
-        id: 'toggleAutoLongWrite',
-        kind: 'command' as const,
-        label: autoLongWriteEnabled ? t('app.command.disableAutoLongWrite') : t('app.command.enableAutoLongWrite'),
-        category: t('app.command.category.ai'),
-        action: () => {
-          const next = !autoLongWriteEnabled
-          setAutoLongWriteEnabled(next)
-          autoLongWriteStopRef.current = !next
-          setAutoLongWriteStatus(next ? 'Auto enabled.' : 'Auto disabled.')
-          if (!next && activeStreamId) {
-            void onStopChat()
-          }
-        },
-      },
-      { id: 'regenerateReply', kind: 'command' as const, label: t('app.command.regenerateReply'), category: t('app.command.category.ai'), action: () => onRegenerateAssistant(latestCompletedAssistantId ?? undefined) },
-      { id: 'candidateReplies', kind: 'command' as const, label: t('app.command.generateCandidates'), category: t('app.command.category.ai'), action: () => onGenerateAssistantCandidates(latestCompletedAssistantId ?? undefined, 2) },
-      { id: 'modeNormal', kind: 'command' as const, label: t('app.command.modeNormal'), category: t('app.command.category.aiPlanner'), action: () => onWriterModeChange('normal') },
-      { id: 'modePlan', kind: 'command' as const, label: t('app.command.modePlan'), category: t('app.command.category.aiPlanner'), action: () => onWriterModeChange('plan') },
-      { id: 'modeSpec', kind: 'command' as const, label: t('app.command.modeSpec'), category: t('app.command.category.aiPlanner'), action: () => onWriterModeChange('spec') },
-      { id: 'generatePlan', kind: 'command' as const, label: t('app.command.generatePlanTasks'), category: t('app.command.category.aiPlanner'), action: () => onGeneratePlanAndTasks() },
-      { id: 'runQueue', kind: 'command' as const, label: t('app.command.runTaskQueue'), category: t('app.command.category.aiPlanner'), action: () => runPlannerQueue(chatInput) },
-      {
-        id: 'newOutline',
-        kind: 'command' as const,
-        label: t('app.command.createOutline'),
-        category: t('app.command.category.writing'),
-        action: () => {
-          onNewOutline()
-        },
-      },
-      {
-        id: 'newConceptNote',
-        kind: 'command' as const,
-        label: t('app.command.createConcept'),
-        category: t('app.command.category.writing'),
-        action: () => {
-          onNewConceptNote()
-        },
-      },
-      {
-        id: 'openMasterPlan',
-        kind: 'command' as const,
-        label: t('app.command.openMasterPlan'),
-        category: t('app.command.category.writing'),
-        action: () => {
-          onOpenMasterPlanDoc()
-        },
-      },
-      {
-        id: 'openHistory',
-        kind: 'command' as const,
-        label: t('app.command.openHistory'),
-        category: t('app.command.category.writing'),
-        action: () => {
-          openSidebarTab('history')
-        },
-      },
-      {
-        id: 'snapshotActive',
-        kind: 'command' as const,
-        label: t('app.command.snapshotActive'),
-        category: t('app.command.category.writing'),
-        action: () => {
-          if (!activeFile) return
-          void (async () => {
-            try {
-              await createHistorySnapshot(activeFile.path, 'manual')
-              openSidebarTab('history')
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e))
-            }
-          })()
-        },
-      },
-      ...quickOpenFileCommands,
-    ],
-    [
-      activeFile,
-      activeStreamId,
-      autoLongWriteEnabled,
-      chatInput,
-      closeActiveTab,
-      focusNeighborTab,
-      latestCompletedAssistantId,
-      onGenerateAssistantCandidates,
-      onGeneratePlanAndTasks,
-      onNewChapter,
-      onNewConceptNote,
-      onNewOutline,
-      onOpenMasterPlanDoc,
-      onRegenerateAssistant,
-      onSaveActive,
-      onSmartComplete,
-      onStopChat,
-      onWriterModeChange,
-      openCommandPalette,
-      openRightTab,
-      openSidebarTab,
-      quickOpenFileCommands,
-      refreshProjectPickerState,
-      runPlannerQueue,
-      t,
-      toggleDensity,
-      toggleSidebar,
-      toggleTheme,
-    ],
-  )
-
   // --- Render ---
 
-  if (appView === 'project-picker') {
+  if (appView === 'bookshelf') {
     return (
-      <ProjectPickerPage
+      <BookshelfPage
         busy={busy}
         error={error}
-        defaultRoot={defaultProjectsRoot}
-        defaultProjects={defaultProjects}
-        externalProjects={externalProjects}
-        lastWorkspace={lastWorkspace}
+        defaultRoot={bookshelfRoot}
+        recentWorks={recentWorks}
+        importedWorks={importedWorks}
+        lastWorkPath={lastWorkPath}
         launchMode={launchMode}
         onSelectProject={onOpenProjectFromPicker}
         onCreateProject={(name) => void onCreateProjectFromPicker(name)}
         onLoadExternalProject={() => void onLoadExternalProject()}
         onForgetExternalProject={(path) => void onForgetExternalProject(path)}
-        onRefresh={() => void refreshProjectPickerState()}
+        onRefresh={() => void refreshBookshelfState()}
         onLaunchModeChange={(mode) => void onLaunchModeChange(mode)}
         manualPathEnabled={!isTauriApp()}
         onOpenManualPath={(path) => {
@@ -4285,8 +4050,8 @@ function App() {
           <div
             className="activity-bar-item"
             onClick={() => {
-              setAppView('project-picker')
-              void refreshProjectPickerState()
+              setAppView('bookshelf')
+              void refreshBookshelfState()
             }}
             title={t('app.activity.projectPicker')}
           >
@@ -4308,7 +4073,7 @@ function App() {
         <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
                 {activeSidebarTab === 'files' ? (
           <NovelStructurePanel
-            workspaceRoot={workspaceRoot}
+            workRoot={workRoot}
             tree={tree}
             activePath={activePath}
             busy={busy}
@@ -4322,8 +4087,8 @@ function App() {
             onNewConceptNote={() => void onNewConceptNote()}
             onOpenMasterPlan={() => void onOpenMasterPlanDoc()}
             onOpenProjectPicker={() => {
-              setAppView('project-picker')
-              void refreshProjectPickerState()
+              setAppView('bookshelf')
+              void refreshBookshelfState()
             }}
             onDeletePath={(path) => {
               void onDeleteStructurePath(path)
@@ -4333,13 +4098,13 @@ function App() {
 
         {activeSidebarTab === 'history' ? (
           <HistoryPanel
-            workspaceRoot={workspaceRoot}
+            workRoot={workRoot}
             activePath={activePath}
             onOpenPath={(path, options) => {
               void onOpenByPath(path, options)
             }}
             onAfterRestore={() => {
-              if (workspaceRoot) {
+              if (workRoot) {
                 void refreshTree()
               }
             }}
@@ -4354,7 +4119,7 @@ function App() {
             }}
             onChapterUpdate={() => {
               // Optionally refresh the file tree or perform other updates
-              if (workspaceRoot) {
+              if (workRoot) {
                 void refreshTree()
               }
             }}
@@ -4378,7 +4143,7 @@ function App() {
             }}
             onPlotLineUpdate={() => {
               // Optionally refresh the file tree or perform other updates
-              if (workspaceRoot) {
+              if (workRoot) {
                 void refreshTree()
               }
             }}
@@ -4432,7 +4197,7 @@ function App() {
         />
         {activeFile ? (
           <div className="editor-tabs-actions">
-            <button className="icon-button" disabled={!workspaceRoot} onClick={() => void onNewChapter()} title={t('app.action.newChapter')}>
+            <button className="icon-button" disabled={!workRoot} onClick={() => void onNewChapter()} title={t('app.action.newChapter')}>
               <AppIcon name="add" size={14} />
             </button>
             <button className="icon-button" disabled={!activeFile || !activeFile.dirty} onClick={() => void onSaveActive()} title={t('app.action.save')}>
@@ -4506,19 +4271,19 @@ function App() {
             </>
           ) : (
             <div className="welcome-screen">
-              <h1>Novel IDE</h1>
+              <h1>Novel-IDE</h1>
               <div className="welcome-actions">
                 <button
                   className="welcome-btn"
                   onClick={() => {
-                    setAppView('project-picker')
-                    void refreshProjectPickerState()
+                    setAppView('bookshelf')
+                    void refreshBookshelfState()
                   }}
                 >
                   {t('app.welcome.openProjectPicker')}
                 </button>
               </div>
-              {!workspaceRoot && error ? <div className="error-text">{error}</div> : null}
+              {!workRoot && error ? <div className="error-text">{error}</div> : null}
             </div>
           )}
         </div>
@@ -4539,7 +4304,27 @@ function App() {
               <AIChatPanel
                 writerMode={writerMode}
                 plannerLastRunError={plannerLastRunError}
+                plannerTasks={plannerTasks}
+                plannerBusy={plannerBusy}
+                plannerQueueRunning={plannerQueueRunning}
+                onRunNextPlannerTask={onRunNextPlannerTask}
+                onRetryPlannerTask={(taskId) => void onRetryPlannerTask(taskId)}
+                onMarkPlannerTaskDone={(taskId) => void onMarkPlannerTaskDone(taskId)}
+                onOpenTaskScope={(path) => void onOpenByPath(path)}
                 onNewSession={onNewChatSession}
+                sessionSummaries={chatSessionOptions}
+                activeSessionId={activeChatSessionId}
+                sessionsLoading={chatSessionsLoading}
+                onOpenSession={onOpenChatSession}
+                memoryIndexLoading={memoryIndexLoading}
+                characterStateIndexContent={characterStateIndexContent}
+                characterStateIndexMeta={characterStateIndexMeta}
+                foreshadowIndexContent={foreshadowIndexContent}
+                foreshadowIndexMeta={foreshadowIndexMeta}
+                onRefreshMemoryIndices={() => void refreshMemoryIndices()}
+                onSaveMemoryIndex={(kind, content) => void onSaveMemoryIndex(kind, content)}
+                onToggleMemoryIndexLock={(kind) => void onToggleMemoryIndexLock(kind)}
+                onRestoreMemoryIndexAuto={(kind) => void onRestoreMemoryIndexAuto(kind)}
                 chatMessages={chatMessages}
                 messagesRef={aiMessagesRef}
                 onAutoScrollChange={setChatAutoScroll}
@@ -4576,13 +4361,26 @@ function App() {
                 onGenerateAssistantCandidates={onGenerateAssistantCandidates}
                 onRetryWithFallbackProvider={onRetryWithFallbackProvider}
                 onOpenModelSettings={openModelSettings}
-                activeAgentId={appSettings?.active_agent_id ?? ''}
-                agents={chatAgentOptions}
-                onActiveAgentChange={onChatAgentChange}
+                reviewChangeSets={Array.from(diffContext.changeSets.values())}
+                activeReviewChangeSetId={activeDiffTab}
+                onOpenReviewChangeSet={onOpenDiffView}
+                onAcceptReviewChangeSet={(changeSetId) => void onAcceptAllModifications(changeSetId)}
+                onRejectReviewChangeSet={(changeSetId) => void onRejectAllModifications(changeSetId)}
+                onAcceptReviewModification={(changeSetId, modificationId) => void onAcceptModification(changeSetId, modificationId)}
+                onRejectReviewModification={(changeSetId, modificationId) => void onRejectModification(changeSetId, modificationId)}
+                activeAssistantId={activeWritingAssistantId}
+                assistants={chatAssistantOptions}
+                onActiveAssistantChange={onChatAssistantChange}
                 activeProviderId={effectiveProviderId}
                 providers={chatProviderOptions}
                 providerSelectInvalid={activeChatProviderInvalid}
                 onActiveProviderChange={onChatProviderChange}
+                activeDocumentPath={activeFile?.path ?? null}
+                activeDocumentLabel={activeFile?.name ?? null}
+                activeDocumentCharCount={activeCharCount}
+                activeDocumentDirty={activeFile?.dirty === true}
+                activeDocumentPreview={activeDocumentPreview}
+                activeWorkLabel={activeWorkLabel}
               />
             ) : null}
 
@@ -4597,7 +4395,7 @@ function App() {
                   <canvas ref={graphCanvasRef} className="graph-canvas" />
                 </div>
                 <div className="graph-footer">
-                  Data source: concept/characters.md & concept/relations.md
+                  {t('app.graph.dataSource')}
                 </div>
               </div>
             ) : null}
@@ -4745,13 +4543,10 @@ function App() {
                       {t('common.general')}
 	                    </button>
 	                    <button className={`settings-nav-item ${settingsTab === 'editor' ? 'active' : ''}`} onClick={() => setSettingsTab('editor')}>
-                      {t('common.editor')}
+	                      {t('common.writing')}
 	                    </button>
 	                    <button className={`settings-nav-item ${settingsTab === 'models' ? 'active' : ''}`} onClick={() => setSettingsTab('models')}>
-                      {t('common.models')}
-	                    </button>
-	                    <button className={`settings-nav-item ${settingsTab === 'agents' ? 'active' : ''}`} onClick={() => setSettingsTab('agents')}>
-                      {t('common.agents')}
+	                      {t('common.models')}
 	                    </button>
 	                  </aside>
 	                  <div className="settings-content">
@@ -4796,8 +4591,8 @@ function App() {
                       className="btn btn-secondary"
                       onClick={() => {
                         setShowSettings(false)
-                        setAppView('project-picker')
-                        void refreshProjectPickerState()
+                        setAppView('bookshelf')
+                        void refreshBookshelfState()
                       }}
                     >
                       {t('app.settings.openProjectPicker')}
@@ -4954,12 +4749,12 @@ function App() {
 	                {/* Editor Configuration Section */}
 	                {settingsTab === 'editor' ? (
 	                <div className="settings-section">
-                  <h3 className="settings-section-title">Editor Settings</h3>
+	                  <h3 className="settings-section-title">{t('app.settings.writingTitle')}</h3>
 
-                  {/* Font Family */}
-                  <div className="form-group">
-                    <label>Font Family</label>
-                    <select
+	                  {/* Font Family */}
+	                  <div className="form-group">
+	                    <label>{t('writing.fontFamily')}</label>
+	                    <select
                       value={editorUserConfig.fontFamily}
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ fontFamily: e.target.value })
@@ -4976,9 +4771,9 @@ function App() {
                     </select>
                   </div>
 
-                  {/* Font Size */}
-                  <div className="form-group">
-                    <label>Font Size ({editorUserConfig.fontSize}px)</label>
+	                  {/* Font Size */}
+	                  <div className="form-group">
+	                    <label>{t('writing.fontSize')} ({editorUserConfig.fontSize}px)</label>
                     <input
                       className="settings-range-input"
                       type="range"
@@ -4992,9 +4787,9 @@ function App() {
                     />
                   </div>
 
-                  {/* Line Height */}
-                  <div className="form-group">
-                    <label>Line Height ({editorUserConfig.lineHeight})</label>
+	                  {/* Line Height */}
+	                  <div className="form-group">
+	                    <label>{t('writing.lineHeight')} ({editorUserConfig.lineHeight})</label>
                     <input
                       className="settings-range-input"
                       type="range"
@@ -5008,9 +4803,9 @@ function App() {
                     />
                   </div>
 
-                  {/* Theme */}
-                  <div className="form-group">
-                    <label>Theme</label>
+	                  {/* Theme */}
+	                  <div className="form-group">
+	                    <label>{t('writing.theme')}</label>
                     <select
                       value={editorUserConfig.theme}
                       onChange={(e) => {
@@ -5023,25 +4818,25 @@ function App() {
                     </select>
                   </div>
 
-                  {/* Editor Width */}
-                  <div className="form-group">
-                    <label>Editor Width</label>
-                    <select
+	                  {/* Editor Width */}
+	                  <div className="form-group">
+	                    <label>{t('writing.editorWidth')}</label>
+	                    <select
                       value={editorUserConfig.editorWidth}
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ editorWidth: e.target.value as 'centered' | 'full' })
                       }}
                       
                     >
-                      <option value="centered">Centered (1100px)</option>
-                      <option value="full">Full Width</option>
-                    </select>
-                  </div>
+	                      <option value="centered">{t('writing.widthCentered')}</option>
+	                      <option value="full">{t('writing.widthFull')}</option>
+	                    </select>
+	                  </div>
 
-                  {/* Auto-save Interval */}
-                  <div className="form-group">
-                    <label>Auto Save Interval ({editorUserConfig.autoSaveInterval === 0 ? 'disabled' : `${editorUserConfig.autoSaveInterval}s`})</label>
-                    <input
+	                  {/* Auto-save Interval */}
+	                  <div className="form-group">
+	                    <label>{t('writing.autoSaveInterval')} ({editorUserConfig.autoSaveInterval === 0 ? t('writing.off') : `${editorUserConfig.autoSaveInterval}s`})</label>
+	                    <input
                       className="settings-range-input"
                       type="range"
                       min="0"
@@ -5051,27 +4846,29 @@ function App() {
                       onChange={(e) => {
                         editorConfigManager.updateConfig({ autoSaveInterval: Number(e.target.value) })
                       }}
-                    />
-                    <div className="settings-hint">
-                      {editorUserConfig.autoSaveInterval === 0 ? 'Auto save is disabled.' : `Auto-save every ${editorUserConfig.autoSaveInterval} seconds.`}
-                    </div>
-                  </div>
+	                    />
+	                    <div className="settings-hint">
+	                      {editorUserConfig.autoSaveInterval === 0
+	                        ? t('writing.autoSaveDisabled')
+	                        : t('writing.autoSaveEnabled', { seconds: editorUserConfig.autoSaveInterval })}
+	                    </div>
+	                  </div>
 
                   {/* Reset Button */}
                   <div className="settings-action-row">
                     <button
                       className="btn btn-secondary settings-small-btn"
-                      onClick={() => {
-                        void (async () => {
-                          const ok = await showConfirm('Reset editor settings to defaults?')
-                          if (ok) {
-                            editorConfigManager.resetConfig()
-                          }
-                        })()
-                      }}
-                    >
-                      Reset Editor Settings
-                    </button>
+	                      onClick={() => {
+	                        void (async () => {
+	                          const ok = await showConfirm(t('writing.resetConfirm'))
+	                          if (ok) {
+	                            editorConfigManager.resetConfig()
+	                          }
+	                        })()
+	                      }}
+	                    >
+	                      {t('writing.reset')}
+	                    </button>
                   </div>
 	                </div>
 	                ) : null}
@@ -5165,7 +4962,7 @@ function App() {
                   </div>
 	                </div>
 	                ) : null}
-	                {settingsTab === 'agents' ? (
+	                {false ? (
 	                <div className="settings-section">
                   <h3 className="settings-section-title">{t('app.settings.agentTitle')}</h3>
 
@@ -5173,13 +4970,13 @@ function App() {
                   <div className="settings-subsection settings-subsection-lg">
                     <div className="settings-subtitle">{t('app.settings.builtInAgents')}</div>
                     <div className="settings-grid-two">
-                      {agentsList
+                      {writingAssistantsState
                         .filter((a) => a.category !== 'custom')
                         .map((a) => (
                           <div
                             key={a.id}
-                            className={`agent-card settings-agent-card${agentEditorId === a.id ? ' active' : ''}`}
-                            onClick={() => setAgentEditorId(a.id)}
+                            className={`agent-card settings-agent-card${assistantEditorId === a.id ? ' active' : ''}`}
+                            onClick={() => setAssistantEditorId(a.id)}
                           >
                             <div className="settings-agent-name">{a.name}</div>
                             <div className="settings-agent-category">{a.category}</div>
@@ -5196,7 +4993,7 @@ function App() {
                         className="icon-button settings-create-btn"
                         onClick={() => {
                           const id = newId()
-                          const next: Agent = {
+                          const next: WritingAssistant = {
                             id,
                             name: t('app.settings.newAgentName'),
                             category: 'custom',
@@ -5204,30 +5001,30 @@ function App() {
                             temperature: 0.7,
                             max_tokens: 32000,
                           }
-                          setAgentsList((prev) => [...prev, next])
-                          setAgentEditorId(id)
+                          setWritingAssistantsState((prev) => [...prev, next])
+                          setAssistantEditorId(id)
                         }}
                       >
                         + {t('app.settings.newAgent')}
                       </button>
                     </div>
-                    {agentsList.filter((a) => a.category === 'custom').length === 0 ? (
+                    {writingAssistantsState.filter((a) => a.category === 'custom').length === 0 ? (
                       <div className="settings-empty-note settings-empty-box">
                         {t('app.settings.noCustomAgents')}
                       </div>
                     ) : (
                       <div className="settings-grid-two">
-                        {agentsList
+                        {writingAssistantsState
                           .filter((a) => a.category === 'custom')
                           .map((a) => (
                             <div
                               key={a.id}
-                              className={`agent-card settings-agent-card settings-agent-card-custom${agentEditorId === a.id ? ' active' : ''}`}
-                              onClick={() => setAgentEditorId(a.id)}
+                              className={`agent-card settings-agent-card settings-agent-card-custom${assistantEditorId === a.id ? ' active' : ''}`}
+                              onClick={() => setAssistantEditorId(a.id)}
                             >
                               <div className="settings-agent-name">{a.name}</div>
                               <div className="settings-agent-category">{t('app.settings.customCategory')}</div>
-                              {agentEditorId === a.id && (
+                              {assistantEditorId === a.id && (
                                 <button
                                   className="icon-button settings-agent-delete-btn"
                                   onClick={(e) => {
@@ -5235,8 +5032,8 @@ function App() {
                                     void (async () => {
                                       const ok = await showConfirm(t('app.settings.confirmDeleteCustomAgent'))
                                       if (!ok) return
-                                      setAgentsList((prev) => prev.filter((x) => x.id !== a.id))
-                                      setAgentEditorId('')
+                                      setWritingAssistantsState((prev) => prev.filter((x) => x.id !== a.id))
+                                      setAssistantEditorId('')
                                     })()
                                   }}
                                 >
@@ -5249,21 +5046,21 @@ function App() {
                     )}
                   </div>
 
-                  {agentEditorId && agentsList.find((a) => a.id === agentEditorId) && (
+                  {assistantEditorId && writingAssistantsState.find((a) => a.id === assistantEditorId) && (
                     <div className="settings-editor-panel">
                       <div className="settings-editor-title">
-                        {t('app.settings.editAgent')}: {agentsList.find((a) => a.id === agentEditorId)?.name}
+                        {t('app.settings.editAgent')}: {writingAssistantsState.find((a) => a.id === assistantEditorId)?.name}
                       </div>
                       <div className="settings-editor-fields">
                         <div className="form-group">
                           <label>{t('app.settings.name')}</label>
                           <input
                             className="ai-select"
-                            value={agentsList.find((a) => a.id === agentEditorId)?.name ?? ''}
+                            value={writingAssistantsState.find((a) => a.id === assistantEditorId)?.name ?? ''}
                             onChange={(e) =>
-                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, name: e.target.value } : a)))
+                              setWritingAssistantsState((prev) => prev.map((a) => (a.id === assistantEditorId ? { ...a, name: e.target.value } : a)))
                             }
-                            disabled={agentsList.find((a) => a.id === agentEditorId)?.category !== 'custom'}
+                            disabled={writingAssistantsState.find((a) => a.id === assistantEditorId)?.category !== 'custom'}
                           />
                         </div>
                         <div className="form-group">
@@ -5272,11 +5069,11 @@ function App() {
                             className="ai-textarea settings-agent-prompt"
                             placeholder={t('app.settings.systemPromptPlaceholder')}
 
-                            value={agentsList.find((a) => a.id === agentEditorId)?.system_prompt ?? ''}
+                            value={writingAssistantsState.find((a) => a.id === assistantEditorId)?.system_prompt ?? ''}
                             onChange={(e) =>
-                              setAgentsList((prev) => prev.map((a) => (a.id === agentEditorId ? { ...a, system_prompt: e.target.value } : a)))
+                              setWritingAssistantsState((prev) => prev.map((a) => (a.id === assistantEditorId ? { ...a, system_prompt: e.target.value } : a)))
                             }
-                            disabled={agentsList.find((a) => a.id === agentEditorId)?.category !== 'custom'}
+                            disabled={writingAssistantsState.find((a) => a.id === assistantEditorId)?.category !== 'custom'}
                           />
                         </div>
                         <div className="form-group">
@@ -5587,15 +5384,6 @@ function App() {
         />
       )}
 
-      {/* Command Palette */}
-      {showCommandPalette && (
-        <CommandPalette
-          commands={commandPaletteCommands}
-          initialQuery={commandPaletteInitialQuery}
-          onClose={() => setShowCommandPalette(false)}
-        />
-      )}
-
       <SearchPanel
         isOpen={showSearchPanel}
         onClose={() => setShowSearchPanel(false)}
@@ -5607,3 +5395,6 @@ function App() {
 }
 
 export default App
+
+
+

@@ -36,3 +36,5 @@ data/
 __tests__/
 *.test.ts
 *.test.tsx
+!src-react/__tests__/
+!src-react/__tests__/*.test.ts

@@ -1,112 +1,54 @@
-# Services
+# Services Overview
 
-This directory contains business logic services for the AI Novel Editor.
+本目录中的服务现在主要围绕“小说写作工作台”组织，而不是通用 IDE 功能。
 
-## DiffService
+## Current Roles
 
-The `DiffService` provides functionality for computing text differences, managing modifications, and applying changes to text files.
+### `DiffService`
 
-### Features
+- 负责把原文与建议稿转换成结构化修订建议
+- 为 `Review` 工作台和修订应用流程提供基础差异数据
+- 重点不是代码 diff，而是写作修订颗粒度
 
-- **Diff Computation**: Uses the `fast-diff` library to compute character-level differences between two text strings
-- **Line-based Changes**: Converts character-level diffs to line-based changes for easier visualization
-- **Change Merging**: Intelligently merges adjacent add/delete operations into modify operations
-- **Modification Management**: Converts diffs into modification objects with status tracking (pending/accepted/rejected)
-- **Selective Application**: Applies only accepted modifications while preserving original content for pending/rejected changes
+### `ModificationService`
 
-### Type Definitions
+- 管理 AI 修订建议的应用、回滚与状态更新
+- 所有修订建议都基于原始快照重放，避免行号漂移
+- 在文件已变化时阻止脏写入
 
-#### DiffChange
-Represents a single change in a diff operation:
-```typescript
-interface DiffChange {
-  type: 'add' | 'delete' | 'modify';
-  lineStart: number;
-  lineEnd: number;
-  originalText?: string;
-  modifiedText?: string;
-}
-```
+### `NovelPlannerService`
 
-#### DiffResult
-Result of a diff computation:
-```typescript
-interface DiffResult {
-  changes: DiffChange[];
-  stats: {
-    additions: number;
-    deletions: number;
-    modifications: number;
-  };
-}
-```
+- 负责大纲、任务队列、连续性索引与长期记忆索引
+- 生成 `Planner` 工作台所需的任务和上下文
+- 维护：
+  - `.novel/state/continuity-index.md`
+  - `.novel/state/character-state-index.md`
+  - `.novel/state/foreshadow-index.md`
 
-#### Modification
-Represents a modification that can be accepted or rejected:
-```typescript
-interface Modification {
-  id: string;
-  type: 'add' | 'delete' | 'modify';
-  lineStart: number;
-  lineEnd: number;
-  originalText?: string;
-  modifiedText?: string;
-  status: 'pending' | 'accepted' | 'rejected';
-}
-```
+### `documentSummary`
 
-### Methods
+- 为长文档生成轻量摘要缓存
+- 生成最近章节摘要、角色状态摘要、线索摘要
+- 用于减少 AI prompt 中的长文噪声
 
-#### computeDiff(original: string, modified: string): DiffResult
-Computes the difference between two text strings and returns a structured result with changes and statistics.
+### `memoryIndex`
 
-#### diffToModifications(diff: DiffResult): Modification[]
-Converts a DiffResult into an array of Modification objects, each with a unique ID and pending status.
+- 处理 Memory 索引的元数据读写
+- 支持：`source`、`locked`、`updated_at`
+- 为作者可治理的长期记忆提供基础能力
 
-#### applyModifications(original: string, modifications: Modification[]): string
-Applies accepted modifications to the original text and returns the modified result. Pending and rejected modifications are ignored.
+## Product-Oriented Principle
 
-### Usage Example
+这些服务现在服务于四个 AI 工作区：
 
-```typescript
-import { diffService } from './services';
+- `Chat`
+- `Planner`
+- `Review`
+- `Memory`
 
-// Compute diff
-const original = 'Line 1\nLine 2\nLine 3';
-const modified = 'Line 1\nModified Line 2\nLine 3\nLine 4';
-const diff = diffService.computeDiff(original, modified);
+如果后续继续扩展，优先考虑：
 
-// Convert to modifications
-const modifications = diffService.diffToModifications(diff);
-
-// Accept some modifications
-modifications[0].status = 'accepted';
-
-// Apply accepted modifications
-const result = diffService.applyModifications(original, modifications);
-```
-
-### Requirements Satisfied
-
-- **Requirement 1.1**: Supports insert, delete, and replace operations at any line range
-- **Requirement 1.2**: Records start line, end line, and modification type for each modification
-- **Requirement 3.1**: Provides structured diff data for visualization in DiffView components
-
-### Testing
-
-The service includes comprehensive unit tests covering:
-- Addition, deletion, and modification detection
-- Conversion from diffs to modifications
-- Selective application of modifications
-- Multiple modification handling
-- Edge cases (empty texts, identical texts, etc.)
-
-Run tests with:
-```bash
-npx vitest run src/services/DiffService.test.ts
-```
-
-### Dependencies
-
-- `fast-diff`: Fast character-level diff algorithm
-- `@types/fast-diff`: TypeScript type definitions for fast-diff
+1. 是否提升小说创作体验
+2. 是否帮助 AI 维持长期连续性
+3. 是否减少作者的重复操作
+4. 是否能被作者理解和控制

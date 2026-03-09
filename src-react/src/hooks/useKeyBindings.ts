@@ -96,15 +96,12 @@ export function formatShortcut(binding: Partial<KeyBinding>): string {
 // Common keyboard shortcuts
 export const DEFAULT_SHORTCUTS = {
   save: { key: 's', ctrl: true },
-  openCommandPalette: { key: 'p', ctrl: true, shift: true },
   search: { key: 'f', ctrl: true },
   newFile: { key: 'n', ctrl: true },
   closeTab: { key: 'w', ctrl: true },
   nextTab: { key: 'Tab', ctrl: true },
   prevTab: { key: 'Tab', ctrl: true, shift: true },
   toggleSidebar: { key: 'b', ctrl: true },
-  toggleTerminal: { key: '`', ctrl: true },
   findInFiles: { key: 'f', ctrl: true, shift: true },
-  goToLine: { key: 'g', ctrl: true },
   toggleTheme: { key: 't', ctrl: true, shift: true },
 }

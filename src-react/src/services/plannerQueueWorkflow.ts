@@ -24,7 +24,7 @@ type TaskQualityResult = {
 }
 
 export type RunPlannerQueueArgs = {
-  workspaceRoot: string | null
+  workRoot: string | null
   isTauriRuntime: boolean
   writerMode: WriterMode
   plannerQueueRunning: boolean
@@ -49,7 +49,7 @@ export type RunPlannerQueueArgs = {
 
 export async function runPlannerQueueWorkflow(args: RunPlannerQueueArgs): Promise<void> {
   const {
-    workspaceRoot,
+    workRoot,
     isTauriRuntime,
     writerMode,
     plannerQueueRunning,
@@ -72,7 +72,7 @@ export async function runPlannerQueueWorkflow(args: RunPlannerQueueArgs): Promis
     refreshTree,
   } = args
 
-  if (!workspaceRoot || !isTauriRuntime) return
+  if (!workRoot || !isTauriRuntime) return
   if (writerMode === 'normal') {
     setPlannerLastRunError('普通模式不执行细纲队列')
     return
@@ -150,3 +150,4 @@ export async function runPlannerQueueWorkflow(args: RunPlannerQueueArgs): Promis
     setPlannerBusy(false)
   }
 }
+

@@ -18,7 +18,7 @@ fn ensure_default_ext(path: &str) -> String {
     return rel_norm;
   }
   if rel_norm.starts_with("stories/") {
-    format!("{rel_norm}.txt")
+    format!("{rel_norm}.md")
   } else if rel_norm.starts_with("concept/") || rel_norm.starts_with("outline/") {
     format!("{rel_norm}.md")
   } else {
@@ -139,6 +139,7 @@ pub struct AgentPerf {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AgentToolEvent {
+  pub action_id: String,
   pub step: u32,
   pub tool: String,
   pub args: Value,
@@ -301,32 +302,8 @@ impl AgentRuntime {
       if path.trim().is_empty() {
         return Err("empty path".to_string());
       }
-      let cleaned_text = text
-        .lines()
-        .map(|line| line.trim_end())
-        .collect::<Vec<_>>()
-        .join("\n");
-      let cleaned_text = cleaned_text
-        .replace("\n\n\n", "\n\n");
       let fixed = ensure_default_ext(path);
-      let rel_norm = fixed.as_str().replace('\\', "/");
-      let rel = commands::validate_relative_path(fixed.as_str())?;
-      let target = ctx.workspace_root.join(rel);
-      if rel_norm == ".novel/.cache/outline.json" {
-        let existing = if target.exists() {
-          fs::read_to_string(&target).unwrap_or_default()
-        } else {
-          String::new()
-        };
-        commands::validate_outline(&existing, &cleaned_text)?;
-      }
-      if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
-      }
-      fs::write(&target, cleaned_text).map_err(|e| format!("write failed: {e}"))?;
-      if rel_norm.starts_with("concept/") && rel_norm.to_lowercase().ends_with(".md") {
-        commands::update_concept_index(&ctx.workspace_root, &rel_norm, text)?;
-      }
+      commands::write_text_internal(&ctx.workspace_root, fixed.as_str(), text, true, "ai-write")?;
       Ok(serde_json::json!({ "ok": true }))
     });
     Self { ctx, tools, memory }
@@ -403,7 +380,9 @@ impl AgentRuntime {
       if let Some(call) = parse_tool_call(&out) {
         let tool_name = call.tool.clone();
         let tool_args = call.args.clone();
+        let action_id = format!("step-{}", step);
         on_tool_event(AgentToolEvent {
+          action_id: action_id.clone(),
           step,
           tool: tool_name.clone(),
           args: tool_args.clone(),
@@ -452,6 +431,7 @@ impl AgentRuntime {
           Err(e) => (serde_json::json!({ "error": e }), false),
         };
         on_tool_event(AgentToolEvent {
+          action_id,
           step,
           tool: tool_name,
           args: tool_args,

@@ -30,7 +30,7 @@ type TaskQualityResult = {
 }
 
 export type RunAutoLongWriteArgs = {
-  workspaceRoot: string | null
+  workRoot: string | null
   isTauriRuntime: boolean
   activeFile: { path: string } | null
   activePath: string | null
@@ -68,7 +68,7 @@ function sleep(ms: number): Promise<void> {
 
 export async function runAutoLongWriteWorkflow(args: RunAutoLongWriteArgs): Promise<void> {
   const {
-    workspaceRoot,
+    workRoot,
     isTauriRuntime,
     activeFile,
     activePath,
@@ -100,7 +100,7 @@ export async function runAutoLongWriteWorkflow(args: RunAutoLongWriteArgs): Prom
     extractTaskSummaryFromMessage,
   } = args
 
-  if (!workspaceRoot || !isTauriRuntime) return
+  if (!workRoot || !isTauriRuntime) return
   if (!activeFile) return
   if (autoLongWriteRunning) return
   if (chatMessagesRef.current.some((m) => m.streaming)) return
@@ -331,3 +331,4 @@ export async function runAutoLongWriteWorkflow(args: RunAutoLongWriteArgs): Prom
     }, 3500)
   }
 }
+

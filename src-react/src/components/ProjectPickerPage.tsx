@@ -1,18 +1,18 @@
 import { useMemo, useState } from 'react'
 import { useI18n } from '../i18n'
-import type { LaunchMode, ProjectItem, ProjectSource } from '../tauri'
+import type { LaunchMode, WorkItem, WorkSource } from '../tauri'
 import { AppIcon } from './icons/AppIcon'
 import './ProjectPickerPage.css'
 
-type ProjectPickerPageProps = {
+type BookshelfPageProps = {
   busy: boolean
   error: string | null
   defaultRoot: string
-  defaultProjects: ProjectItem[]
-  externalProjects: ProjectItem[]
-  lastWorkspace: string | null
+  recentWorks: WorkItem[]
+  importedWorks: WorkItem[]
+  lastWorkPath: string | null
   launchMode: LaunchMode
-  onSelectProject: (path: string, source: ProjectSource) => void
+  onSelectProject: (path: string, source: WorkSource) => void
   onCreateProject: (name: string) => void
   onLoadExternalProject: () => void
   onForgetExternalProject: (path: string) => void
@@ -29,9 +29,9 @@ function ProjectCard({
   onForget,
   t,
 }: {
-  project: ProjectItem
+  project: WorkItem
   busy: boolean
-  onOpen: (path: string, source: ProjectSource) => void
+  onOpen: (path: string, source: WorkSource) => void
   onForget?: (path: string) => void
   t: (key: string) => string
 }) {
@@ -62,13 +62,13 @@ function ProjectCard({
   )
 }
 
-export function ProjectPickerPage({
+export function BookshelfPage({
   busy,
   error,
   defaultRoot,
-  defaultProjects,
-  externalProjects,
-  lastWorkspace,
+  recentWorks,
+  importedWorks,
+  lastWorkPath,
   launchMode,
   onSelectProject,
   onCreateProject,
@@ -78,18 +78,18 @@ export function ProjectPickerPage({
   onLaunchModeChange,
   manualPathEnabled = false,
   onOpenManualPath,
-}: ProjectPickerPageProps) {
+}: BookshelfPageProps) {
   const { t } = useI18n()
   const [manualPath, setManualPath] = useState('')
   const [newProjectName, setNewProjectName] = useState('')
-  const allProjectsCount = defaultProjects.length + externalProjects.length
+  const allProjectsCount = recentWorks.length + importedWorks.length
 
   const groupedStats = useMemo(
     () => ({
-      default: defaultProjects.length,
-      external: externalProjects.length,
+      default: recentWorks.length,
+      external: importedWorks.length,
     }),
-    [defaultProjects.length, externalProjects.length],
+    [recentWorks.length, importedWorks.length],
   )
 
   const canCreate = newProjectName.trim().length > 0 && !busy
@@ -156,8 +156,8 @@ export function ProjectPickerPage({
             <option value="picker">{t('project.launchPicker')}</option>
             <option value="auto_last">{t('project.launchAutoLast')}</option>
           </select>
-          {lastWorkspace ? (
-            <span className="project-last-workspace">{t('project.lastProject')}: {lastWorkspace}</span>
+          {lastWorkPath ? (
+            <span className="project-last-workspace">{t('project.lastProject')}: {lastWorkPath}</span>
           ) : (
             <span className="project-last-workspace">{t('project.lastProject')}: {t('project.none')}</span>
           )}
@@ -186,10 +186,10 @@ export function ProjectPickerPage({
             </span>
           </div>
           <div className="project-list">
-            {defaultProjects.length === 0 ? (
+            {recentWorks.length === 0 ? (
               <div className="project-empty">{t('project.noProjects')}</div>
             ) : (
-              defaultProjects.map((project) => (
+              recentWorks.map((project) => (
                 <ProjectCard key={project.path} project={project} busy={busy} onOpen={onSelectProject} t={t} />
               ))
             )}
@@ -202,10 +202,10 @@ export function ProjectPickerPage({
             <span className="project-root">{t('project.externalHint')}</span>
           </div>
           <div className="project-list">
-            {externalProjects.length === 0 ? (
+            {importedWorks.length === 0 ? (
               <div className="project-empty">{t('project.noExternal')}</div>
             ) : (
-              externalProjects.map((project) => (
+              importedWorks.map((project) => (
                 <ProjectCard
                   key={project.path}
                   project={project}
@@ -249,3 +249,5 @@ export function ProjectPickerPage({
     </div>
   )
 }
+
+export const ProjectPickerPage = BookshelfPage

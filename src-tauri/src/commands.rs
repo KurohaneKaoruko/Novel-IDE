@@ -373,6 +373,11 @@ pub fn remember_external_project(app: AppHandle, path: String) -> Result<(), Str
 }
 
 #[tauri::command]
+pub fn remember_imported_work(app: AppHandle, path: String) -> Result<(), String> {
+  remember_external_project(app, path)
+}
+
+#[tauri::command]
 pub fn forget_external_project(app: AppHandle, path: String) -> Result<(), String> {
   let trimmed = path.trim();
   if trimmed.is_empty() {
@@ -390,6 +395,11 @@ pub fn forget_external_project(app: AppHandle, path: String) -> Result<(), Strin
     }
   });
   save_external_projects(&app, &records)
+}
+
+#[tauri::command]
+pub fn forget_imported_work(app: AppHandle, path: String) -> Result<(), String> {
+  forget_external_project(app, path)
 }
 
 #[tauri::command]
@@ -465,6 +475,18 @@ fn init_novel_workspace(root: &Path) -> Result<(), String> {
   if !continuity_index.exists() {
     let raw = "# Continuity Index\n\nTrack characters, timeline, and callbacks here.\n";
     fs::write(continuity_index, raw).map_err(|e| format!("write continuity index failed: {e}"))?;
+  }
+
+  let character_state_index = novel_dir.join("state").join("character-state-index.md");
+  if !character_state_index.exists() {
+    let raw = "# Character State Index\n\nTrack recent character state shifts here.\n";
+    fs::write(character_state_index, raw).map_err(|e| format!("write character state index failed: {e}"))?;
+  }
+
+  let foreshadow_index = novel_dir.join("state").join("foreshadow-index.md");
+  if !foreshadow_index.exists() {
+    let raw = "# Foreshadow Index\n\nTrack active clues, hooks, and unresolved signals here.\n";
+    fs::write(foreshadow_index, raw).map_err(|e| format!("write foreshadow index failed: {e}"))?;
   }
 
   let history_store = novel_dir.join(".history").join("revisions.json");
@@ -1102,7 +1124,27 @@ pub fn write_text(
   content: String,
 ) -> Result<(), String> {
   let root = get_workspace_root(&state)?;
-  let rel = validate_relative_path(&relative_path)?;
+  write_text_internal(&root, &relative_path, &content, false, "auto-save")
+}
+
+#[tauri::command]
+pub fn create_novel_work(name: String) -> Result<ProjectItem, String> {
+  create_novel_project(name)
+}
+
+#[tauri::command]
+pub fn get_bookshelf_state(app: AppHandle) -> Result<ProjectPickerState, String> {
+  get_project_picker_state(app)
+}
+
+pub(crate) fn write_text_internal(
+  root: &Path,
+  relative_path: &str,
+  content: &str,
+  create_parent_dirs: bool,
+  history_reason: &str,
+) -> Result<(), String> {
+  let rel = validate_relative_path(relative_path)?;
   let target = root.join(rel);
   let rel_norm = relative_path.replace('\\', "/");
 
@@ -1112,11 +1154,13 @@ pub fn write_text(
     } else {
       String::new()
     };
-    validate_outline(&existing, &content)?;
+    validate_outline(&existing, content)?;
   }
 
   if let Some(parent) = target.parent() {
-    if !parent.exists() {
+    if create_parent_dirs {
+      fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
+    } else if !parent.exists() {
       return Err("parent directory does not exist; create it first".to_string());
     }
   }
@@ -1124,14 +1168,14 @@ pub fn write_text(
   if target.exists() && should_track_history_path(&rel_norm) {
     if let Ok(previous_content) = fs::read_to_string(&target) {
       if previous_content != content {
-        let _ = create_history_snapshot_internal(&root, &rel_norm, &previous_content, "auto-save");
+        let _ = create_history_snapshot_internal(root, &rel_norm, &previous_content, history_reason);
       }
     }
   }
-  fs::write(&target, &content).map_err(|e| format!("write failed: {e}"))?;
+  fs::write(&target, content).map_err(|e| format!("write failed: {e}"))?;
 
   if rel_norm.starts_with("concept/") && rel_norm.to_lowercase().ends_with(".md") {
-    update_concept_index(&root, &rel_norm, &content)?;
+    update_concept_index(root, &rel_norm, content)?;
   }
 
   Ok(())
@@ -1275,13 +1319,19 @@ pub fn rename_entry(state: State<'_, AppState>, from_relative_path: String, to_r
 fn normalize_active_agent_id(app: &AppHandle, settings: &mut app_settings::AppSettings) {
   let agents_list = agents::load(app).unwrap_or_else(|_| agents::default_agents());
   if agents_list.is_empty() {
+    settings.active_writing_assistant_id.clear();
     settings.active_agent_id.clear();
     return;
   }
-  let current = settings.active_agent_id.trim();
+  let current = if settings.active_writing_assistant_id.trim().is_empty() {
+    settings.active_agent_id.trim().to_string()
+  } else {
+    settings.active_writing_assistant_id.trim().to_string()
+  };
   let exists = !current.is_empty() && agents_list.iter().any(|a| a.id == current);
   if exists {
-    settings.active_agent_id = current.to_string();
+    settings.active_writing_assistant_id = current.clone();
+    settings.active_agent_id = current;
     return;
   }
   let fallback = agents_list
@@ -1290,6 +1340,7 @@ fn normalize_active_agent_id(app: &AppHandle, settings: &mut app_settings::AppSe
     .or_else(|| agents_list.first())
     .map(|a| a.id.clone())
     .unwrap_or_default();
+  settings.active_writing_assistant_id = fallback.clone();
   settings.active_agent_id = fallback;
 }
 
@@ -1297,8 +1348,9 @@ fn normalize_active_agent_id(app: &AppHandle, settings: &mut app_settings::AppSe
 pub fn get_app_settings(app: AppHandle) -> Result<app_settings::AppSettings, String> {
   let mut s = app_settings::load(&app)?;
   let prev_agent_id = s.active_agent_id.clone();
+  let prev_active_writing_assistant_id = s.active_writing_assistant_id.clone();
   normalize_active_agent_id(&app, &mut s);
-  if s.active_agent_id != prev_agent_id {
+  if s.active_agent_id != prev_agent_id || s.active_writing_assistant_id != prev_active_writing_assistant_id {
     let _ = app_settings::save(&app, &s);
   }
   // Clear keys for display security
@@ -1616,8 +1668,18 @@ pub fn get_agents(app: AppHandle) -> Result<Vec<agents::Agent>, String> {
 }
 
 #[tauri::command]
+pub fn get_writing_assistants(app: AppHandle) -> Result<Vec<agents::Agent>, String> {
+  get_agents(app)
+}
+
+#[tauri::command]
 pub fn set_agents(app: AppHandle, agents_list: Vec<agents::Agent>) -> Result<(), String> {
   agents::save(&app, &agents_list)
+}
+
+#[tauri::command]
+pub fn set_writing_assistants(app: AppHandle, assistants: Vec<agents::Agent>) -> Result<(), String> {
+  set_agents(app, assistants)
 }
 
 #[tauri::command]
@@ -1627,9 +1689,19 @@ pub fn export_agents(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn export_writing_assistants(app: AppHandle) -> Result<String, String> {
+  export_agents(app)
+}
+
+#[tauri::command]
 pub fn import_agents(app: AppHandle, json: String) -> Result<(), String> {
   let list: Vec<agents::Agent> = serde_json::from_str(&json).map_err(|e| format!("import agents failed: {e}"))?;
   agents::save_custom(&app, &list)
+}
+
+#[tauri::command]
+pub fn import_writing_assistants(app: AppHandle, json: String) -> Result<(), String> {
+  import_agents(app, json)
 }
 
 #[tauri::command]
@@ -1941,6 +2013,8 @@ pub fn chat_generate_stream(
   messages: Vec<ChatMessage>,
   useMarkdown: Option<bool>,
   use_markdown: Option<bool>,
+  assistantId: Option<String>,
+  assistant_id: Option<String>,
   agentId: Option<String>,
   agent_id: Option<String>,
   providerId: Option<String>,
@@ -1952,7 +2026,7 @@ pub fn chat_generate_stream(
     return Err("stream_id is required".to_string());
   }
   let use_markdown = useMarkdown.or(use_markdown).unwrap_or(false);
-  let agent_id = agentId.or(agent_id);
+  let agent_id = assistantId.or(assistant_id).or(agentId).or(agent_id);
   let provider_id = providerId
     .or(provider_id)
     .map(|v| v.trim().to_string())
@@ -1989,7 +2063,13 @@ pub fn chat_generate_stream(
     };
     let effective_use_markdown = use_markdown || settings.output.use_markdown;
     let agents_list = agents::load(&app).unwrap_or_else(|_| agents::default_agents());
-    let effective_agent_id = agent_id.unwrap_or_else(|| settings.active_agent_id.clone());
+    let effective_agent_id = agent_id.unwrap_or_else(|| {
+      if settings.active_writing_assistant_id.trim().is_empty() {
+        settings.active_agent_id.clone()
+      } else {
+        settings.active_writing_assistant_id.clone()
+      }
+    });
     let agent = agents_list
       .iter()
       .find(|a| a.id == effective_agent_id)
@@ -2039,7 +2119,7 @@ pub fn chat_generate_stream(
     let react_timeout = Duration::from_secs(240);
     let run_result = tokio::time::timeout(
       react_timeout,
-      runtime.run_react(messages, agent_system.clone(), ai_edit_apply_mode, |msgs| {
+      runtime.run_react(messages, agent_system.clone(), ai_edit_apply_mode.clone(), |msgs| {
         let provider_cfg = current_provider.clone();
         let client = client.clone();
         let app = app.clone();
@@ -2087,6 +2167,7 @@ pub fn chat_generate_stream(
           .unwrap_or_default();
         let mut payload = serde_json::json!({
           "streamId": stream_id_for_task,
+          "actionId": tool_event.action_id,
           "step": tool_event.step,
           "tool": tool_event.tool,
           "phase": tool_event.phase,
@@ -2228,23 +2309,21 @@ pub fn chat_generate_stream(
       response = normalize_plaintext(&response);
     }
 
-    // Parse AI response for file modification instructions
-    let _change_set = match crate::ai_response_parser::parse_ai_response(&response, &workspace_root_clone) {
-      Ok(Some(cs)) => {
-        // Emit the ChangeSet to the frontend
-        let payload = serde_json::json!({
-          "streamId": stream_id_for_task,
-          "changeSet": cs
-        });
-        let _ = window_for_task.emit("ai_change_set", payload);
-        Some(cs)
-      }
-      Ok(None) => None,
-      Err(e) => {
-        eprintln!("Failed to parse AI response for modifications: {}", e);
-        None
-      }
-    };
+    if ai_edit_apply_mode == app_settings::AiEditApplyMode::Review {
+      match crate::ai_response_parser::parse_ai_response(&response, &workspace_root_clone) {
+        Ok(Some(cs)) => {
+          let payload = serde_json::json!({
+            "streamId": stream_id_for_task,
+            "changeSet": cs
+          });
+          let _ = window_for_task.emit("ai_change_set", payload);
+        }
+        Ok(None) => {}
+        Err(e) => {
+          eprintln!("Failed to parse AI response for modifications: {}", e);
+        }
+      };
+    }
 
     if !live_session.has_emitted() {
       emit_stream_status(&window_for_task, &stream_id_for_task, "responding");

@@ -107,10 +107,23 @@ fn custom_agents_from_input(agents: &[Agent], builtins: &[Agent]) -> Vec<Agent> 
 }
 
 fn append_builtin_workflow_prompt(base: &str, category: &str) -> String {
+  let normalized_base = normalize_builtin_prompt(base);
   let appendix = prompt_config::agent_prompts()
     .builtin_workflow_appendix
     .replace("__CATEGORY__", category.trim());
-  format!("{}\n\n{}", base.trim_end(), appendix.trim())
+  format!("{}\n\n{}", normalized_base.trim_end(), appendix.trim())
+}
+
+fn normalize_builtin_prompt(base: &str) -> String {
+  base
+    .replace(
+      "- **必须使用 fs_write_text 工具将内容写入文件**，不要直接输出到对话中",
+      "- 遵守当前编辑模式：审阅优先时输出可审阅的修改建议；直接应用模式下再写入文件",
+    )
+    .replace(
+      "- 写入文件后，在对话中简要说明已写入的内容（如：已写入第X章）",
+      "- 完成后简要说明本轮产出：新增了什么、修改了什么、建议下一步写什么",
+    )
 }
 
 pub fn default_agents() -> Vec<Agent> {

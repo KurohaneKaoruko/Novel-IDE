@@ -1,4 +1,4 @@
-import type { Modification } from './DiffService';
+import { diffService, type Modification } from './DiffService';
 import { invoke } from '@tauri-apps/api/core';
 
 /**
@@ -131,8 +131,8 @@ export class ModificationService {
       throw new Error(`Modification with id ${modificationId} not found in ChangeSet ${changeSetId}`);
     }
 
+    await this.persistChangeSet(changeSetId, changeSet, { [modificationId]: 'accepted' });
     targetMod.status = 'accepted';
-    await this.applyModificationToFile(changeSet.filePath, targetMod);
     this.updateChangeSetStatus(changeSet);
   }
 
@@ -169,15 +169,19 @@ export class ModificationService {
     }
 
     try {
+      const nextStatuses = Object.fromEntries(
+        changeSet.modifications
+          .filter(mod => mod.status === 'pending')
+          .map(mod => [mod.id, 'accepted' as const]),
+      );
+      await this.persistChangeSet(changeSetId, changeSet, nextStatuses);
       for (const mod of changeSet.modifications) {
         if (mod.status === 'pending') {
           mod.status = 'accepted';
         }
       }
-      await this.applyAllModificationsToChangeSet(changeSet);
       changeSet.status = 'accepted';
     } catch (error) {
-      await this.rollbackFile(changeSetId, changeSet.filePath);
       throw new Error(`Failed to accept all modifications: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -222,13 +226,7 @@ export class ModificationService {
       throw new Error(`Modification ${modificationId} is not in accepted state, cannot undo`);
     }
 
-    const backupMap = this.fileBackups.get(changeSetId);
-    if (!backupMap || !backupMap.has(changeSet.filePath)) {
-      throw new Error(`No backup found for file ${changeSet.filePath} in ChangeSet ${changeSetId}`);
-    }
-    
-    const backup = backupMap.get(changeSet.filePath)!;
-    await this.writeFile(changeSet.filePath, backup);
+    await this.persistChangeSet(changeSetId, changeSet, { [modificationId]: 'pending' });
     targetMod.status = 'pending';
     this.updateChangeSetStatus(changeSet);
   }
@@ -309,71 +307,47 @@ export class ModificationService {
     this.fileBackups.delete(changeSetId);
   }
 
-  /**
-   * Apply a single modification to a file
-   * @param filePath - The file path
-   * @param modification - The modification to apply
-   */
-  private async applyModificationToFile(filePath: string, modification: Modification): Promise<void> {
-    const currentContent = await this.readFile(filePath);
-    const lines = currentContent.split('\n');
-    const startIdx = modification.lineStart - 1;
-    const endIdx = modification.lineEnd - 1;
+  private async persistChangeSet(
+    changeSetId: string,
+    changeSet: ChangeSet,
+    statusOverrides: Record<string, Modification['status']>,
+  ): Promise<void> {
+    const currentContent = await this.readFile(changeSet.filePath);
+    const expectedCurrent = this.buildContentFromStatuses(changeSetId, changeSet);
 
-    if (modification.type === 'add') {
-      const newLines = (modification.modifiedText || '').split('\n');
-      lines.splice(startIdx, 0, ...newLines);
-    } else if (modification.type === 'delete') {
-      const deleteCount = endIdx - startIdx + 1;
-      lines.splice(startIdx, deleteCount);
-    } else if (modification.type === 'modify') {
-      const deleteCount = endIdx - startIdx + 1;
-      const newLines = (modification.modifiedText || '').split('\n');
-      lines.splice(startIdx, deleteCount, ...newLines);
+    if (currentContent !== expectedCurrent) {
+      throw new Error(
+        `File ${changeSet.filePath} changed since the AI suggestion was created. Reload the file and regenerate the suggestion before applying it.`,
+      );
     }
 
-    const modifiedContent = lines.join('\n');
-    await this.writeFile(filePath, modifiedContent);
+    const nextContent = this.buildContentFromStatuses(changeSetId, changeSet, statusOverrides);
+    if (nextContent === currentContent) {
+      return;
+    }
+
+    await this.writeFile(changeSet.filePath, nextContent);
   }
 
-  /**
-   * Apply all accepted modifications to a change set
-   * @param changeSet - The change set
-   */
-  private async applyAllModificationsToChangeSet(changeSet: ChangeSet): Promise<void> {
-    const backupMap = this.fileBackups.get(changeSet.id);
-    if (!backupMap) return;
+  private buildContentFromStatuses(
+    changeSetId: string,
+    changeSet: ChangeSet,
+    statusOverrides?: Record<string, Modification['status']>,
+  ): string {
+    const originalContent = this.getBackupContent(changeSetId, changeSet.filePath);
+    const nextModifications = changeSet.modifications.map((mod) => ({
+      ...mod,
+      status: statusOverrides?.[mod.id] ?? mod.status,
+    }));
+    return diffService.applyModifications(originalContent, nextModifications);
+  }
 
-    const originalContent = backupMap.get(changeSet.filePath);
-    if (!originalContent) return;
-
-    const acceptedMods = changeSet.modifications
-      .filter(mod => mod.status === 'accepted')
-      .sort((a, b) => b.lineStart - a.lineStart);
-
-    if (acceptedMods.length === 0) return;
-
-    const lines = originalContent.split('\n');
-
-    for (const mod of acceptedMods) {
-      const startIdx = mod.lineStart - 1;
-      const endIdx = mod.lineEnd - 1;
-
-      if (mod.type === 'add') {
-        const newLines = (mod.modifiedText || '').split('\n');
-        lines.splice(startIdx, 0, ...newLines);
-      } else if (mod.type === 'delete') {
-        const deleteCount = endIdx - startIdx + 1;
-        lines.splice(startIdx, deleteCount);
-      } else if (mod.type === 'modify') {
-        const deleteCount = endIdx - startIdx + 1;
-        const newLines = (mod.modifiedText || '').split('\n');
-        lines.splice(startIdx, deleteCount, ...newLines);
-      }
+  private getBackupContent(changeSetId: string, filePath: string): string {
+    const backupMap = this.fileBackups.get(changeSetId);
+    if (!backupMap || !backupMap.has(filePath)) {
+      throw new Error(`No backup found for file ${filePath} in ChangeSet ${changeSetId}`);
     }
-
-    const content = lines.join('\n');
-    await this.writeFile(changeSet.filePath, content);
+    return backupMap.get(filePath)!;
   }
 
   /**

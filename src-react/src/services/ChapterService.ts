@@ -116,7 +116,7 @@ export class ChapterService {
     try {
       // Generate file name from title
       const fileName = this.sanitizeFileName(title);
-      const filePath = `${this.STORIES_DIR}/${fileName}.txt`;
+      const filePath = `${this.STORIES_DIR}/${fileName}.md`;
       
       // Create the file
       await invoke('create_file', { relativePath: filePath });

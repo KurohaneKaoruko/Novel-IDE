@@ -11,6 +11,7 @@ pub struct AppSettings {
   pub output: OutputSettings,
   pub providers: Vec<ModelProvider>,
   pub active_provider_id: String,
+  pub active_writing_assistant_id: String,
   pub active_agent_id: String,
   pub launch_mode: LaunchMode,
   pub ai_edit_apply_mode: AiEditApplyMode,
@@ -61,6 +62,7 @@ impl Default for AppSettings {
       output: OutputSettings::default(),
       providers,
       active_provider_id: "openai".to_string(),
+      active_writing_assistant_id: "fantasy".to_string(),
       active_agent_id: "fantasy".to_string(),
       launch_mode: LaunchMode::default(),
       ai_edit_apply_mode: AiEditApplyMode::default(),
@@ -77,7 +79,7 @@ pub enum AiEditApplyMode {
 
 impl Default for AiEditApplyMode {
   fn default() -> Self {
-    Self::AutoApply
+    Self::Review
   }
 }
 
@@ -195,6 +197,19 @@ fn ensure_sane(mut s: AppSettings) -> AppSettings {
   if s.active_provider_id.trim().is_empty() || !s.providers.iter().any(|p| p.id == s.active_provider_id) {
     s.active_provider_id = s.providers[0].id.clone();
   }
+  let active_writing_assistant_id = s.active_writing_assistant_id.trim().to_string();
+  let active_agent_id = s.active_agent_id.trim().to_string();
+  if active_writing_assistant_id.is_empty() && !active_agent_id.is_empty() {
+    s.active_writing_assistant_id = active_agent_id.clone();
+  }
+  if active_agent_id.is_empty() && !active_writing_assistant_id.is_empty() {
+    s.active_agent_id = active_writing_assistant_id.clone();
+  }
+  if !s.active_writing_assistant_id.trim().is_empty() {
+    s.active_agent_id = s.active_writing_assistant_id.trim().to_string();
+  } else if !s.active_agent_id.trim().is_empty() {
+    s.active_writing_assistant_id = s.active_agent_id.trim().to_string();
+  }
   s
 }
 
@@ -249,6 +264,7 @@ pub fn load(app: &tauri::AppHandle) -> Result<AppSettings, String> {
           output: legacy.output,
           providers,
           active_provider_id: legacy.providers.active,
+          active_writing_assistant_id: legacy.active_agent_id.clone(),
           active_agent_id: legacy.active_agent_id,
           launch_mode: LaunchMode::default(),
           ai_edit_apply_mode: AiEditApplyMode::default(),
@@ -274,7 +290,8 @@ pub fn save(app: &tauri::AppHandle, settings: &AppSettings) -> Result<(), String
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|e| format!("create settings dir failed: {e}"))?;
   }
-  let raw = serde_json::to_string_pretty(settings).map_err(|e| format!("serialize settings failed: {e}"))?;
+  let normalized = ensure_sane(settings.clone());
+  let raw = serde_json::to_string_pretty(&normalized).map_err(|e| format!("serialize settings failed: {e}"))?;
   fs::write(path, raw).map_err(|e| format!("write settings failed: {e}"))
 }
 

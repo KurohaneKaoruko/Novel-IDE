@@ -1,143 +1,122 @@
 # Novel-IDE
 
-Novel-IDE 是一个面向长篇写作的本地桌面 IDE，基于 `Tauri v2 + React + Lexical` 构建。  
-它把小说创作拆成清晰的三层结构：`设定（concept）/大纲（outline）/正文（stories）`，并将缓存和项目元数据统一收纳到 `.novel/`，减少目录污染。
+Novel-IDE 是一个专注于长篇小说创作的本地桌面写作工作台，基于 `Tauri v2 + React + Lexical` 构建。
 
-## 适合谁
+它不是通用编程 IDE，也不是代码代理外壳，而是围绕小说作者的核心工作流设计：
 
-- 需要长期维护世界观、人物关系和章节正文的小说作者
-- 希望在本地工作流中接入 AI 续写、改写和整理能力的创作者
-- 希望项目目录干净、可版本管理、可迁移的写作团队
+- 作品与资料管理
+- 章节写作与改稿
+- AI 规划、审阅与长期记忆
+- 人物、关系、线索与连续性维护
+
+## 当前产品形态
+
+### 1. 作品工作区
+
+每个作品目录采用固定结构：
+
+```text
+<work>/
+  concept/   # 设定、人物、关系等资料（.md）
+  outline/   # 大纲与规划资料（.md）
+  stories/   # 正文章节（.md）
+  .novel/    # 状态、缓存、历史、索引
+```
+
+### 2. AI 写作工作台
+
+右侧 AI 栏已经重构为多工作区侧栏，而不是单纯聊天框：
+
+- `Chat`：对话、会话切换、会话筛选、Slash 模板、上下文注入
+- `Planner`：规划任务、下一任务执行、任务筛选、任务状态统计
+- `Review`：修订建议、单条接受/忽略、按当前文档/待处理过滤
+- `Memory`：角色状态索引、伏笔索引、查看/编辑/保存/锁定/恢复自动模式
+
+### 3. AI 上下文质量
+
+当前 AI 系统已支持：
+
+- 长文档摘要缓存
+- 最近章节摘要索引
+- 角色状态摘要
+- 最近线索 / 悬念摘要
+- 持久化 Memory 索引
+- Review 接受修改后自动刷新 Memory
 
 ## 核心能力
 
-- 工作区初始化：自动建立 `concept/`、`outline/`、`stories/`、`.novel/`
-- Lexical 编辑器：多标签、自动保存、Markdown 写作与预览
-- AI 对话面板：引用选区、流式输出、结果一键插入光标位置
-- 多 Provider 支持：OpenAI 兼容接口、Claude、文心一言（兼容模式）
-- 智能体（Agent）系统：内置模板，支持自定义与导入导出
-- 创作辅助：智能补全（结合上下文与章节目标字数）
-- 人物关系图谱：从 `concept/*.md` 抽取并可视化
-- Git 面板：初始化、状态、diff、提交与历史查看
+- 多标签 Markdown 写作编辑
+- 自动保存与预览
+- 新建章节 / 设定 / 大纲文件
+- AI 续写、改写、润色、规划与一致性检查
+- 修订建议审阅与逐条应用
+- 人物关系图与作品结构导航
+- 版本记录与恢复
 
 ## 快速开始
 
-### 1. 环境要求（Windows）
+### 环境要求（Windows）
 
 - Node.js 18+
 - Rust stable（含 `cargo`）
 - Visual Studio Build Tools（Desktop development with C++ / MSVC）
-- WebView2 Runtime（Win10/11 通常已内置）
+- WebView2 Runtime
 
-### 2. 本地开发
+### 本地开发
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm run tauri:dev
 ```
 
-### 3. 构建发行包
+### 构建
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm run tauri:build
 ```
 
-构建产物通常位于：
+## 常用命令
 
-- `src-tauri/target/release/bundle/**`
-- `src-tauri/target/release/*.exe`
-- `src-react/dist/**`（前端静态产物）
+- `pnpm run dev`：仅启动前端开发服务器
+- `pnpm run tauri:dev`：启动桌面开发模式
+- `pnpm run build`：构建前端
+- `pnpm run tauri:build`：构建桌面应用
+- `pnpm run test`：运行 Vitest
+- `pnpm run lint`：运行 ESLint
 
-## 项目结构（前后端分离）
+## AI 工作流摘要
+
+### Review-first 默认策略
+
+- AI 改稿默认先生成审阅建议，不直接覆盖正文
+- 建议基于原始快照应用，避免连续接受时行号漂移
+- 文件内容变化后会阻止脏写入，要求重新生成建议
+
+### Memory 治理
+
+Memory 索引位于：
 
 ```text
-<repo>/
-  src-react/      # 前端工程（React + TypeScript + Vite）
-    src/          # 前端源码
-    public/       # 前端静态资源
-    index.html    # 前端入口模板
-  src-tauri/      # 后端/桌面壳（Rust + Tauri）
-  scripts/        # 构建与维护脚本
-  branding.json   # 品牌与命名元配置（由 sync:branding 消费）
+.novel/state/character-state-index.md
+.novel/state/foreshadow-index.md
 ```
 
-## 工作区目录约定
+每个索引支持：
 
-```text
-<workspace>/
-  concept/   # 设定（仅 .md）
-  outline/   # 大纲（仅 .md）
-  stories/   # 正文（仅 .md）
-  .novel/    # 缓存、索引、项目设置等非正文文件
-```
+- 自动生成 (`source: auto`)
+- 手工修订 (`source: manual`)
+- 锁定防覆盖 (`locked: true`)
+- 恢复自动模式
 
-### 约束规则
-
-- `concept/outline/stories` 下仅允许写入 `.md`
-- 与小说正文无关的项目文件统一放在 `.novel/`
-
-## 常用流程
-
-### 打开工作区
-
-1. 在顶部输入工作区路径（例如 `D:\Novels\MyBook`）
-2. 点击“打开”
-3. 首次触发 AI 功能时自动完成目录和模板初始化
-
-### 新建章节
-
-- 点击“新建章节”或“开新章”
-- 默认路径：`stories/chapter-YYYYMMDD-HHMM.md`
-
-### AI 写作协作
-
-- “引用选区”：把当前选中文本插入到 AI 输入上下文
-- `Ctrl+Enter`：发送消息
-- “插入到光标”：将 AI 输出插入当前编辑位置
-- `Ctrl+Shift+L`：聚焦 AI 输入框
-
-### 人物关系图谱数据来源
-
-- `concept/characters.md`：人物列表（每行 `- 人名`）
-- `concept/relations.md`：关系定义（`A -> B : 关系`）
-
-## AI 与数据存储
-
-### Provider 与 Agent 配置
-
-在右侧 AI 面板打开“设置”后可配置：
-
-- Provider（OpenAI 兼容 / Claude / 文心一言兼容）
-- 输出格式（纯文本或 Markdown）
-- Agent 提示词、温度、最大输出长度
-
-### 配置与密钥保存策略
+## 主要存储位置
 
 - App settings: `<install-dir>/config/settings.json`
-- Agents: `<install-dir>/data/agents.json`
+- Writing assistants: `<install-dir>/data/agents.json`
 - Chat history: `<install-dir>/data/chat_history.json`
-- Project picker state: `<install-dir>/state/last_workspace.json`, `<install-dir>/state/external_projects.json`
-- API keys: `<install-dir>/secrets/secrets.json` (encrypted with DPAPI on Windows)
+- Bookshelf state: `<install-dir>/state/last_workspace.json`, `<install-dir>/state/external_projects.json`
+- API keys: `<install-dir>/secrets/secrets.json`
 
-## 开发脚本
-
-- `pnpm run dev`：仅启动前端开发服务器（Vite, 1420，项目根为 `src-react/`）
-- `pnpm run tauri:dev`：启动桌面开发模式
-- `pnpm run build`：构建前端（输出到 `src-react/dist/`）
-- `pnpm run tauri:build`：构建桌面发行包
-- `pnpm run test`：运行 Vitest 测试
-- `pnpm run lint`：运行 ESLint
-- `pnpm run clean`：清理构建产物
-
-## 技术栈
-
-- Desktop: Tauri v2（Rust）
-- Frontend: React 19 + TypeScript + Vite（rolldown-vite）
-- Editor: Lexical
-- Network: reqwest
-- Git: git2
-
-## License
+## 许可证
 
 GPL-3.0

@@ -5,7 +5,7 @@ import { AppIcon } from './icons/AppIcon'
 import './NovelStructurePanel.css'
 
 type NovelStructurePanelProps = {
-  workspaceRoot: string | null
+  workRoot: string | null
   tree: FsEntry | null
   activePath: string | null
   busy: boolean
@@ -62,7 +62,7 @@ function countLabel(visible: number, total: number, filtered: boolean): string {
 }
 
 export function NovelStructurePanel({
-  workspaceRoot,
+  workRoot,
   tree,
   activePath,
   busy,
@@ -87,10 +87,10 @@ export function NovelStructurePanel({
   const [itemContextMenu, setItemContextMenu] = useState<ItemContextMenuState>(null)
 
   const workspaceName = useMemo(() => {
-    if (!workspaceRoot) return t('structure.workspaceDefaultName')
-    const parts = workspaceRoot.split(/[/\\]/).filter(Boolean)
+    if (!workRoot) return t('structure.workspaceDefaultName')
+    const parts = workRoot.split(/[/\\]/).filter(Boolean)
     return parts[parts.length - 1] ?? t('structure.workspaceDefaultName')
-  }, [t, workspaceRoot])
+  }, [t, workRoot])
 
   const sections = useMemo<SectionCollection>(() => {
     const chapterFiles = collectFiles(findDir(tree, 'stories'))
@@ -165,7 +165,7 @@ export function NovelStructurePanel({
     })
   }
 
-  if (!workspaceRoot) {
+  if (!workRoot) {
     return (
       <div className="novel-structure-panel">
         <div className="novel-structure-empty">
@@ -388,3 +388,4 @@ export function NovelStructurePanel({
     </div>
   )
 }
+

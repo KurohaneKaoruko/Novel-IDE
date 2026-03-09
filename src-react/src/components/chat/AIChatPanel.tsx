@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import { useI18n } from '../../i18n'
-import type { ChangeSet, WriterMode } from '../../services'
+import type { AIActionTraceItem, ChangeSet, NovelTask, WriterMode } from '../../services'
+import type { MemoryIndexMeta } from '../../services/memoryIndex'
 import { AppIcon } from '../icons/AppIcon'
 
 export type AIChatMessage = {
@@ -17,29 +18,7 @@ export type AIChatMessage = {
   versionCount?: number
 }
 
-export type AIChatToolEvent = {
-  step: number
-  tool: string
-  status: 'running' | 'success' | 'error'
-  inputPreview: string
-  observationPreview?: string
-  listItems?: Array<{ name: string; kind: 'dir' | 'file' }>
-  listTruncated?: boolean
-  exists?: boolean
-  existsKind?: 'dir' | 'file'
-  readPath?: string
-  readLines?: number
-  readChars?: number
-  readPreview?: string
-  writePath?: string
-  writeLines?: number
-  writeChars?: number
-  writePreview?: string
-  timestamp: number
-  startedAt?: number
-  finishedAt?: number
-  durationMs?: number
-}
+export type AIChatToolEvent = AIActionTraceItem
 export type AIChatOption = {
   id: string
   name: string
@@ -47,10 +26,51 @@ export type AIChatOption = {
   disabled?: boolean
 }
 
+export type AIChatSessionSummary = {
+  id: string
+  updatedAt: number
+  messageCount: number
+  title?: string
+}
+
+type AIQuickAction = {
+  id: string
+  label: string
+  description: string
+  action: () => void
+}
+
+type AISlashCommand = {
+  id: string
+  label: string
+  hint: string
+  run: () => void
+}
+
 type AIChatPanelProps = {
   writerMode: WriterMode
   plannerLastRunError: string | null
+  plannerTasks: NovelTask[]
+  plannerBusy: boolean
+  plannerQueueRunning: boolean
+  onRunNextPlannerTask: () => void | Promise<unknown>
+  onRetryPlannerTask: (taskId: string) => void | Promise<unknown>
+  onMarkPlannerTaskDone: (taskId: string) => void | Promise<unknown>
+  onOpenTaskScope: (path: string) => void | Promise<unknown>
   onNewSession: () => void | Promise<unknown>
+  sessionSummaries: AIChatSessionSummary[]
+  activeSessionId: string
+  sessionsLoading: boolean
+  onOpenSession: (sessionId: string) => void | Promise<unknown>
+  memoryIndexLoading: boolean
+  characterStateIndexContent: string
+  characterStateIndexMeta: MemoryIndexMeta | null
+  foreshadowIndexContent: string
+  foreshadowIndexMeta: MemoryIndexMeta | null
+  onRefreshMemoryIndices: () => void | Promise<unknown>
+  onSaveMemoryIndex: (kind: 'character' | 'foreshadow', content: string) => void | Promise<unknown>
+  onToggleMemoryIndexLock: (kind: 'character' | 'foreshadow') => void | Promise<unknown>
+  onRestoreMemoryIndexAuto: (kind: 'character' | 'foreshadow') => void | Promise<unknown>
   chatMessages: AIChatMessage[]
   messagesRef: RefObject<HTMLDivElement | null>
   onAutoScrollChange: (atBottom: boolean) => void
@@ -87,9 +107,22 @@ type AIChatPanelProps = {
   onGenerateAssistantCandidates: (messageId?: string, count?: number) => void | Promise<unknown>
   onRetryWithFallbackProvider: (messageId?: string, retryContextOverride?: string) => void | Promise<unknown>
   onOpenModelSettings: () => void
-  activeAgentId: string
-  agents: AIChatOption[]
-  onActiveAgentChange: (id: string) => void
+  reviewChangeSets: ChangeSet[]
+  activeReviewChangeSetId: string | null
+  onOpenReviewChangeSet: (changeSetId: string) => void
+  onAcceptReviewChangeSet: (changeSetId: string) => void | Promise<unknown>
+  onRejectReviewChangeSet: (changeSetId: string) => void | Promise<unknown>
+  onAcceptReviewModification: (changeSetId: string, modificationId: string) => void | Promise<unknown>
+  onRejectReviewModification: (changeSetId: string, modificationId: string) => void | Promise<unknown>
+  activeDocumentPath: string | null
+  activeDocumentLabel: string | null
+  activeDocumentCharCount: number
+  activeDocumentDirty: boolean
+  activeDocumentPreview: string
+  activeWorkLabel: string | null
+  activeAssistantId: string
+  assistants: AIChatOption[]
+  onActiveAssistantChange: (id: string) => void
   activeProviderId: string
   providers: AIChatOption[]
   providerSelectInvalid?: boolean
@@ -310,7 +343,7 @@ function buildThoughtSummary(toolEvents: AIChatToolEvent[], t: TranslateFn): str
   const running = [...toolEvents].reverse().find((event) => event.status === 'running')
   if (running) {
     return t('chat.summaryRunning', {
-      action: toolDisplayName(running.tool, t),
+      action: buildWriterToolHeadline(running, t),
       done: completed.length,
       failed: failed.length,
     })
@@ -319,7 +352,7 @@ function buildThoughtSummary(toolEvents: AIChatToolEvent[], t: TranslateFn): str
     const latestFailed = failed[failed.length - 1]
     return t('chat.summaryFailed', {
       failed: failed.length,
-      action: toolDisplayName(latestFailed.tool, t),
+      action: buildWriterToolHeadline(latestFailed, t),
     })
   }
   return t('chat.summaryDone', { done: completed.length })
@@ -425,7 +458,46 @@ function hasLiveToolDetail(toolEvent: AIChatToolEvent): boolean {
 }
 
 function toolEventIdentityKey(toolEvent: AIChatToolEvent): string {
-  return `${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}`
+  return toolEvent.actionId || `${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}`
+}
+
+function compactTargetLabel(target: string): string {
+  const trimmed = target.trim()
+  if (!trimmed) return ''
+  if (trimmed.includes(' -> ')) return trimmed
+  const normalized = trimmed.replace(/\\/g, '/')
+  const segments = normalized.split('/').filter(Boolean)
+  if (segments.length <= 2) return normalized
+  return `${segments[0]}/${segments[segments.length - 1]}`
+}
+
+function buildWriterToolHeadline(toolEvent: AIChatToolEvent, t: TranslateFn): string {
+  const rawTarget = resolveToolEventTarget(toolEvent)
+  const target = compactTargetLabel(rawTarget)
+  switch (toolEvent.tool) {
+    case 'fs_read_text':
+      return t('chat.trace.readingFile', { target: target || t('chat.trace.currentDocument') })
+    case 'fs_write_text':
+      return t('chat.trace.writingFile', { target: target || t('chat.trace.currentDocument') })
+    case 'fs_list_dir':
+      return t('chat.trace.listingFolder', { target: target || t('chat.trace.currentWorkspace') })
+    case 'fs_exists':
+      return t('chat.trace.checkingPath', { target: target || t('chat.trace.currentWorkspace') })
+    case 'fs_create_dir':
+      return t('chat.trace.creatingFolder', { target: target || t('chat.trace.currentWorkspace') })
+    case 'fs_create_file':
+      return t('chat.trace.creatingFile', { target: target || t('chat.trace.currentDocument') })
+    case 'fs_rename_entry':
+      return t('chat.trace.renamingEntry', { target: target || t('chat.trace.currentDocument') })
+    case 'fs_delete_entry':
+      return t('chat.trace.deletingEntry', { target: target || t('chat.trace.currentDocument') })
+    case 'memory_search':
+      return t('chat.trace.searchingMemory')
+    case 'memory_upsert':
+      return t('chat.trace.updatingMemory')
+    default:
+      return target ? `${toolDisplayName(toolEvent.tool, t)} · ${target}` : toolDisplayName(toolEvent.tool, t)
+  }
 }
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -546,11 +618,31 @@ function buildToolOutcomeSummary(toolEvent: AIChatToolEvent, t: TranslateFn): st
 }
 
 export function AIChatPanel(props: AIChatPanelProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const {
     writerMode,
     plannerLastRunError,
+    plannerTasks,
+    plannerBusy,
+    plannerQueueRunning,
+    onRunNextPlannerTask,
+    onRetryPlannerTask,
+    onMarkPlannerTaskDone,
+    onOpenTaskScope,
     onNewSession,
+    sessionSummaries,
+    activeSessionId,
+    sessionsLoading,
+    onOpenSession,
+    memoryIndexLoading,
+    characterStateIndexContent,
+    characterStateIndexMeta,
+    foreshadowIndexContent,
+    foreshadowIndexMeta,
+    onRefreshMemoryIndices,
+    onSaveMemoryIndex,
+    onToggleMemoryIndexLock,
+    onRestoreMemoryIndexAuto,
     chatMessages,
     messagesRef,
     onAutoScrollChange,
@@ -587,9 +679,22 @@ export function AIChatPanel(props: AIChatPanelProps) {
     onGenerateAssistantCandidates,
     onRetryWithFallbackProvider,
     onOpenModelSettings,
-    activeAgentId,
-    agents,
-    onActiveAgentChange,
+    reviewChangeSets,
+    activeReviewChangeSetId,
+    onOpenReviewChangeSet,
+    onAcceptReviewChangeSet,
+    onRejectReviewChangeSet,
+    onAcceptReviewModification,
+    onRejectReviewModification,
+    activeDocumentPath,
+    activeDocumentLabel,
+    activeDocumentCharCount,
+    activeDocumentDirty,
+    activeDocumentPreview,
+    activeWorkLabel,
+    activeAssistantId,
+    assistants,
+    onActiveAssistantChange,
     activeProviderId,
     providers,
     providerSelectInvalid = false,
@@ -616,6 +721,20 @@ export function AIChatPanel(props: AIChatPanelProps) {
   const [collapsedLiveStages, setCollapsedLiveStages] = useState<Record<string, boolean>>({})
   const [expandedLiveItems, setExpandedLiveItems] = useState<Record<string, boolean>>({})
   const [toolNowTick, setToolNowTick] = useState(Date.now())
+  const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<'chat' | 'planner' | 'review' | 'memory'>('chat')
+  const [sessionFilter, setSessionFilter] = useState('')
+  const [pinnedSessionIds, setPinnedSessionIds] = useState<string[]>([])
+  const [archivedSessionIds, setArchivedSessionIds] = useState<string[]>([])
+  const [deletedSessionIds, setDeletedSessionIds] = useState<string[]>([])
+  const [showArchivedSessions, setShowArchivedSessions] = useState(false)
+  const [sessionTitleOverrides, setSessionTitleOverrides] = useState<Record<string, string>>({})
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingSessionTitle, setEditingSessionTitle] = useState('')
+  const [plannerStatusFilter, setPlannerStatusFilter] = useState<'all' | 'todo' | 'running' | 'blocked' | 'done' | 'retry'>('all')
+  const [reviewOnlyCurrentDoc, setReviewOnlyCurrentDoc] = useState(true)
+  const [reviewPendingOnly, setReviewPendingOnly] = useState(true)
+  const [characterMemoryDraft, setCharacterMemoryDraft] = useState('')
+  const [foreshadowMemoryDraft, setForeshadowMemoryDraft] = useState('')
   const latestLiveStreamIdRef = useRef<string>('')
   const liveOpsListRef = useRef<HTMLDivElement | null>(null)
 
@@ -671,6 +790,291 @@ export function AIChatPanel(props: AIChatPanelProps) {
 
     return activeLiveToolEvents.filter((event) => selected.has(toolEventIdentityKey(event))).slice(-5)
   })()
+
+  const activeAssistant = assistants.find((assistant) => assistant.id === activeAssistantId) ?? null
+  const activeProvider = providers.find((provider) => provider.id === activeProviderId) ?? null
+  const activeDocumentCrumbs = activeDocumentPath ? activeDocumentPath.split('/').filter(Boolean) : []
+  const activePlannerTask = plannerTasks.find((task) => task.status === 'running') ?? plannerTasks.find((task) => task.status === 'todo' || task.status === 'retry') ?? null
+  const reviewSummary = reviewChangeSets.map((changeSet) => ({
+    id: changeSet.id,
+    filePath: changeSet.filePath,
+    status: changeSet.status,
+    total: changeSet.modifications.length,
+    pending: changeSet.modifications.filter((mod) => mod.status === 'pending').length,
+    pendingMods: changeSet.modifications.filter((mod) => mod.status === 'pending').slice(0, 3).map((mod) => ({
+      id: mod.id,
+      type: mod.type,
+      lineStart: mod.lineStart,
+      lineEnd: mod.lineEnd,
+      preview: compactPlainText(mod.modifiedText ?? mod.originalText ?? '', 96),
+    })),
+    preview: compactPlainText(
+      changeSet.modifications
+        .find((mod) => mod.status === 'pending')?.modifiedText ??
+        changeSet.modifications.find((mod) => mod.status === 'pending')?.originalText ??
+        changeSet.modifications[0]?.modifiedText ??
+        changeSet.modifications[0]?.originalText ??
+        '',
+      120,
+    ),
+  }))
+
+  const insertQuickPrompt = useCallback(
+    (prompt: string, mode?: WriterMode) => {
+      if (mode && mode !== writerMode) {
+        void onWriterModeChange(mode)
+      }
+      const nextValue = chatInput.trim() ? `${chatInput}\n\n${prompt}` : prompt
+      onChatInputChange(nextValue)
+      window.setTimeout(() => chatInputRef.current?.focus(), 0)
+    },
+    [chatInput, chatInputRef, onChatInputChange, onWriterModeChange, writerMode],
+  )
+
+  const sessionTimeLabel = useCallback(
+    (timestamp: number) => {
+      if (!Number.isFinite(timestamp) || timestamp <= 0) return t('chat.sessionUnknown')
+      return new Date(timestamp).toLocaleString(locale, {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    },
+    [locale, t],
+  )
+
+  const memoryUpdatedLabel = useCallback(
+    (value?: string | null) => {
+      if (!value) return t('chat.memoryUnknownTime')
+      const parsed = new Date(value)
+      if (Number.isNaN(parsed.getTime())) return t('chat.memoryUnknownTime')
+      return parsed.toLocaleString(locale, {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    },
+    [locale, t],
+  )
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('novel-ide-pinned-sessions')
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        setPinnedSessionIds(parsed.filter((item): item is string => typeof item === 'string'))
+      }
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('novel-ide-archived-sessions')
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        setArchivedSessionIds(parsed.filter((item): item is string => typeof item === 'string'))
+      }
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('novel-ide-deleted-sessions')
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        setDeletedSessionIds(parsed.filter((item): item is string => typeof item === 'string'))
+      }
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('novel-ide-session-title-overrides')
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') {
+        setSessionTitleOverrides(parsed as Record<string, string>)
+      }
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('novel-ide-pinned-sessions', JSON.stringify(pinnedSessionIds))
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [pinnedSessionIds])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('novel-ide-archived-sessions', JSON.stringify(archivedSessionIds))
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [archivedSessionIds])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('novel-ide-deleted-sessions', JSON.stringify(deletedSessionIds))
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [deletedSessionIds])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('novel-ide-session-title-overrides', JSON.stringify(sessionTitleOverrides))
+    } catch {
+      // ignore localStorage issues
+    }
+  }, [sessionTitleOverrides])
+
+  const filteredSessions = useMemo(() => {
+    const keyword = sessionFilter.trim().toLowerCase()
+    const base = sessionSummaries.filter((session) => {
+      if (deletedSessionIds.includes(session.id)) return false
+      if (archivedSessionIds.includes(session.id)) return false
+      const timeLabel = sessionTimeLabel(session.updatedAt).toLowerCase()
+      const titleLabel = (sessionTitleOverrides[session.id] ?? session.title ?? '').toLowerCase()
+      return !keyword || session.id.toLowerCase().includes(keyword) || timeLabel.includes(keyword) || titleLabel.includes(keyword)
+    })
+    return [...base].sort((left, right) => {
+      const leftPinned = pinnedSessionIds.includes(left.id)
+      const rightPinned = pinnedSessionIds.includes(right.id)
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
+      return right.updatedAt - left.updatedAt
+    })
+  }, [archivedSessionIds, deletedSessionIds, pinnedSessionIds, sessionFilter, sessionSummaries, sessionTimeLabel, sessionTitleOverrides])
+  const visibleSessions = filteredSessions.slice(0, 8)
+  const archivedSessions = useMemo(
+    () =>
+      sessionSummaries
+        .filter((session) => archivedSessionIds.includes(session.id) && !deletedSessionIds.includes(session.id))
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+    [archivedSessionIds, deletedSessionIds, sessionSummaries],
+  )
+
+  const plannerStatusCounts = useMemo(
+    () => ({
+      todo: plannerTasks.filter((task) => task.status === 'todo').length,
+      running: plannerTasks.filter((task) => task.status === 'running').length,
+      retry: plannerTasks.filter((task) => task.status === 'retry').length,
+      blocked: plannerTasks.filter((task) => task.status === 'blocked').length,
+      done: plannerTasks.filter((task) => task.status === 'done').length,
+    }),
+    [plannerTasks],
+  )
+
+  const visiblePlannerTasks = useMemo(
+    () => plannerTasks.filter((task) => plannerStatusFilter === 'all' || task.status === plannerStatusFilter),
+    [plannerStatusFilter, plannerTasks],
+  )
+
+  const visibleReviewSummary = useMemo(
+    () =>
+      reviewSummary.filter(
+        (item) =>
+          (!reviewOnlyCurrentDoc || !activeDocumentPath || item.filePath === activeDocumentPath) &&
+          (!reviewPendingOnly || item.pending > 0),
+      ),
+    [activeDocumentPath, reviewOnlyCurrentDoc, reviewPendingOnly, reviewSummary],
+  )
+
+  useEffect(() => {
+    setCharacterMemoryDraft(characterStateIndexContent)
+  }, [characterStateIndexContent])
+
+  useEffect(() => {
+    setForeshadowMemoryDraft(foreshadowIndexContent)
+  }, [foreshadowIndexContent])
+
+  const quickActions = useMemo<AIQuickAction[]>(
+    () => [
+      {
+        id: 'plan-arc',
+        label: t('chat.quick.planArc'),
+        description: t('chat.quick.planArcHint'),
+        action: () => insertQuickPrompt(t('chat.quick.planArcPrompt'), 'plan'),
+      },
+      {
+        id: 'chapter-beats',
+        label: t('chat.quick.chapterBeats'),
+        description: t('chat.quick.chapterBeatsHint'),
+        action: () => insertQuickPrompt(t('chat.quick.chapterBeatsPrompt'), 'plan'),
+      },
+      {
+        id: 'continue-scene',
+        label: t('chat.quick.continueScene'),
+        description: t('chat.quick.continueSceneHint'),
+        action: () => void onSmartComplete(),
+      },
+      {
+        id: 'rewrite-tone',
+        label: t('chat.quick.rewriteTone'),
+        description: t('chat.quick.rewriteToneHint'),
+        action: () => insertQuickPrompt(t('chat.quick.rewriteTonePrompt')),
+      },
+      {
+        id: 'consistency',
+        label: t('chat.quick.consistency'),
+        description: t('chat.quick.consistencyHint'),
+        action: () => insertQuickPrompt(t('chat.quick.consistencyPrompt'), 'spec'),
+      },
+      {
+        id: 'character-voice',
+        label: t('chat.quick.characterVoice'),
+        description: t('chat.quick.characterVoiceHint'),
+        action: () => insertQuickPrompt(t('chat.quick.characterVoicePrompt')),
+      },
+    ],
+    [insertQuickPrompt, onSmartComplete, t],
+  )
+
+  const applySlashPrompt = useCallback(
+    (prompt: string, mode?: WriterMode) => {
+      if (mode && mode !== writerMode) {
+        void onWriterModeChange(mode)
+      }
+      onChatInputChange(prompt)
+      window.setTimeout(() => chatInputRef.current?.focus(), 0)
+    },
+    [chatInputRef, onChatInputChange, onWriterModeChange, writerMode],
+  )
+
+  const slashCommands = useMemo<AISlashCommand[]>(
+    () => [
+      { id: 'slash-plan-arc', label: '/plan-arc', hint: t('chat.quick.planArcHint'), run: () => applySlashPrompt(t('chat.quick.planArcPrompt'), 'plan') },
+      { id: 'slash-chapter-beats', label: '/chapter-beats', hint: t('chat.quick.chapterBeatsHint'), run: () => applySlashPrompt(t('chat.quick.chapterBeatsPrompt'), 'plan') },
+      { id: 'slash-consistency', label: '/consistency', hint: t('chat.quick.consistencyHint'), run: () => applySlashPrompt(t('chat.quick.consistencyPrompt'), 'spec') },
+      { id: 'slash-rewrite-tone', label: '/rewrite-tone', hint: t('chat.quick.rewriteToneHint'), run: () => applySlashPrompt(t('chat.quick.rewriteTonePrompt')) },
+      { id: 'slash-character-voice', label: '/character-voice', hint: t('chat.quick.characterVoiceHint'), run: () => applySlashPrompt(t('chat.quick.characterVoicePrompt')) },
+      { id: 'slash-continue', label: '/continue', hint: t('chat.quick.continueSceneHint'), run: () => void onSmartComplete() },
+    ],
+    [applySlashPrompt, onSmartComplete, t],
+  )
+
+  const slashQuery = chatInput.trimStart().startsWith('/') ? chatInput.trimStart().slice(1).toLowerCase() : ''
+  const visibleSlashCommands = useMemo(
+    () =>
+      !chatInput.trimStart().startsWith('/')
+        ? []
+        : slashCommands.filter((command) => command.label.slice(1).includes(slashQuery)).slice(0, 6),
+    [chatInput, slashCommands, slashQuery],
+  )
 
   useEffect(() => {
     if (!hasRunningToolEvents) return
@@ -932,6 +1336,283 @@ export function AIChatPanel(props: AIChatPanelProps) {
         {plannerLastRunError ? <div className="planner-error-text">{plannerLastRunError}</div> : null}
       </div>
 
+      <div className="ai-workbench">
+        <div className="ai-status-card">
+          <div className="ai-status-main">
+            <div className="ai-status-title">{activeAssistant?.name ?? t('chat.noAgents')}</div>
+            <div className="ai-status-subtitle">
+              {activeProvider?.statusLabel ? `${activeProvider.name} · ${activeProvider.statusLabel}` : activeProvider?.name ?? t('chat.modelSelect')}
+            </div>
+          </div>
+          <div className="ai-status-tags">
+            <span className="ai-status-tag">{writerModeLabel(writerMode, t)}</span>
+            <span className="ai-status-tag">{autoLongWriteEnabled ? t('chat.autoWrite') : t('chat.sessionManual')}</span>
+            <span className="ai-status-tag">{t('chat.sessionCount', { count: sessionSummaries.length })}</span>
+          </div>
+        </div>
+
+        <div className="ai-document-card">
+          <div className="ai-section-head">
+            <span>{t('chat.documentTitle')}</span>
+            <span className="ai-status-tag">{activeDocumentDirty ? t('chat.documentDirty') : t('chat.documentSaved')}</span>
+          </div>
+          {activeDocumentPath ? (
+            <>
+              <div className="ai-document-breadcrumbs">
+                {activeDocumentCrumbs.map((crumb, index) => (
+                  <span key={`${crumb}-${index}`} className="ai-document-crumb">
+                    {crumb}
+                  </span>
+                ))}
+              </div>
+              <div className="ai-document-title">{activeDocumentLabel ?? activeDocumentPath}</div>
+              <div className="ai-document-meta">{t('chat.documentChars', { count: activeDocumentCharCount })}</div>
+              <div className="ai-document-preview">{activeDocumentPreview || t('chat.documentPreviewEmpty')}</div>
+            </>
+          ) : (
+            <div className="ai-session-empty">{t('chat.documentEmpty')}</div>
+          )}
+        </div>
+
+        <div className="ai-context-card">
+          <div className="ai-section-head">
+            <span>{t('chat.contextSourcesTitle')}</span>
+          </div>
+          <div className="ai-context-actions">
+            {activeWorkLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextWork', { name: activeWorkLabel })}</span> : null}
+            {activeDocumentLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextDocument', { name: activeDocumentLabel })}</span> : null}
+            {canUseEditorActions ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextEditorReady')}</span> : null}
+            {plannerTasks.length > 0 ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextPlanner', { count: plannerTasks.length })}</span> : null}
+            {reviewChangeSets.length > 0 ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextReview', { count: reviewChangeSets.length })}</span> : null}
+          </div>
+        </div>
+
+        {providerSelectInvalid ? (
+          <div className="ai-recovery-card">
+            <div className="ai-section-head">
+              <span>{t('chat.recoveryTitle')}</span>
+            </div>
+            <div className="ai-recovery-text">{t('chat.recoveryModelWarning')}</div>
+            <button className="ai-section-link" type="button" onClick={onOpenModelSettings}>
+              {t('chat.recovery.openModels')}
+            </button>
+          </div>
+        ) : null}
+
+        <div className="ai-session-card">
+          <div className="ai-section-head">
+            <span>{t('chat.sessionsTitle')}</span>
+            <button className="ai-section-link" type="button" onClick={() => void onNewSession()}>
+              {t('chat.newSession')}
+            </button>
+          </div>
+          <input
+            className="ai-session-search"
+            value={sessionFilter}
+            onChange={(event) => setSessionFilter(event.target.value)}
+            placeholder={t('chat.sessionsFilterPlaceholder')}
+          />
+          <div className="ai-session-strip">
+            {sessionsLoading ? <div className="ai-session-empty">{t('chat.sessionsLoading')}</div> : null}
+            {!sessionsLoading && visibleSessions.length === 0 ? <div className="ai-session-empty">{t('chat.sessionsEmpty')}</div> : null}
+            {!sessionsLoading
+              ? visibleSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    className={`ai-session-pill${session.id === activeSessionId ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => void onOpenSession(session.id)}
+                  >
+                    <span className="ai-session-pill-title">
+                      {sessionTitleOverrides[session.id] || session.title || (session.id === activeSessionId ? t('chat.sessionCurrent') : sessionTimeLabel(session.updatedAt))}
+                    </span>
+                    <span className="ai-session-pill-meta">{t('chat.sessionMessages', { count: session.messageCount })}</span>
+                    <span className="ai-session-pill-meta">{sessionTimeLabel(session.updatedAt)}</span>
+                    <span
+                      role="button"
+                      className="ai-session-pin"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setPinnedSessionIds((prev) =>
+                          prev.includes(session.id) ? prev.filter((id) => id !== session.id) : [session.id, ...prev],
+                        )
+                      }}
+                    >
+                      {pinnedSessionIds.includes(session.id) ? t('chat.sessionPinned') : t('chat.sessionPin')}
+                    </span>
+                    <span
+                      role="button"
+                      className="ai-session-pin"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setArchivedSessionIds((prev) =>
+                          prev.includes(session.id) ? prev.filter((id) => id !== session.id) : [session.id, ...prev],
+                        )
+                      }}
+                    >
+                      {t('chat.sessionArchive')}
+                    </span>
+                    <span
+                      role="button"
+                      className="ai-session-pin"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setDeletedSessionIds((prev) => (prev.includes(session.id) ? prev : [session.id, ...prev]))
+                      }}
+                    >
+                      {t('chat.sessionDelete')}
+                    </span>
+                    <span
+                      role="button"
+                      className="ai-session-pin"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setEditingSessionId(session.id)
+                        setEditingSessionTitle(sessionTitleOverrides[session.id] || session.title || '')
+                      }}
+                    >
+                      {t('chat.sessionRename')}
+                    </span>
+                  </button>
+                ))
+              : null}
+          </div>
+          {editingSessionId ? (
+            <div className="ai-session-rename">
+              <input
+                className="ai-session-search"
+                value={editingSessionTitle}
+                onChange={(event) => setEditingSessionTitle(event.target.value)}
+                placeholder={t('chat.sessionRenamePlaceholder')}
+              />
+              <div className="ai-review-actions ai-review-actions-inline">
+                <button
+                  type="button"
+                  className="ai-context-chip"
+                  onClick={() => {
+                    const nextTitle = editingSessionTitle.trim()
+                    setSessionTitleOverrides((prev) => ({
+                      ...prev,
+                      [editingSessionId]: nextTitle,
+                    }))
+                    setEditingSessionId(null)
+                    setEditingSessionTitle('')
+                  }}
+                >
+                  {t('chat.sessionRenameSave')}
+                </button>
+                <button
+                  type="button"
+                  className="ai-context-chip"
+                  onClick={() => {
+                    setEditingSessionId(null)
+                    setEditingSessionTitle('')
+                  }}
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {archivedSessionIds.length > 0 ? (
+            <div className="ai-session-archived-note">
+              <span>{t('chat.sessionArchivedCount', { count: archivedSessionIds.length })}</span>
+              <button className="ai-section-link" type="button" onClick={() => setShowArchivedSessions((prev) => !prev)}>
+                {showArchivedSessions ? t('chat.sessionHideArchived') : t('chat.sessionShowArchived')}
+              </button>
+            </div>
+          ) : null}
+          {showArchivedSessions && archivedSessions.length > 0 ? (
+            <div className="ai-review-mod-list">
+              {archivedSessions.map((session) => (
+                <div key={session.id} className="ai-review-mod-item">
+                  <div className="ai-review-mod-head">
+                    <span className="ai-review-mod-type">{sessionTitleOverrides[session.id] || session.title || sessionTimeLabel(session.updatedAt)}</span>
+                    <span className="ai-review-mod-lines">{t('chat.sessionMessages', { count: session.messageCount })}</span>
+                  </div>
+                  <div className="ai-review-actions ai-review-actions-inline">
+                    <button
+                      type="button"
+                      className="ai-context-chip"
+                      onClick={() => setArchivedSessionIds((prev) => prev.filter((id) => id !== session.id))}
+                    >
+                      {t('chat.sessionRestore')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => void onOpenSession(session.id)}>
+                      {t('chat.sessionCurrent')}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="ai-quick-card">
+          <div className="ai-section-head">
+            <span>{t('chat.quickTitle')}</span>
+          </div>
+          <div className="ai-quick-grid">
+            {quickActions.map((item) => (
+              <button key={item.id} type="button" className="ai-quick-action" onClick={item.action}>
+                <span className="ai-quick-action-title">{item.label}</span>
+                <span className="ai-quick-action-subtitle">{item.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="ai-context-card">
+          <div className="ai-section-head">
+            <span>{t('chat.contextTitle')}</span>
+          </div>
+          <div className="ai-context-actions">
+            <button type="button" className="ai-context-chip" disabled={!canUseEditorActions} onClick={onQuoteSelection}>
+              {t('chat.quoteSelection')}
+            </button>
+            <button type="button" className="ai-context-chip" disabled={!canUseEditorActions} onClick={() => void onSmartComplete()}>
+              {t('chat.quick.continueScene')}
+            </button>
+            <button type="button" className="ai-context-chip" onClick={() => insertQuickPrompt(t('chat.quick.consistencyPrompt'), 'spec')}>
+              {t('chat.quick.consistency')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="ai-workbench-tabs" role="tablist" aria-label={t('chat.workbenchTabs')}>
+        <button
+          type="button"
+          className={`ai-workbench-tab${activeWorkbenchTab === 'chat' ? ' active' : ''}`}
+          onClick={() => setActiveWorkbenchTab('chat')}
+        >
+          {t('chat.tabChat')}
+        </button>
+        <button
+          type="button"
+          className={`ai-workbench-tab${activeWorkbenchTab === 'planner' ? ' active' : ''}`}
+          onClick={() => setActiveWorkbenchTab('planner')}
+        >
+          {t('chat.tabPlanner')}
+        </button>
+        <button
+          type="button"
+          className={`ai-workbench-tab${activeWorkbenchTab === 'review' ? ' active' : ''}`}
+          onClick={() => setActiveWorkbenchTab('review')}
+        >
+          {t('chat.tabReview')}
+        </button>
+        <button
+          type="button"
+          className={`ai-workbench-tab${activeWorkbenchTab === 'memory' ? ' active' : ''}`}
+          onClick={() => setActiveWorkbenchTab('memory')}
+        >
+          {t('chat.tabMemory')}
+        </button>
+      </div>
+
+      {activeWorkbenchTab === 'chat' ? (
+      <>
       <div className="ai-messages-wrap">
         <div
           className="ai-messages"
@@ -1482,7 +2163,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                             {stageCollapsed ? null : (
                             <div className="message-tool-stage-list">
                               {group.items.map((toolEvent, idx) => {
-                                const itemId = `${message.id}-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                                const itemId = `${message.id}-tool-${toolEventIdentityKey(toolEvent)}-${idx}`
                                 const hasManualExpand = Object.prototype.hasOwnProperty.call(expandedToolItems, itemId)
                                 const expandedToolItem = hasManualExpand ? expandedToolItems[itemId] === true : toolEvent.status !== 'success'
                                 const durationMs =
@@ -1499,11 +2180,9 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                 <div key={itemId} className={`message-tool-item message-tool-item-${toolEvent.status}`}>
                                   <div className="message-tool-item-head">
                                     <span className="message-tool-item-step">#{toolEvent.step}</span>
-                                    <span className="message-tool-item-name">{t('chat.builderAgent')}</span>
                                     <span className="message-tool-item-state">
                                       {toolStatusLabel(toolEvent.status, t)}
                                     </span>
-                                    <span className="message-tool-item-kind">{t('chat.terminal')}</span>
                                     <span className="message-tool-item-duration">
                                       {formatDurationLabel(durationMs, toolEvent.status === 'running')}
                                     </span>
@@ -1511,60 +2190,60 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                       {expandedToolItem ? t('chat.stepCollapse') : t('chat.stepExpand')}
                                     </button>
                                   </div>
-                                  <div className="message-tool-item-action">{toolDisplayName(toolEvent.tool, t)}</div>
-                                  <div className="message-tool-command" title={toolEvent.tool}>
-                                    <span className="message-tool-command-prefix">$</span>
-                                    <span className="message-tool-command-name">{toolEvent.tool}</span>
-                                  </div>
+                                  <div className="message-tool-item-action">{buildWriterToolHeadline(toolEvent, t)}</div>
                                   <div className="message-tool-item-brief">
                                     <span className="message-tool-item-label">{t('chat.stepResult')}</span>{' '}
                                     {buildToolOutcomeSummary(toolEvent, t)}
                                   </div>
-                                  {toolEvent.tool === 'fs_read_text' && toolEvent.readPreview ? (
-                                    <div className="message-tool-read-card">
-                                      <div className="message-tool-read-head">
-                                        <span className="message-tool-read-path">{toolEvent.readPath ?? t('chat.unknownPath')}</span>
-                                        <span className="message-tool-read-meta">
-                                          {t('chat.readMeta', {
-                                            lines: toolEvent.readLines ?? 0,
-                                            chars: toolEvent.readChars ?? 0,
-                                          })}
-                                        </span>
-                                      </div>
-                                      <pre className="message-tool-read-preview">{toolEvent.readPreview}</pre>
-                                    </div>
-                                  ) : null}
-                                  {toolEvent.tool === 'fs_write_text' && toolEvent.writePreview ? (
-                                    <div className="message-tool-write-card">
-                                      <div className="message-tool-write-head">
-                                        <span className="message-tool-write-path">{toolEvent.writePath ?? t('chat.unknownPath')}</span>
-                                        <span className="message-tool-write-meta">
-                                          {t('chat.writeMeta', {
-                                            lines: toolEvent.writeLines ?? 0,
-                                            chars: toolEvent.writeChars ?? 0,
-                                          })}
-                                        </span>
-                                      </div>
-                                      <pre className="message-tool-write-preview">{toolEvent.writePreview}</pre>
-                                    </div>
-                                  ) : null}
-                                  {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
-                                    <div className="message-tool-tree">
-                                      {toolEvent.listItems.map((item, treeIdx) => (
-                                        <div key={`${item.kind}-${item.name}-${treeIdx}`} className="message-tool-tree-item">
-                                          <span className={`message-tool-tree-kind message-tool-tree-kind-${item.kind}`}>
-                                            {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
-                                          </span>
-                                          <span className="message-tool-tree-name">{item.name}</span>
-                                        </div>
-                                      ))}
-                                      {toolEvent.listTruncated ? (
-                                        <div className="message-tool-tree-more">{t('chat.treeMore')}</div>
-                                      ) : null}
-                                    </div>
-                                  ) : null}
                                   {expandedToolItem ? (
                                     <>
+                                      <div className="message-tool-command" title={toolEvent.tool}>
+                                        <span className="message-tool-command-prefix">$</span>
+                                        <span className="message-tool-command-name">{toolEvent.tool}</span>
+                                      </div>
+                                      {toolEvent.tool === 'fs_read_text' && toolEvent.readPreview ? (
+                                        <div className="message-tool-read-card">
+                                          <div className="message-tool-read-head">
+                                            <span className="message-tool-read-path">{toolEvent.readPath ?? t('chat.unknownPath')}</span>
+                                            <span className="message-tool-read-meta">
+                                              {t('chat.readMeta', {
+                                                lines: toolEvent.readLines ?? 0,
+                                                chars: toolEvent.readChars ?? 0,
+                                              })}
+                                            </span>
+                                          </div>
+                                          <pre className="message-tool-read-preview">{toolEvent.readPreview}</pre>
+                                        </div>
+                                      ) : null}
+                                      {toolEvent.tool === 'fs_write_text' && toolEvent.writePreview ? (
+                                        <div className="message-tool-write-card">
+                                          <div className="message-tool-write-head">
+                                            <span className="message-tool-write-path">{toolEvent.writePath ?? t('chat.unknownPath')}</span>
+                                            <span className="message-tool-write-meta">
+                                              {t('chat.writeMeta', {
+                                                lines: toolEvent.writeLines ?? 0,
+                                                chars: toolEvent.writeChars ?? 0,
+                                              })}
+                                            </span>
+                                          </div>
+                                          <pre className="message-tool-write-preview">{toolEvent.writePreview}</pre>
+                                        </div>
+                                      ) : null}
+                                      {Array.isArray(toolEvent.listItems) && toolEvent.listItems.length > 0 ? (
+                                        <div className="message-tool-tree">
+                                          {toolEvent.listItems.map((item, treeIdx) => (
+                                            <div key={`${item.kind}-${item.name}-${treeIdx}`} className="message-tool-tree-item">
+                                              <span className={`message-tool-tree-kind message-tool-tree-kind-${item.kind}`}>
+                                                {item.kind === 'dir' ? t('chat.treeDir') : t('chat.treeFile')}
+                                              </span>
+                                              <span className="message-tool-tree-name">{item.name}</span>
+                                            </div>
+                                          ))}
+                                          {toolEvent.listTruncated ? (
+                                            <div className="message-tool-tree-more">{t('chat.treeMore')}</div>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
                                       {toolEvent.inputPreview ? (
                                         <div className="message-tool-item-line-wrap">
                                           <pre className="message-tool-item-line" title={toolEvent.inputPreview}>
@@ -1697,22 +2376,16 @@ export function AIChatPanel(props: AIChatPanelProps) {
                     <div className="ai-live-ops-empty">{t('chat.stepInProgress')}</div>
                   ) : null}
                   {quickLiveToolEvents.map((toolEvent, idx) => {
-                    const quickToolId = `live-quick-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                    const quickToolId = `live-quick-tool-${toolEventIdentityKey(toolEvent)}-${idx}`
                     const durationMs =
                       toolEvent.durationMs ??
                       ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
                         (toolEvent.startedAt ?? toolEvent.timestamp))
-                    const target = resolveToolEventTarget(toolEvent)
                     return (
                       <div key={quickToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
                         <div className="ai-live-ops-item-main">
                           <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
-                          <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
-                          {target ? (
-                            <span className="ai-live-ops-item-target" title={target}>
-                              {target}
-                            </span>
-                          ) : null}
+                          <span className="ai-live-ops-item-action">{buildWriterToolHeadline(toolEvent, t)}</span>
                           <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
                           <span className="ai-live-ops-item-duration">
                             {formatDurationLabel(durationMs, toolEvent.status === 'running')}
@@ -1807,12 +2480,11 @@ export function AIChatPanel(props: AIChatPanelProps) {
                           <div className={`ai-live-ops-stage-content${liveStageCollapsed ? ' collapsed' : ''}`}>
                             <div className="ai-live-ops-stage-list">
                               {group.items.map((toolEvent, idx) => {
-                                const liveToolId = `live-tool-${toolEvent.step}-${toolEvent.tool}-${toolEvent.timestamp}-${idx}`
+                                const liveToolId = `live-tool-${toolEventIdentityKey(toolEvent)}-${idx}`
                                 const durationMs =
                                   toolEvent.durationMs ??
                                   ((toolEvent.finishedAt ?? (toolEvent.status === 'running' ? toolNowTick : toolEvent.timestamp)) -
                                     (toolEvent.startedAt ?? toolEvent.timestamp))
-                                const target = resolveToolEventTarget(toolEvent)
                                 const canExpandDetail = hasLiveToolDetail(toolEvent)
                                 const hasManualLiveItemExpand = Object.prototype.hasOwnProperty.call(expandedLiveItems, liveToolId)
                                 const expandedLiveItem = hasManualLiveItemExpand
@@ -1822,12 +2494,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
                                   <div key={liveToolId} className={`ai-live-ops-item ai-live-ops-item-${toolEvent.status}`}>
                                     <div className="ai-live-ops-item-main">
                                       <span className="ai-live-ops-item-step">#{toolEvent.step}</span>
-                                      <span className="ai-live-ops-item-action">{toolDisplayName(toolEvent.tool, t)}</span>
-                                      {target ? (
-                                        <span className="ai-live-ops-item-target" title={target}>
-                                          {target}
-                                        </span>
-                                      ) : null}
+                                      <span className="ai-live-ops-item-action">{buildWriterToolHeadline(toolEvent, t)}</span>
                                       <span className="ai-live-ops-item-state">{toolStatusLabel(toolEvent.status, t)}</span>
                                       <span className="ai-live-ops-item-duration">
                                         {formatDurationLabel(durationMs, toolEvent.status === 'running')}
@@ -1924,7 +2591,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
               {t('chat.continue')}
             </button>
           </div>
-          <label className={`ai-auto-switch ${autoLongWriteEnabled ? 'active' : ''}`} title="Auto continuous long-form writing">
+          <label className={`ai-auto-switch ${autoLongWriteEnabled ? 'active' : ''}`} title={t('chat.autoWrite')}>
             <input
               type="checkbox"
               checked={autoLongWriteEnabled}
@@ -1936,7 +2603,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
             <span className="ai-auto-switch-track">
               <span className="ai-auto-switch-knob" />
             </span>
-            <span className="ai-auto-switch-text">Auto</span>
+            <span className="ai-auto-switch-text">{t('chat.autoWrite')}</span>
           </label>
           <select className="ai-select ai-mode-select" value={writerMode} onChange={(event) => onWriterModeChange(event.target.value as WriterMode)}>
             <option value="normal">{t('chat.mode.normal')}</option>
@@ -1953,13 +2620,37 @@ export function AIChatPanel(props: AIChatPanelProps) {
           onKeyDown={handleComposerKeyDown}
           placeholder={t('chat.placeholder')}
         />
+        {visibleSlashCommands.length > 0 ? (
+          <div className="ai-slash-panel">
+            <div className="ai-slash-title">{t('chat.slashTitle')}</div>
+            <div className="ai-slash-list">
+              {visibleSlashCommands.map((command) => (
+                <button
+                  key={command.id}
+                  type="button"
+                  className="ai-slash-item"
+                  onClick={() => command.run()}
+                >
+                  <span className="ai-slash-item-label">{command.label}</span>
+                  <span className="ai-slash-item-hint">{command.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="ai-composer-footer">
           <div className="ai-composer-selects">
-            <select className="ai-select ai-select-compact" value={activeAgentId} onChange={(event) => onActiveAgentChange(event.target.value)}>
-              {agents.length === 0 ? <option value="">{t('chat.noAgents')}</option> : null}
-              {agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
+            <select
+              className="ai-select ai-select-compact"
+              value={activeAssistantId}
+              onChange={(event) => onActiveAssistantChange(event.target.value)}
+              title={t('chat.assistantSelect')}
+              aria-label={t('chat.assistantSelect')}
+            >
+              {assistants.length === 0 ? <option value="">{t('chat.noAgents')}</option> : null}
+              {assistants.map((assistant) => (
+                <option key={assistant.id} value={assistant.id}>
+                  {assistant.name}
                 </option>
               ))}
             </select>
@@ -1967,6 +2658,8 @@ export function AIChatPanel(props: AIChatPanelProps) {
               className={`ai-select ai-select-compact${providerSelectInvalid ? ' ai-select-compact-warning' : ''}`}
               value={activeProviderId}
               onChange={(event) => onActiveProviderChange(event.target.value)}
+              title={t('chat.modelSelect')}
+              aria-label={t('chat.modelSelect')}
             >
               {providers.map((provider) => (
                 <option key={provider.id} value={provider.id} disabled={provider.disabled}>
@@ -2008,6 +2701,207 @@ export function AIChatPanel(props: AIChatPanelProps) {
           </div>
         </div>
       </div>
+      </>
+      ) : null}
+
+      {activeWorkbenchTab === 'planner' ? (
+        <div className="ai-alt-panel">
+          <div className="ai-alt-card">
+            <div className="ai-section-head">
+              <span>{t('chat.plannerOverview')}</span>
+              <button className="ai-section-link" type="button" onClick={() => void onRunNextPlannerTask()}>
+                {t('chat.plannerRunNext')}
+              </button>
+            </div>
+            <div className="ai-planner-summary-row">
+              <span className="ai-status-tag">{plannerQueueRunning ? t('chat.plannerRunning') : plannerBusy ? t('chat.plannerPreparing') : t('chat.plannerIdle')}</span>
+              <span className="ai-status-tag">{t('chat.plannerTaskCount', { count: plannerTasks.length })}</span>
+              {activePlannerTask ? <span className="ai-status-tag">{activePlannerTask.title}</span> : null}
+            </div>
+            <div className="ai-planner-summary-row">
+              <span className="ai-status-tag">todo {plannerStatusCounts.todo}</span>
+              <span className="ai-status-tag">running {plannerStatusCounts.running}</span>
+              <span className="ai-status-tag">retry {plannerStatusCounts.retry}</span>
+              <span className="ai-status-tag">blocked {plannerStatusCounts.blocked}</span>
+              <span className="ai-status-tag">done {plannerStatusCounts.done}</span>
+            </div>
+            {plannerLastRunError ? <div className="planner-error-text">{plannerLastRunError}</div> : null}
+          </div>
+          <div className="ai-alt-card">
+            <div className="ai-section-head">
+              <span>{t('chat.plannerTasksTitle')}</span>
+              <select className="ai-select ai-select-compact" value={plannerStatusFilter} onChange={(event) => setPlannerStatusFilter(event.target.value as typeof plannerStatusFilter)}>
+                <option value="all">{t('chat.filterAll')}</option>
+                <option value="todo">todo</option>
+                <option value="running">running</option>
+                <option value="retry">retry</option>
+                <option value="blocked">blocked</option>
+                <option value="done">done</option>
+              </select>
+            </div>
+            <div className="ai-planner-task-list">
+              {visiblePlannerTasks.length === 0 ? <div className="ai-session-empty">{t('chat.plannerEmpty')}</div> : null}
+              {visiblePlannerTasks.slice(0, 12).map((task) => (
+                <div key={task.id} className={`ai-planner-task ai-planner-task-${task.status}`}>
+                  <div className="ai-planner-task-head">
+                    <span className="ai-planner-task-title">{task.title}</span>
+                    <span className="ai-planner-task-status">{task.status}</span>
+                  </div>
+                  <div className="ai-planner-task-meta">{task.scope} · {t('chat.plannerTargetWords', { count: task.target_words })}</div>
+                  <div className="ai-review-actions">
+                    <button type="button" className="ai-context-chip" onClick={() => void onOpenTaskScope(task.scope)}>
+                      {t('chat.plannerOpenScope')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => insertQuickPrompt(task.task_prompt || task.title, 'spec')}>
+                      {t('chat.plannerUsePrompt')}
+                    </button>
+                    {task.status === 'blocked' || task.status === 'retry' ? (
+                      <button type="button" className="ai-context-chip" onClick={() => void onRetryPlannerTask(task.id)}>
+                        {t('chat.plannerRetryTask')}
+                      </button>
+                    ) : null}
+                    {task.status !== 'done' ? (
+                      <button type="button" className="ai-context-chip" onClick={() => void onMarkPlannerTaskDone(task.id)}>
+                        {t('chat.plannerMarkDone')}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeWorkbenchTab === 'review' ? (
+        <div className="ai-alt-panel">
+          <div className="ai-alt-card">
+            <div className="ai-section-head">
+              <span>{t('chat.reviewTitle')}</span>
+              <label className="history-panel-filter-toggle">
+                <input type="checkbox" checked={reviewOnlyCurrentDoc} onChange={(event) => setReviewOnlyCurrentDoc(event.target.checked)} />
+                <span>{t('chat.reviewOnlyCurrent')}</span>
+              </label>
+              <label className="history-panel-filter-toggle">
+                <input type="checkbox" checked={reviewPendingOnly} onChange={(event) => setReviewPendingOnly(event.target.checked)} />
+                <span>{t('chat.reviewPendingOnly')}</span>
+              </label>
+            </div>
+            <div className="ai-planner-summary-row">
+              <span className="ai-status-tag">{t('chat.reviewCount', { count: visibleReviewSummary.length })}</span>
+            </div>
+          </div>
+          <div className="ai-alt-card">
+            <div className="ai-review-list">
+              {visibleReviewSummary.length === 0 ? <div className="ai-session-empty">{t('chat.reviewEmpty')}</div> : null}
+              {visibleReviewSummary.map((item) => (
+                <div key={item.id} className={`ai-review-item${item.id === activeReviewChangeSetId ? ' active' : ''}`}>
+                  <button type="button" className="ai-review-open" onClick={() => onOpenReviewChangeSet(item.id)}>
+                    <span className="ai-review-title">{item.filePath}</span>
+                    <span className="ai-review-meta">{t('chat.reviewPending', { pending: item.pending, total: item.total })}</span>
+                  </button>
+                  <div className="ai-review-preview">{item.preview || t('chat.reviewPreviewEmpty')}</div>
+                  {item.pendingMods.length > 0 ? (
+                    <div className="ai-review-mod-list">
+                      {item.pendingMods.map((mod) => (
+                        <div key={mod.id} className="ai-review-mod-item">
+                          <div className="ai-review-mod-head">
+                            <span className="ai-review-mod-type">{mod.type}</span>
+                            <span className="ai-review-mod-lines">{t('diff.lines', { start: mod.lineStart, end: mod.lineEnd })}</span>
+                          </div>
+                          <div className="ai-review-mod-preview">{mod.preview || t('chat.reviewPreviewEmpty')}</div>
+                          <div className="ai-review-actions ai-review-actions-inline">
+                            <button type="button" className="ai-context-chip" onClick={() => void onAcceptReviewModification(item.id, mod.id)}>
+                              {t('diff.accept')}
+                            </button>
+                            <button type="button" className="ai-context-chip" onClick={() => void onRejectReviewModification(item.id, mod.id)}>
+                              {t('diff.reject')}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="ai-review-actions">
+                    <button type="button" className="ai-context-chip" onClick={() => void onAcceptReviewChangeSet(item.id)}>
+                      {t('diff.acceptAll')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => void onRejectReviewChangeSet(item.id)}>
+                      {t('diff.rejectAll')}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeWorkbenchTab === 'memory' ? (
+        <div className="ai-alt-panel">
+          <div className="ai-alt-card">
+            <div className="ai-section-head">
+              <span>{t('chat.memoryTitle')}</span>
+              <button className="ai-section-link" type="button" onClick={() => void onRefreshMemoryIndices()}>
+                {t('chat.memoryRefresh')}
+              </button>
+            </div>
+            {memoryIndexLoading ? <div className="ai-session-empty">{t('chat.memoryLoading')}</div> : null}
+            {!memoryIndexLoading ? (
+              <div className="ai-review-list">
+                <div className="ai-review-mod-item">
+                  <div className="ai-review-mod-head">
+                    <span className="ai-review-mod-type">{t('chat.memoryCharacterState')}</span>
+                    <span className="ai-review-mod-lines">
+                      {characterStateIndexMeta?.locked ? t('chat.memoryLocked') : t('chat.memoryUnlocked')} · {characterStateIndexMeta?.source === 'manual' ? t('chat.memoryManual') : t('chat.memoryAuto')}
+                    </span>
+                  </div>
+                  <div className="ai-review-mod-preview">{t('chat.memoryUpdatedAt', { value: memoryUpdatedLabel(characterStateIndexMeta?.updatedAt) })}</div>
+                  <textarea className="ai-memory-editor" value={characterMemoryDraft} onChange={(event) => setCharacterMemoryDraft(event.target.value)} />
+                  <div className="ai-review-actions ai-review-actions-inline">
+                    <button type="button" className="ai-context-chip" onClick={() => void onSaveMemoryIndex('character', characterMemoryDraft)}>
+                      {t('chat.memorySave')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => void onToggleMemoryIndexLock('character')}>
+                      {characterStateIndexMeta?.locked ? t('chat.memoryUnlock') : t('chat.memoryLock')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => void onRestoreMemoryIndexAuto('character')}>
+                      {t('chat.memoryRestoreAuto')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => onChatInputChange(characterMemoryDraft)}>
+                      {t('chat.memoryInsertChat')}
+                    </button>
+                  </div>
+                </div>
+                <div className="ai-review-mod-item">
+                  <div className="ai-review-mod-head">
+                    <span className="ai-review-mod-type">{t('chat.memoryForeshadow')}</span>
+                    <span className="ai-review-mod-lines">
+                      {foreshadowIndexMeta?.locked ? t('chat.memoryLocked') : t('chat.memoryUnlocked')} · {foreshadowIndexMeta?.source === 'manual' ? t('chat.memoryManual') : t('chat.memoryAuto')}
+                    </span>
+                  </div>
+                  <div className="ai-review-mod-preview">{t('chat.memoryUpdatedAt', { value: memoryUpdatedLabel(foreshadowIndexMeta?.updatedAt) })}</div>
+                  <textarea className="ai-memory-editor" value={foreshadowMemoryDraft} onChange={(event) => setForeshadowMemoryDraft(event.target.value)} />
+                  <div className="ai-review-actions ai-review-actions-inline">
+                    <button type="button" className="ai-context-chip" onClick={() => void onSaveMemoryIndex('foreshadow', foreshadowMemoryDraft)}>
+                      {t('chat.memorySave')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => void onToggleMemoryIndexLock('foreshadow')}>
+                      {foreshadowIndexMeta?.locked ? t('chat.memoryUnlock') : t('chat.memoryLock')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => void onRestoreMemoryIndexAuto('foreshadow')}>
+                      {t('chat.memoryRestoreAuto')}
+                    </button>
+                    <button type="button" className="ai-context-chip" onClick={() => onChatInputChange(foreshadowMemoryDraft)}>
+                      {t('chat.memoryInsertChat')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </>
   )
 }

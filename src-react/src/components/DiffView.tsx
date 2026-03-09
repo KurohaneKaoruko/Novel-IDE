@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import type { ChangeSet } from '../services';
+import { useI18n } from '../i18n';
 import './DiffView.css';
 
 export type ViewMode = 'split' | 'unified';
@@ -23,6 +24,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
   onRejectAll,
   onClose,
 }) => {
+  const { t } = useI18n();
   const { filePath, modifications, stats, status } = changeSet;
 
   const modifiedStats = useMemo(() => {
@@ -76,13 +78,13 @@ export const DiffView: React.FC<DiffViewProps> = ({
     return (
       <div className="diff-split-view">
         <div className="diff-pane diff-pane-original">
-          <div className="diff-pane-header">Original</div>
+          <div className="diff-pane-header">{t('diff.original')}</div>
           <div className="diff-pane-content">
             {originalLines.map((line) => renderLine(line.lineNum, line.content, 'original'))}
           </div>
         </div>
         <div className="diff-pane diff-pane-modified">
-          <div className="diff-pane-header">Modified</div>
+          <div className="diff-pane-header">{t('diff.suggested')}</div>
           <div className="diff-pane-content">
             {modifiedLines.map((line) => renderLine(line.lineNum, line.content, 'modified'))}
           </div>
@@ -128,10 +130,10 @@ export const DiffView: React.FC<DiffViewProps> = ({
             <span className="diff-stat-delete">-{stats.deletions}</span>
           </span>
           <span className="diff-status">
-            {status === 'pending' && `${modifiedStats.pending} pending`}
-            {status === 'partial' && `${modifiedStats.accepted} accepted, ${modifiedStats.pending} pending`}
-            {status === 'accepted' && 'All accepted'}
-            {status === 'rejected' && 'All rejected'}
+            {status === 'pending' && t('diff.pending', { count: modifiedStats.pending })}
+            {status === 'partial' && t('diff.partial', { accepted: modifiedStats.accepted, pending: modifiedStats.pending })}
+            {status === 'accepted' && t('diff.allAccepted')}
+            {status === 'rejected' && t('diff.allRejected')}
           </span>
         </div>
         <div className="diff-header-right">
@@ -139,23 +141,23 @@ export const DiffView: React.FC<DiffViewProps> = ({
             className="diff-btn diff-btn-accept-all" 
             onClick={onAcceptAll}
             disabled={modifiedStats.pending === 0}
-            title="Accept all pending modifications"
+            title={t('diff.acceptAll')}
           >
-            Accept All
+            {t('diff.acceptAll')}
           </button>
           <button 
             className="diff-btn diff-btn-reject-all" 
             onClick={onRejectAll}
             disabled={modifiedStats.pending === 0}
-            title="Reject all pending modifications"
+            title={t('diff.rejectAll')}
           >
-            Reject All
+            {t('diff.rejectAll')}
           </button>
           {onClose && (
             <button 
               className="diff-btn diff-btn-close" 
               onClick={onClose}
-              title="Close diff view"
+              title={t('diff.close')}
             >
               x
             </button>
@@ -169,7 +171,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
 
       {modifications.length > 0 && (
         <div className="diff-modifications">
-          <div className="diff-modifications-header">Modifications</div>
+          <div className="diff-modifications-header">{t('diff.modifications')}</div>
           <div className="diff-modifications-list">
             {modifications.map((mod) => (
               <div key={mod.id} className={`diff-modification diff-modification-${mod.status}`}>
@@ -178,7 +180,7 @@ export const DiffView: React.FC<DiffViewProps> = ({
                     {mod.type}
                   </span>
                   <span className="diff-modification-lines">
-                    Lines {mod.lineStart + 1}-{mod.lineEnd + 1}
+                    {t('diff.lines', { start: mod.lineStart + 1, end: mod.lineEnd + 1 })}
                   </span>
                   <span className="diff-modification-status">{mod.status}</span>
                 </div>
@@ -187,16 +189,16 @@ export const DiffView: React.FC<DiffViewProps> = ({
                     <button 
                       className="diff-btn diff-btn-sm diff-btn-accept" 
                       onClick={() => onAccept(mod.id)}
-                      title="Accept this modification"
+                      title={t('diff.accept')}
                     >
-                      Accept
+                      {t('diff.accept')}
                     </button>
                     <button 
                       className="diff-btn diff-btn-sm diff-btn-reject" 
                       onClick={() => onReject(mod.id)}
-                      title="Reject this modification"
+                      title={t('diff.reject')}
                     >
-                      Reject
+                      {t('diff.reject')}
                     </button>
                   </div>
                 )}

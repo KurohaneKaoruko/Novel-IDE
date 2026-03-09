@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 export type WorkspaceInfo = {
   root: string
 }
+export type WorkInfo = WorkspaceInfo
 
 export type AppSettings = {
   output: {
@@ -11,6 +12,7 @@ export type AppSettings = {
   }
   providers: ModelProvider[]
   active_provider_id: string
+  active_writing_assistant_id: string
   active_agent_id: string
   launch_mode: LaunchMode
   ai_edit_apply_mode: AiEditApplyMode
@@ -20,6 +22,7 @@ export type LaunchMode = 'picker' | 'auto_last'
 export type AiEditApplyMode = 'auto_apply' | 'review'
 
 export type ProjectSource = 'default' | 'external'
+export type WorkSource = ProjectSource
 
 export type ProjectItem = {
   name: string
@@ -28,6 +31,7 @@ export type ProjectItem = {
   is_valid_workspace: boolean
   last_opened_at: number | null
 }
+export type WorkItem = ProjectItem
 
 export type ProjectPickerState = {
   default_root: string
@@ -36,6 +40,7 @@ export type ProjectPickerState = {
   last_workspace: string | null
   launch_mode: LaunchMode
 }
+export type BookshelfState = ProjectPickerState
 
 export type ModelProvider = {
   id: string
@@ -94,24 +99,48 @@ export async function setWorkspace(path: string): Promise<WorkspaceInfo> {
   return invoke<WorkspaceInfo>('set_workspace', { path })
 }
 
+export async function setWorkRoot(path: string): Promise<WorkInfo> {
+  return setWorkspace(path)
+}
+
 export async function getLastWorkspace(): Promise<string | null> {
   return invoke<string | null>('get_last_workspace')
+}
+
+export async function getLastWork(): Promise<string | null> {
+  return getLastWorkspace()
 }
 
 export async function getProjectPickerState(): Promise<ProjectPickerState> {
   return invoke<ProjectPickerState>('get_project_picker_state')
 }
 
+export async function getBookshelfState(): Promise<BookshelfState> {
+  return invoke<BookshelfState>('get_bookshelf_state')
+}
+
 export async function createNovelProject(name: string): Promise<ProjectItem> {
   return invoke<ProjectItem>('create_novel_project', { name })
+}
+
+export async function createNovelWork(name: string): Promise<WorkItem> {
+  return invoke<WorkItem>('create_novel_work', { name })
 }
 
 export async function rememberExternalProject(path: string): Promise<void> {
   return invoke<void>('remember_external_project', { path })
 }
 
+export async function rememberImportedWork(path: string): Promise<void> {
+  return invoke<void>('remember_imported_work', { path })
+}
+
 export async function forgetExternalProject(path: string): Promise<void> {
   return invoke<void>('forget_external_project', { path })
+}
+
+export async function forgetImportedWork(path: string): Promise<void> {
+  return invoke<void>('forget_imported_work', { path })
 }
 
 export async function setLaunchMode(mode: LaunchMode): Promise<void> {
@@ -134,6 +163,10 @@ export async function initNovel(): Promise<void> {
 
 export async function listWorkspaceTree(maxDepth = 6): Promise<FsEntry> {
   return invoke<FsEntry>('list_workspace_tree', { maxDepth })
+}
+
+export async function listWorkTree(maxDepth = 6): Promise<FsEntry> {
+  return listWorkspaceTree(maxDepth)
 }
 
 export async function getProjectWritingSettings(): Promise<ProjectWritingSettings> {
@@ -240,21 +273,38 @@ export type Agent = {
   temperature: number
   max_tokens: number
 }
+export type WritingAssistant = Agent
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke<Agent[]>('get_agents')
+}
+
+export async function getWritingAssistants(): Promise<WritingAssistant[]> {
+  return invoke<WritingAssistant[]>('get_writing_assistants')
 }
 
 export async function setAgents(agents_list: Agent[]): Promise<void> {
   return invoke<void>('set_agents', { agentsList: agents_list })
 }
 
+export async function setWritingAssistants(assistants: WritingAssistant[]): Promise<void> {
+  return invoke<void>('set_writing_assistants', { assistants })
+}
+
 export async function exportAgents(): Promise<string> {
   return invoke<string>('export_agents')
 }
 
+export async function exportWritingAssistants(): Promise<string> {
+  return invoke<string>('export_writing_assistants')
+}
+
 export async function importAgents(json: string): Promise<void> {
   return invoke<void>('import_agents', { json })
+}
+
+export async function importWritingAssistants(json: string): Promise<void> {
+  return invoke<void>('import_writing_assistants', { json })
 }
 
 export type HistoryEntry = {

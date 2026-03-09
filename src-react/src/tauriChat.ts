@@ -14,17 +14,19 @@ export async function chatGenerateStream(args: {
   streamId: string
   messages: ChatMessage[]
   useMarkdown: boolean
+  assistantId?: string | null
   agentId?: string | null
   providerId?: string | null
 }): Promise<void> {
+  const assistantId = args.assistantId ?? args.agentId ?? null
   return invoke<void>('chat_generate_stream', {
     streamId: args.streamId,
     stream_id: args.streamId,
     messages: args.messages,
     useMarkdown: args.useMarkdown,
     use_markdown: args.useMarkdown,
-    agentId: args.agentId ?? null,
-    agent_id: args.agentId ?? null,
+    agentId: assistantId,
+    agent_id: assistantId,
     providerId: args.providerId ?? null,
     provider_id: args.providerId ?? null,
   })

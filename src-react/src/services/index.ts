@@ -33,3 +33,6 @@ export type { UISettings, UITheme, UIDensity, UIMotion } from './UISettingsManag
 
 export { NovelPlannerService, novelPlannerService } from './NovelPlannerService';
 export type { WriterMode, TaskStatus, NovelTask, SessionPlannerState, PlannerContextPack } from './NovelPlannerService';
+
+export { upsertAIActionTrace, actionTraceTarget } from './aiActionTrace';
+export type { AIActionTraceItem, AIActionListItem } from './aiActionTrace';

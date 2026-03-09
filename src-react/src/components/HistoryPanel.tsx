@@ -8,22 +8,24 @@ import {
   restoreHistorySnapshot,
   type HistoryEntry,
 } from '../tauri'
+import { useI18n } from '../i18n'
 import { AppIcon } from './icons/AppIcon'
 import './HistoryPanel.css'
 
 type HistoryPanelProps = {
-  workspaceRoot: string | null
+  workRoot: string | null
   activePath: string | null
   onOpenPath: (path: string, options?: { forceReload?: boolean }) => void
   onAfterRestore?: (path: string) => void
 }
 
-function formatTime(timestamp: number): string {
+function formatTime(timestamp: number, locale: string): string {
   if (!Number.isFinite(timestamp)) return '--'
-  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false })
+  return new Date(timestamp).toLocaleString(locale, { hour12: false })
 }
 
-export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRestore }: HistoryPanelProps) {
+export function HistoryPanel({ workRoot, activePath, onOpenPath, onAfterRestore }: HistoryPanelProps) {
+  const { locale, t } = useI18n()
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState('')
@@ -60,7 +62,7 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
   )
 
   const refresh = useCallback(async () => {
-    if (!workspaceRoot || !isTauriApp()) {
+    if (!workRoot || !isTauriApp()) {
       setEntries([])
       setSelectedId(null)
       setPreview('')
@@ -80,11 +82,11 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
     } finally {
       setLoading(false)
     }
-  }, [workspaceRoot])
+  }, [workRoot])
 
   const loadPreview = useCallback(
     async (id: string) => {
-      if (!workspaceRoot || !isTauriApp()) return
+      if (!workRoot || !isTauriApp()) return
       setSelectedId(id)
       try {
         const text = await readHistorySnapshot(id)
@@ -94,11 +96,11 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
         setError(e instanceof Error ? e.message : String(e))
       }
     },
-    [workspaceRoot],
+    [workRoot],
   )
 
   const handleCreateManualSnapshot = useCallback(async () => {
-    if (!activePath || !workspaceRoot || !isTauriApp()) return
+    if (!activePath || !workRoot || !isTauriApp()) return
     setActionBusy(true)
     try {
       const created = await createHistorySnapshot(activePath, 'manual')
@@ -110,15 +112,21 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
     } finally {
       setActionBusy(false)
     }
-  }, [activePath, loadPreview, refresh, workspaceRoot])
+  }, [activePath, loadPreview, refresh, workRoot])
 
   const handleRestore = useCallback(
     async (entry: HistoryEntry) => {
-      if (!workspaceRoot || !isTauriApp()) return
-      const ok = await confirm(`恢复 ${entry.file_path} 到 ${formatTime(entry.created_at)} 的版本？`, {
-        title: '恢复历史版本',
-        kind: 'warning',
-      })
+      if (!workRoot || !isTauriApp()) return
+      const ok = await confirm(
+        t('history.restoreConfirm', {
+          path: entry.file_path,
+          time: formatTime(entry.created_at, locale),
+        }),
+        {
+          title: t('history.restoreTitle'),
+          kind: 'warning',
+        },
+      )
       if (!ok) return
 
       setActionBusy(true)
@@ -136,7 +144,7 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
         setActionBusy(false)
       }
     },
-    [onAfterRestore, onOpenPath, refresh, workspaceRoot],
+    [locale, onAfterRestore, onOpenPath, refresh, t, workRoot],
   )
 
   useEffect(() => {
@@ -164,10 +172,10 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
       <div className="history-panel-header">
         <div className="history-panel-title">
           <span className="history-panel-title-icon"><AppIcon name="history" size={14} /></span>
-          <span>历史管理</span>
+          <span>{t('history.title')}</span>
         </div>
         <div className="history-panel-actions">
-          <button className="icon-button" title="Refresh" disabled={loading || actionBusy} onClick={() => void refresh()}>
+          <button className="icon-button" title={t('history.refresh')} disabled={loading || actionBusy} onClick={() => void refresh()}>
             <AppIcon name="refresh" size={14} />
           </button>
           <button
@@ -175,7 +183,7 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
             disabled={!activePath || loading || actionBusy}
             onClick={() => void handleCreateManualSnapshot()}
           >
-            手动快照
+            {t('history.manualSnapshot')}
           </button>
         </div>
       </div>
@@ -190,13 +198,13 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
             onChange={(e) => setActiveOnly(e.target.checked)}
             disabled={!activePath}
           />
-          <span>Current File Only</span>
+          <span>{t('history.activeOnly')}</span>
         </label>
         <input
           className="history-panel-search"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          placeholder="Search path, summary, reason..."
+          placeholder={t('history.searchPlaceholder')}
         />
         <span className="history-panel-count">
           {filteredEntries.length}/{entries.length}
@@ -209,13 +217,13 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
             <div className="history-empty">
               {entries.length === 0 ? (
                 <>
-                  <p>No snapshots yet.</p>
-                  <p className="history-empty-hint">A snapshot is created automatically when you save a file.</p>
+                  <p>{t('history.empty')}</p>
+                  <p className="history-empty-hint">{t('history.emptyHint')}</p>
                 </>
               ) : (
                 <>
-                  <p>No snapshots match the current filters.</p>
-                  <p className="history-empty-hint">Try clearing search text or disabling file-only filter.</p>
+                  <p>{t('history.emptyFiltered')}</p>
+                  <p className="history-empty-hint">{t('history.emptyFilteredHint')}</p>
                 </>
               )}
             </div>
@@ -228,11 +236,11 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
               >
                 <div className="history-row-main">
                   <span className="history-path" title={entry.file_path}>{entry.file_path}</span>
-                  <span className="history-meta">{formatTime(entry.created_at)}</span>
+                  <span className="history-meta">{formatTime(entry.created_at, locale)}</span>
                 </div>
                 <div className="history-row-sub">
                   <span title={entry.summary}>{entry.summary}</span>
-                  <span>{entry.word_count} 词</span>
+                  <span>{t('history.wordCount', { count: entry.word_count })}</span>
                 </div>
                 <span className="history-reason">{entry.reason}</span>
               </button>
@@ -246,23 +254,24 @@ export function HistoryPanel({ workspaceRoot, activePath, onOpenPath, onAfterRes
               <div className="history-preview-head">
                 <div>
                   <div className="history-preview-file">{selectedEntry.file_path}</div>
-                  <div className="history-preview-time">{formatTime(selectedEntry.created_at)}</div>
+                  <div className="history-preview-time">{formatTime(selectedEntry.created_at, locale)}</div>
                 </div>
                 <button
                   className="history-restore-btn"
                   disabled={actionBusy}
                   onClick={() => void handleRestore(selectedEntry)}
                 >
-                  恢复此版本
+                  {t('history.restore')}
                 </button>
               </div>
-              <pre className="history-preview-body">{preview || '(empty)'}</pre>
+              <pre className="history-preview-body">{preview || t('history.previewEmpty')}</pre>
             </>
           ) : (
-            <div className="history-preview-empty">选择左侧历史条目以预览。</div>
+            <div className="history-preview-empty">{t('history.selectHint')}</div>
           )}
         </div>
       </div>
     </div>
   )
 }
+

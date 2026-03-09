@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { createDir, readText, writeText, type FsEntry } from '../tauri'
 import plannerPrompts from '../config/plannerPrompts.json'
+import { buildCharacterStateDigest, buildDocumentContextBlock, buildStoryCueDigest, buildStorySummaryIndex } from './documentSummary'
+import { parseMemoryIndexDocument, serializeMemoryIndexDocument } from './memoryIndex'
 
 export type WriterMode = 'normal' | 'plan' | 'spec'
 export type TaskStatus = 'todo' | 'running' | 'blocked' | 'done' | 'retry'
@@ -70,8 +72,9 @@ const MASTER_TASKS_PATH = '.novel/tasks/master-tasks.md'
 const RUN_QUEUE_PATH = '.novel/tasks/run-queue.md'
 const SESSION_STATE_PATH = '.novel/state/session-state.json'
 const CONTINUITY_INDEX_PATH = '.novel/state/continuity-index.md'
+const CHARACTER_STATE_INDEX_PATH = '.novel/state/character-state-index.md'
+const FORESHADOW_INDEX_PATH = '.novel/state/foreshadow-index.md'
 
-const MAX_CONTEXT_CHARS_PER_FILE = 2200
 const PROMPT_CONFIG = plannerPrompts
 
 function applyTemplate(template: string, vars: Record<string, string | number>): string {
@@ -478,6 +481,78 @@ export class NovelPlannerService {
       ].join('\n')
       await writeText(CONTINUITY_INDEX_PATH, initial)
     }
+    const characterStateIndex = await this.readOptional(CHARACTER_STATE_INDEX_PATH)
+    if (!characterStateIndex.trim()) {
+      await writeText(
+        CHARACTER_STATE_INDEX_PATH,
+        serializeMemoryIndexDocument('# Character State Index\n\nTrack recent character state shifts here.', { source: 'auto', locked: false }),
+      )
+    }
+    const foreshadowIndex = await this.readOptional(FORESHADOW_INDEX_PATH)
+    if (!foreshadowIndex.trim()) {
+      await writeText(
+        FORESHADOW_INDEX_PATH,
+        serializeMemoryIndexDocument('# Foreshadow Index\n\nTrack active clues, hooks, and unresolved signals here.', { source: 'auto', locked: false }),
+      )
+    }
+  }
+
+  private async syncDerivedStateIndexes(entries: Array<{ path: string; content: string }>): Promise<void> {
+    if (entries.length === 0) return
+    const characterSource = await this.readOptional('concept/characters.md')
+    const characterDigest = buildCharacterStateDigest(characterSource, entries, 'recent character states')
+    const cueDigest = buildStoryCueDigest(entries, 'recent unresolved cues')
+    if (!characterDigest.endsWith('(empty)')) {
+      const current = parseMemoryIndexDocument(await this.readOptional(CHARACTER_STATE_INDEX_PATH))
+      if (!current.meta.locked) {
+        await writeText(
+          CHARACTER_STATE_INDEX_PATH,
+          serializeMemoryIndexDocument(`# Character State Index\n\n${characterDigest}`, {
+            source: 'auto',
+            locked: false,
+          }),
+        )
+      }
+    }
+    if (!cueDigest.endsWith('(empty)')) {
+      const current = parseMemoryIndexDocument(await this.readOptional(FORESHADOW_INDEX_PATH))
+      if (!current.meta.locked) {
+        await writeText(
+          FORESHADOW_INDEX_PATH,
+          serializeMemoryIndexDocument(`# Foreshadow Index\n\n${cueDigest}`, {
+            source: 'auto',
+            locked: false,
+          }),
+        )
+      }
+    }
+  }
+
+  private async collectRecentSummaryEntries(tree: FsEntry | null, activePath: string | null): Promise<Array<{ path: string; content: string }>> {
+    const storyFiles: string[] = []
+    collectStoryFiles(tree, storyFiles)
+    storyFiles.sort((a, b) => a.localeCompare(b))
+    const summaryPaths = activePath && storyFiles.includes(activePath)
+      ? (() => {
+          const idx = storyFiles.indexOf(activePath)
+          return storyFiles.slice(Math.max(0, idx - 3), Math.min(storyFiles.length, idx + 2))
+        })()
+      : storyFiles.slice(-5)
+    const summaryEntries: Array<{ path: string; content: string }> = []
+    for (const path of summaryPaths) {
+      const raw = await this.readOptional(path)
+      if (!raw.trim()) continue
+      const parsed = parseFrontMatter(raw)
+      const content = parsed.body.trim() || raw.trim()
+      summaryEntries.push({ path, content })
+    }
+    return summaryEntries
+  }
+
+  async refreshDerivedStateIndexes(tree: FsEntry | null, activePath: string | null): Promise<void> {
+    await this.ensurePlannerWorkspace()
+    const summaryEntries = await this.collectRecentSummaryEntries(tree, activePath)
+    await this.syncDerivedStateIndexes(summaryEntries)
   }
 
   private async loadSessionStore(): Promise<SessionPlannerStore> {
@@ -785,16 +860,30 @@ export class NovelPlannerService {
     if (mode === 'spec') {
       references.push(RUN_QUEUE_PATH)
     }
-    references.push('concept/characters.md', 'concept/relations.md', 'outline/outline.md', CONTINUITY_INDEX_PATH)
+    references.push('concept/characters.md', 'concept/relations.md', 'outline/outline.md', CONTINUITY_INDEX_PATH, CHARACTER_STATE_INDEX_PATH, FORESHADOW_INDEX_PATH)
 
     const deduped = Array.from(new Set(references))
     const snippets: string[] = []
+    const summaryEntries = await this.collectRecentSummaryEntries(tree, activePath)
+    if (summaryEntries.length > 0) {
+      await this.syncDerivedStateIndexes(summaryEntries)
+      snippets.push(buildStorySummaryIndex(summaryEntries, 'recent chapter summaries'))
+      const characterSource = await this.readOptional('concept/characters.md')
+      const characterDigest = buildCharacterStateDigest(characterSource, summaryEntries, 'recent character states')
+      if (!characterDigest.endsWith('(empty)')) {
+        snippets.push(characterDigest)
+      }
+      const cueDigest = buildStoryCueDigest(summaryEntries, 'recent unresolved cues')
+      if (!cueDigest.endsWith('(empty)')) {
+        snippets.push(cueDigest)
+      }
+    }
     for (const path of deduped) {
       const raw = await this.readOptional(path)
       if (!raw.trim()) continue
       const parsed = parseFrontMatter(raw)
-      const content = (parsed.body.trim() || raw.trim()).slice(0, MAX_CONTEXT_CHARS_PER_FILE)
-      snippets.push(`### ${path}\n${content}`)
+      const content = parsed.body.trim() || raw.trim()
+      snippets.push(buildDocumentContextBlock(`context ${path}`, path, content, { fullTextThreshold: 1200, includeExcerpts: true }))
     }
     const summary = snippets.join('\n\n')
     return {
