@@ -3156,8 +3156,8 @@ body {
 }
 
 .ai-header.ai-header-compact {
-  padding: 14px 14px 10px;
-  gap: 10px;
+  padding: 10px 12px 8px;
+  gap: 6px;
   background: transparent;
   border-bottom: 0;
 }
@@ -3170,16 +3170,20 @@ body {
 }
 
 .ai-title-actions {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 6px;
 }
 
 .ai-title-text {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-primary);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  line-height: 1;
 }
 
 .ai-header-chip {
@@ -3187,8 +3191,8 @@ body {
   background: var(--ai-surface-pill);
   color: var(--text-secondary);
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 10px;
+  padding: 5px 8px;
+  font-size: 9px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -3210,8 +3214,8 @@ body {
   background: color-mix(in srgb, var(--error-bg) 40%, var(--surface-1));
   color: var(--error-text);
   border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 11px;
+  padding: 5px 8px;
+  font-size: 9px;
   cursor: pointer;
 }
 
@@ -3426,6 +3430,11 @@ body {
   overscroll-behavior: contain;
 }
 
+.ai-chat-overlay-panel-tools {
+  max-width: 360px;
+  margin-left: auto;
+}
+
 .ai-chat-drawer-head,
 .ai-chat-drawer-subtitle {
   display: flex;
@@ -3454,6 +3463,77 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.ai-command-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-command-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--ai-line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-1) 84%, transparent);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-command-item:hover {
+  border-color: var(--ai-line-strong);
+  background: color-mix(in srgb, var(--surface-2) 78%, var(--surface-1));
+}
+
+.ai-command-item-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ai-command-item-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ai-command-item-hint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.ai-command-item-meta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ai-line);
+  background: var(--ai-surface-pill);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ai-command-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
 }
 
 .ai-tool-hub-card {
@@ -3690,6 +3770,10 @@ button.ai-session-row-main {
   background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--surface-1) 92%, transparent) 100%);
 }
 
+.ai-messages-empty {
+  justify-content: center;
+}
+
 .ai-empty-state {
   margin: 16px 0 10px;
   padding: 20px 16px;
@@ -3697,6 +3781,58 @@ button.ai-session-row-main {
   border-radius: 18px;
   background: color-mix(in srgb, var(--surface-2) 84%, transparent);
   font-size: 12px;
+}
+
+.ai-empty-state-hero {
+  width: 100%;
+  margin: 0;
+  padding: 18px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  border-radius: 16px;
+  border-style: solid;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 92%, transparent) 0%, color-mix(in srgb, var(--surface-2) 80%, transparent) 100%);
+}
+
+.ai-empty-history-pill {
+  align-self: flex-start;
+  border: 1px solid var(--ai-line);
+  background: var(--ai-surface-pill);
+  color: var(--text-muted);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ai-empty-hero-icon {
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-1) 94%, #000000 6%);
+  box-shadow: var(--ai-shadow-soft);
+}
+
+.ai-empty-hero-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.ai-empty-hero-text {
+  max-width: 280px;
+  margin-top: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 .message {

@@ -795,11 +795,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
     return activeLiveToolEvents.filter((event) => selected.has(toolEventIdentityKey(event))).slice(-5)
   })()
 
-  const activeAssistant = assistants.find((assistant) => assistant.id === activeAssistantId) ?? null
-  const activeProvider = providers.find((provider) => provider.id === activeProviderId) ?? null
-  const activeSessionSummary = sessionSummaries.find((session) => session.id === activeSessionId) ?? null
   const activePlannerTask = plannerTasks.find((task) => task.status === 'running') ?? plannerTasks.find((task) => task.status === 'todo' || task.status === 'retry') ?? null
-  const activeProviderLabel = activeProvider?.statusLabel ? `${activeProvider.name} · ${activeProvider.statusLabel}` : activeProvider?.name ?? t('chat.modelSelect')
   const reviewSummary = reviewChangeSets.map((changeSet) => ({
     id: changeSet.id,
     filePath: changeSet.filePath,
@@ -1063,10 +1059,6 @@ export function AIChatPanel(props: AIChatPanelProps) {
     ],
     [insertQuickPrompt, onSmartComplete, t],
   )
-  const activeSessionTitle =
-    sessionTitleOverrides[activeSessionId] ||
-    activeSessionSummary?.title ||
-    (activeSessionSummary ? sessionTimeLabel(activeSessionSummary.updatedAt) : t('chat.sessionCurrent'))
   const applySlashPrompt = useCallback(
     (prompt: string, mode?: WriterMode) => {
       if (mode && mode !== writerMode) {
@@ -1119,17 +1111,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
     [memoryIndexCount, memoryIndexLoading, plannerBusy, plannerOpenCount, reviewPendingCount, t],
   )
   const activeWorkbenchItem = workbenchLinks.find((item) => item.id === activeWorkbenchTab) ?? null
-  const headerSubtitle =
-    activeWorkbenchTab === 'chat'
-      ? [activeSessionTitle, activeAssistant?.name ?? t('chat.noAgents'), activeProviderLabel].filter(Boolean).join(' · ')
-      : [activeWorkbenchItem?.label ?? '', activeDocumentLabel ?? activeWorkLabel ?? ''].filter(Boolean).join(' · ')
+  const utilityContextChips = [activeWorkLabel ? t('chat.contextWork', { name: activeWorkLabel }) : null, activeDocumentLabel ? t('chat.contextDocument', { name: activeDocumentLabel }) : null]
+    .filter((item): item is string => !!item)
   const headerMetaItems = [
-    activeWorkbenchTab === 'chat'
-      ? { label: writerModeLabel(writerMode, t), tone: 'default' as const }
-      : activeWorkbenchItem
-        ? { label: activeWorkbenchItem.label, tone: 'default' as const }
+    activeWorkbenchTab !== 'chat' && activeWorkbenchItem
+      ? { label: activeWorkbenchItem.label, tone: 'default' as const }
+      : writerMode !== 'normal'
+        ? { label: writerModeLabel(writerMode, t), tone: 'default' as const }
         : null,
-    activeDocumentLabel ? { label: activeDocumentLabel, tone: 'default' as const } : null,
+    activeWorkbenchTab !== 'chat' && activeDocumentLabel ? { label: activeDocumentLabel, tone: 'default' as const } : null,
     activeDocumentDirty ? { label: t('chat.documentDirty'), tone: 'dirty' as const } : null,
     autoLongWriteEnabled ? { label: t('chat.autoWrite'), tone: 'accent' as const } : null,
   ].filter((item): item is { label: string; tone: 'default' | 'dirty' | 'accent' } => item !== null)
@@ -1402,10 +1392,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
       <div className="ai-chat-top">
       <div className="ai-header ai-header-compact">
         <div className="ai-title-row">
-          <div className="ai-title-group">
-            <span className="ai-title-text">{t('chat.title')}</span>
-            <span className="ai-mode-brief">{headerSubtitle}</span>
-          </div>
+          <span className="ai-title-text">{t('chat.title')}</span>
           <div className="ai-title-actions">
             {activeWorkbenchTab === 'chat' ? (
               <>
@@ -1478,7 +1465,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
       <div className="ai-chat-body">
       {activeWorkbenchTab === 'chat' && activeChatDrawer ? (
         <div className="ai-chat-overlay-layer" onClick={() => setActiveChatDrawer(null)}>
-          <div className={`ai-chat-overlay-panel ai-chat-drawer${activeChatDrawer === 'workspace' ? ' ai-chat-drawer-tools' : ''}`} onClick={(event) => event.stopPropagation()}>
+          <div className={`ai-chat-overlay-panel ai-chat-drawer${activeChatDrawer === 'workspace' ? ' ai-chat-drawer-tools ai-chat-overlay-panel-tools' : ''}`} onClick={(event) => event.stopPropagation()}>
             {activeChatDrawer === 'sessions' ? (
               <>
                 <div className="ai-chat-drawer-head">
@@ -1669,44 +1656,58 @@ export function AIChatPanel(props: AIChatPanelProps) {
                 <div className="ai-chat-drawer-head">
                   <span>{t('chat.utilityHub')}</span>
                 </div>
-                <div className="ai-tool-hub-grid">
-                  {workbenchLinks.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="ai-tool-hub-card"
-                      onClick={() => {
-                        setActiveChatDrawer(null)
-                        setActiveWorkbenchTab(item.id)
-                      }}
-                    >
-                      <span className="ai-tool-hub-card-title">{item.label}</span>
-                      <span className="ai-tool-hub-card-meta">{item.badge || 'Open'}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="ai-chat-drawer-card">
+                <div className="ai-command-section">
                   <div className="ai-chat-drawer-subtitle">
-                    <span>{t('chat.quickTitle')}</span>
+                    <span>{t('chat.utilityHub')}</span>
                   </div>
-                  <div className="ai-quick-grid ai-quick-grid-compact">
-                    {quickActions.map((item) => (
-                      <button key={item.id} type="button" className="ai-quick-action" onClick={item.action}>
-                        <span className="ai-quick-action-title">{item.label}</span>
-                        <span className="ai-quick-action-subtitle">{item.description}</span>
+                  <div className="ai-command-list">
+                    {workbenchLinks.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="ai-command-item"
+                        onClick={() => {
+                          setActiveChatDrawer(null)
+                          setActiveWorkbenchTab(item.id)
+                        }}
+                      >
+                        <span className="ai-command-item-main">
+                          <span className="ai-command-item-title">{item.label}</span>
+                          <span className="ai-command-item-hint">{item.id === 'planner' ? t('chat.plannerOverview') : item.id === 'review' ? t('chat.reviewTitle') : t('chat.memoryTitle')}</span>
+                        </span>
+                        <span className="ai-command-item-meta">{item.badge || t('chat.commandOpen')}</span>
                       </button>
                     ))}
                   </div>
                 </div>
-                {(activeWorkLabel || activeDocumentLabel) ? (
-                  <div className="ai-chat-drawer-card">
-                    <div className="ai-chat-drawer-subtitle">
-                      <span>{t('chat.contextSourcesTitle')}</span>
-                    </div>
-                    <div className="ai-context-actions">
-                      {activeWorkLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextWork', { name: activeWorkLabel })}</span> : null}
-                      {activeDocumentLabel ? <span className="ai-context-chip ai-context-chip-static">{t('chat.contextDocument', { name: activeDocumentLabel })}</span> : null}
-                    </div>
+                <div className="ai-command-section">
+                  <div className="ai-chat-drawer-subtitle">
+                    <span>{t('chat.quickTitle')}</span>
+                  </div>
+                  <div className="ai-command-list">
+                    {quickActions.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="ai-command-item"
+                        onClick={() => {
+                          setActiveChatDrawer(null)
+                          item.action()
+                        }}
+                      >
+                        <span className="ai-command-item-main">
+                          <span className="ai-command-item-title">{item.label}</span>
+                          <span className="ai-command-item-hint">{item.description}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {utilityContextChips.length > 0 ? (
+                  <div className="ai-command-context">
+                    {utilityContextChips.map((chip) => (
+                      <span key={chip} className="ai-context-chip ai-context-chip-static">{chip}</span>
+                    ))}
                   </div>
                 ) : null}
               </>
@@ -1719,7 +1720,7 @@ export function AIChatPanel(props: AIChatPanelProps) {
       <>
       <div className="ai-messages-wrap">
         <div
-          className="ai-messages"
+          className={`ai-messages${chatMessages.length === 0 ? ' ai-messages-empty' : ''}`}
           ref={messagesRef}
           onScroll={(event) => {
             const panel = event.currentTarget
@@ -1729,9 +1730,15 @@ export function AIChatPanel(props: AIChatPanelProps) {
           }}
         >
           {chatMessages.length === 0 ? (
-            <div className="ai-empty-state">
-              <div>{t('chat.emptyPrimary')}</div>
-              <div className="ai-empty-state-sub">
+            <div className="ai-empty-state ai-empty-state-hero">
+              {sessionSummaries.length === 0 ? (
+                <div className="ai-empty-history-pill">{t('chat.sessionsEmpty')}</div>
+              ) : null}
+              <div className="ai-empty-hero-icon">
+                <AppIcon name="chat" size={26} />
+              </div>
+              <div className="ai-empty-hero-title">{t('chat.emptyPrimary')}</div>
+              <div className="ai-empty-state-sub ai-empty-hero-text">
                 {t('chat.emptyPrefix')}
                 {writerModeUpper(writerMode, t)}
                 {t('chat.emptySuffix')}
