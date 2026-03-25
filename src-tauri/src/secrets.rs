@@ -110,13 +110,16 @@ fn unprotect_bytes(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(not(windows))]
-fn protect_bytes(_: &[u8]) -> Result<Vec<u8>, String> {
-  Err("fallback secrets not supported on this OS".to_string())
+fn protect_bytes(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+  // On non-Windows platforms, use plain text storage
+  // The Base64 encoding is already applied by the caller
+  Ok(plaintext.to_vec())
 }
 
 #[cfg(not(windows))]
-fn unprotect_bytes(_: &[u8]) -> Result<Vec<u8>, String> {
-  Err("fallback secrets not supported on this OS".to_string())
+fn unprotect_bytes(ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+  // On non-Windows platforms, data is stored as plain text
+  Ok(ciphertext.to_vec())
 }
 
 fn store_fallback(app: &AppHandle, provider: &str, api_key: &str) -> Result<(), String> {
