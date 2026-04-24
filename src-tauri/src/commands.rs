@@ -2117,6 +2117,7 @@ pub fn chat_generate_stream(
     let start = Instant::now();
     emit_stream_status(&window_for_task, &stream_id_for_task, "thinking");
     let react_timeout = Duration::from_secs(240);
+    let live_session_for_react = live_session.clone();
     let run_result = tokio::time::timeout(
       react_timeout,
       runtime.run_react(messages, agent_system.clone(), ai_edit_apply_mode.clone(), |msgs| {
@@ -2124,6 +2125,7 @@ pub fn chat_generate_stream(
         let client = client.clone();
         let app = app.clone();
         let agent_temp = agent_temp;
+        let live_session_clone = live_session_for_react.clone();
         async move {
           let mut system = String::new();
           for m in msgs.iter().filter(|m| m.role == "system") {
@@ -2133,7 +2135,7 @@ pub fn chat_generate_stream(
             system.push_str(m.content.as_str());
           }
           let filtered = msgs.into_iter().filter(|m| m.role != "system").collect::<Vec<_>>();
-          
+
           match provider_cfg.kind {
             app_settings::ProviderKind::OpenAI | app_settings::ProviderKind::OpenAICompatible => {
               call_openai_unbounded(
@@ -2143,7 +2145,7 @@ pub fn chat_generate_stream(
                 &filtered,
                 system.as_str(),
                 agent_temp,
-                None,
+                Some(&live_session_clone),
               ).await
             },
             app_settings::ProviderKind::Anthropic => {
@@ -2153,7 +2155,7 @@ pub fn chat_generate_stream(
                 &provider_cfg,
                 &filtered,
                 system.as_str(),
-                None,
+                Some(&live_session_clone),
               ).await
             },
           }
