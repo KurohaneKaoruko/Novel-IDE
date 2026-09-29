@@ -32,6 +32,7 @@ import {
   saveChatSession,
   setWorkRoot,
   testProviderConnectivity,
+  updateWorkDescription,
   writeText,
   type AiEditApplyMode,
   type AppSettings,
@@ -1336,12 +1337,12 @@ function App() {
   )
 
   const onCreateProjectFromPicker = useCallback(
-    async (name: string) => {
+    async (name: string, description?: string) => {
       if (!isTauriApp()) return
       setError(null)
       setBusy(true)
       try {
-        const project = await createNovelWork(name)
+        const project = await createNovelWork(name, description)
         const opened = await openWorkPath(project.path)
         if (!opened) return
         setAppView('studio')
@@ -1357,6 +1358,20 @@ function App() {
       }
     },
     [isMobileLayout, openWorkPath, refreshBookshelfState],
+  )
+
+  const onUpdateWorkDescriptionFromPicker = useCallback(
+    async (path: string, description: string) => {
+      if (!isTauriApp()) return
+      setError(null)
+      try {
+        await updateWorkDescription(path, description)
+        await refreshBookshelfState()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [refreshBookshelfState],
   )
 
   const onLoadExternalProject = useCallback(async () => {
@@ -3986,9 +4001,10 @@ function App() {
         lastWorkPath={lastWorkPath}
         launchMode={launchMode}
         onSelectProject={onOpenProjectFromPicker}
-        onCreateProject={(name) => void onCreateProjectFromPicker(name)}
+        onCreateProject={(name, description) => void onCreateProjectFromPicker(name, description)}
         onLoadExternalProject={() => void onLoadExternalProject()}
         onForgetExternalProject={(path) => void onForgetExternalProject(path)}
+        onUpdateWorkDescription={(path, description) => void onUpdateWorkDescriptionFromPicker(path, description)}
         onRefresh={() => void refreshBookshelfState()}
         onLaunchModeChange={(mode) => void onLaunchModeChange(mode)}
         manualPathEnabled={!isTauriApp()}

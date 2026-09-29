@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
-import { useI18n } from '../i18n'
+import { useI18n, type TranslationParams } from '../i18n'
 import type { LaunchMode, WorkItem, WorkSource } from '../tauri'
 import { AppIcon } from './icons/AppIcon'
 import './ProjectPickerPage.css'
+
+type TranslateFn = (key: string, params?: TranslationParams) => string
 
 type BookshelfPageProps = {
   busy: boolean
@@ -13,13 +15,22 @@ type BookshelfPageProps = {
   lastWorkPath: string | null
   launchMode: LaunchMode
   onSelectProject: (path: string, source: WorkSource) => void
-  onCreateProject: (name: string) => void
+  onCreateProject: (name: string, description?: string) => void
   onLoadExternalProject: () => void
   onForgetExternalProject: (path: string) => void
+  onUpdateWorkDescription?: (path: string, description: string) => Promise<void> | void
   onRefresh: () => void
   onLaunchModeChange: (mode: LaunchMode) => void
   manualPathEnabled?: boolean
   onOpenManualPath?: (path: string) => void
+}
+
+function formatTimestamp(seconds: number): string {
+  try {
+    return new Date(seconds * 1000).toLocaleDateString()
+  } catch {
+    return ''
+  }
 }
 
 function ProjectCard({
@@ -27,14 +38,44 @@ function ProjectCard({
   busy,
   onOpen,
   onForget,
+  onEditDescription,
   t,
 }: {
   project: WorkItem
   busy: boolean
   onOpen: (path: string, source: WorkSource) => void
   onForget?: (path: string) => void
-  t: (key: string) => string
+  onEditDescription?: (path: string, description: string) => Promise<void> | void
+  t: TranslateFn
 }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(project.description ?? '')
+  const [saving, setSaving] = useState(false)
+
+  const metaParts: string[] = []
+  if (project.chapters_count > 0) {
+    metaParts.push(
+      t('project.cardMeta', {
+        chapters: project.chapters_count,
+        words: project.total_words.toLocaleString(),
+      }),
+    )
+  }
+  if (project.updated_at) {
+    metaParts.push(t('project.updatedAt', { time: formatTimestamp(project.updated_at) }))
+  }
+
+  async function saveDescription() {
+    if (!onEditDescription) return
+    setSaving(true)
+    try {
+      await onEditDescription(project.path, draft.trim())
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="project-card">
       <button className="project-card-main" disabled={busy} onClick={() => onOpen(project.path, project.source)}>
@@ -47,16 +88,64 @@ function ProjectCard({
         <div className="project-card-path" title={project.path}>
           {project.path}
         </div>
+        {project.description ? (
+          <div className="project-card-desc" title={project.description}>
+            {project.description}
+          </div>
+        ) : null}
+        {metaParts.length > 0 ? <div className="project-card-meta">{metaParts.join(' · ')}</div> : null}
       </button>
-      {onForget ? (
-        <button
-          className="project-card-forget"
-          disabled={busy}
-          onClick={() => onForget(project.path)}
-          title={t('project.removeHint')}
-        >
-          {t('project.remove')}
-        </button>
+      <div className="project-card-actions">
+        {onEditDescription ? (
+          <button
+            className="project-card-forget"
+            disabled={busy}
+            onClick={() => {
+              setDraft(project.description ?? '')
+              setEditing((value) => !value)
+            }}
+            title={t('project.editDescription')}
+          >
+            {t('project.editDescription')}
+          </button>
+        ) : null}
+        {onForget ? (
+          <button
+            className="project-card-forget"
+            disabled={busy}
+            onClick={() => onForget(project.path)}
+            title={t('project.removeHint')}
+          >
+            {t('project.remove')}
+          </button>
+        ) : null}
+      </div>
+      {editing && onEditDescription ? (
+        <div className="project-card-desc-editor">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={t('project.descriptionPlaceholder')}
+            rows={3}
+            disabled={saving}
+            autoFocus
+          />
+          <div className="project-card-desc-actions">
+            <button
+              className="picker-button ghost"
+              disabled={saving}
+              onClick={() => {
+                setDraft(project.description ?? '')
+                setEditing(false)
+              }}
+            >
+              {t('project.descriptionCancel')}
+            </button>
+            <button className="picker-button primary" disabled={saving} onClick={() => void saveDescription()}>
+              {t('project.descriptionSave')}
+            </button>
+          </div>
+        </div>
       ) : null}
     </div>
   )
@@ -74,6 +163,7 @@ export function BookshelfPage({
   onCreateProject,
   onLoadExternalProject,
   onForgetExternalProject,
+  onUpdateWorkDescription,
   onRefresh,
   onLaunchModeChange,
   manualPathEnabled = false,
@@ -82,6 +172,7 @@ export function BookshelfPage({
   const { t } = useI18n()
   const [manualPath, setManualPath] = useState('')
   const [newProjectName, setNewProjectName] = useState('')
+  const [newProjectDescription, setNewProjectDescription] = useState('')
   const allProjectsCount = recentWorks.length + importedWorks.length
 
   const groupedStats = useMemo(
@@ -93,6 +184,14 @@ export function BookshelfPage({
   )
 
   const canCreate = newProjectName.trim().length > 0 && !busy
+
+  function submitNewProject() {
+    const name = newProjectName.trim()
+    if (!name) return
+    onCreateProject(name, newProjectDescription.trim() || undefined)
+    setNewProjectName('')
+    setNewProjectDescription('')
+  }
 
   return (
     <div className="project-picker-page">
@@ -131,14 +230,18 @@ export function BookshelfPage({
               placeholder={t('project.newNamePlaceholder')}
               disabled={busy}
             />
+            <textarea
+              className="project-create-desc"
+              value={newProjectDescription}
+              onChange={(e) => setNewProjectDescription(e.target.value)}
+              placeholder={t('project.descriptionPlaceholder')}
+              rows={2}
+              disabled={busy}
+            />
             <button
               className="picker-button primary"
               disabled={!canCreate}
-              onClick={() => {
-                const name = newProjectName.trim()
-                if (!name) return
-                onCreateProject(name)
-              }}
+              onClick={submitNewProject}
             >
               {t('project.createEnter')}
             </button>
@@ -190,7 +293,14 @@ export function BookshelfPage({
               <div className="project-empty">{t('project.noProjects')}</div>
             ) : (
               recentWorks.map((project) => (
-                <ProjectCard key={project.path} project={project} busy={busy} onOpen={onSelectProject} t={t} />
+                <ProjectCard
+                  key={project.path}
+                  project={project}
+                  busy={busy}
+                  onOpen={onSelectProject}
+                  onEditDescription={onUpdateWorkDescription}
+                  t={t}
+                />
               ))
             )}
           </div>
@@ -212,6 +322,7 @@ export function BookshelfPage({
                   busy={busy}
                   onOpen={onSelectProject}
                   onForget={onForgetExternalProject}
+                  onEditDescription={onUpdateWorkDescription}
                   t={t}
                 />
               ))

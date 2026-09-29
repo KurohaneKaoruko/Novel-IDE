@@ -69,12 +69,20 @@ export class ChapterService {
         const existingMeta = metadata.chapters.find(c => c.filePath === filePath);
         
         if (existingMeta) {
+          // Refresh word count from the actual file so stats stay accurate
+          let wordCount = existingMeta.wordCount;
+          try {
+            const stats = await this.getChapterStats(filePath);
+            wordCount = stats.wordCount;
+          } catch {
+            // Keep stale metadata when the file cannot be read
+          }
           // Use existing metadata
           chapters.push({
             id: existingMeta.id,
             filePath: existingMeta.filePath,
             title: existingMeta.title,
-            wordCount: existingMeta.wordCount,
+            wordCount,
             status: existingMeta.status,
             lastModified: existingMeta.lastModified,
             order: existingMeta.order,
@@ -217,12 +225,12 @@ export class ChapterService {
     try {
       const content = await invoke<string>('read_text', { relativePath: filePath });
       
-      // Calculate word count (split by whitespace)
-      const words = content.trim().split(/\s+/).filter(w => w.length > 0);
-      const wordCount = words.length;
+      // Word count follows the web app's convention: number of
+      // non-whitespace characters, which is meaningful for CJK text
+      const wordCount = content.replace(/\s/g, '').length;
       
-      // Calculate character count (excluding whitespace)
-      const characterCount = content.replace(/\s/g, '').length;
+      // Total character count (including whitespace)
+      const characterCount = content.length;
       
       // Calculate paragraph count (split by double newlines)
       const paragraphs = content.split(/\n\n+/).filter(p => p.trim().length > 0);

@@ -40,6 +40,10 @@ pub struct ProjectItem {
   pub source: String,
   pub is_valid_workspace: bool,
   pub last_opened_at: Option<i64>,
+  pub description: Option<String>,
+  pub chapters_count: u32,
+  pub total_words: u32,
+  pub updated_at: Option<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -192,17 +196,105 @@ fn is_valid_workspace_root(path: &Path) -> bool {
   path.join("concept").is_dir() || path.join("outline").is_dir() || path.join("stories").is_dir()
 }
 
+fn work_meta_path(root: &Path) -> PathBuf {
+  root.join(".novel").join("work.json")
+}
+
+fn read_work_description(root: &Path) -> Option<String> {
+  #[derive(Deserialize)]
+  struct WorkMeta {
+    #[serde(default)]
+    description: Option<String>,
+  }
+  let raw = fs::read_to_string(work_meta_path(root)).ok()?;
+  let meta: WorkMeta = serde_json::from_str(&raw).ok()?;
+  meta
+    .description
+    .map(|d| d.trim().to_string())
+    .filter(|d| !d.is_empty())
+}
+
+fn write_work_description(root: &Path, description: Option<String>) -> Result<(), String> {
+  let meta_path = work_meta_path(root);
+  if let Some(parent) = meta_path.parent() {
+    fs::create_dir_all(parent).map_err(|e| format!("create .novel dir failed: {e}"))?;
+  }
+  let payload = serde_json::json!({ "description": description });
+  let raw = serde_json::to_string_pretty(&payload)
+    .map_err(|e| format!("serialize work meta failed: {e}"))?;
+  fs::write(meta_path, raw).map_err(|e| format!("write work meta failed: {e}"))
+}
+
+/// Mirrors the web app's word-count convention: count non-whitespace
+/// characters, which behaves sensibly for CJK manuscripts.
+fn count_content_chars(text: &str) -> usize {
+  text.chars().filter(|c| !c.is_whitespace()).count()
+}
+
+struct WorkStats {
+  chapters_count: u32,
+  total_words: u32,
+  updated_at: Option<i64>,
+}
+
+fn scan_work_stats(root: &Path) -> WorkStats {
+  let mut stats = WorkStats {
+    chapters_count: 0,
+    total_words: 0,
+    updated_at: None,
+  };
+  let Ok(entries) = fs::read_dir(root.join("stories")) else {
+    return stats;
+  };
+  for entry in entries.flatten() {
+    let path = entry.path();
+    if !path.is_file() {
+      continue;
+    }
+    let ext = path
+      .extension()
+      .and_then(|e| e.to_str())
+      .map(|e| e.to_ascii_lowercase());
+    if !matches!(ext.as_deref(), Some("md") | Some("markdown") | Some("txt")) {
+      continue;
+    }
+    stats.chapters_count += 1;
+    if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+      if let Ok(ts) = modified.duration_since(std::time::UNIX_EPOCH) {
+        let ts = ts.as_secs() as i64;
+        let is_newer = match stats.updated_at {
+          Some(current) => ts > current,
+          None => true,
+        };
+        if is_newer {
+          stats.updated_at = Some(ts);
+        }
+      }
+    }
+    if let Ok(content) = fs::read_to_string(&path) {
+      stats.total_words += count_content_chars(&content) as u32;
+    }
+  }
+  stats
+}
+
 fn to_project_item(path: &Path, source: &str, last_opened_at: Option<i64>) -> ProjectItem {
   let name = path
     .file_name()
     .map(|v| v.to_string_lossy().to_string())
     .unwrap_or_else(|| path.to_string_lossy().to_string());
+  let description = read_work_description(path);
+  let stats = scan_work_stats(path);
   ProjectItem {
     name,
     path: path.to_string_lossy().to_string(),
     source: source.to_string(),
     is_valid_workspace: is_valid_workspace_root(path),
     last_opened_at,
+    description,
+    chapters_count: stats.chapters_count,
+    total_words: stats.total_words,
+    updated_at: stats.updated_at,
   }
 }
 
@@ -323,7 +415,7 @@ pub fn get_project_picker_state(app: AppHandle) -> Result<ProjectPickerState, St
 }
 
 #[tauri::command]
-pub fn create_novel_project(name: String) -> Result<ProjectItem, String> {
+pub fn create_novel_project(name: String, description: Option<String>) -> Result<ProjectItem, String> {
   let trimmed = name.trim();
   if trimmed.is_empty() {
     return Err("project name is empty".to_string());
@@ -337,6 +429,13 @@ pub fn create_novel_project(name: String) -> Result<ProjectItem, String> {
   fs::create_dir_all(&target_root).map_err(|e| format!("create project dir failed: {e}"))?;
 
   init_novel_workspace(&target_root)?;
+
+  let clean_description = description
+    .map(|d| d.trim().to_string())
+    .filter(|d| !d.is_empty());
+  if clean_description.is_some() {
+    write_work_description(&target_root, clean_description)?;
+  }
 
   let canonical = canonicalize_path(&target_root).unwrap_or(target_root);
   Ok(to_project_item(
@@ -491,6 +590,11 @@ fn init_novel_workspace(root: &Path) -> Result<(), String> {
 
   let history_store = novel_dir.join(".history").join("revisions.json");
   write_file_if_absent(&history_store, "{\n  \"entries\": []\n}")?;
+
+  let work_meta = work_meta_path(root);
+  if !work_meta.exists() {
+    write_file_if_absent(&work_meta, "{\n  \"description\": null\n}")?;
+  }
 
   let outline_md = root.join("outline").join("outline.md");
   write_file_if_absent(
@@ -1010,10 +1114,6 @@ fn next_history_id() -> String {
   format!("hist-{}-{seq:04}", Utc::now().timestamp_millis())
 }
 
-fn count_words(text: &str) -> usize {
-  text.split_whitespace().filter(|part| !part.trim().is_empty()).count()
-}
-
 fn summarize_snapshot(text: &str) -> String {
   let line = text.lines().find(|line| !line.trim().is_empty()).unwrap_or("").trim();
   if line.is_empty() {
@@ -1079,7 +1179,7 @@ fn create_history_snapshot_internal(
     snapshot_rel_path,
     created_at: Utc::now().timestamp_millis(),
     reason: reason.to_string(),
-    word_count: count_words(snapshot_content),
+    word_count: count_content_chars(snapshot_content),
     char_count: snapshot_content.chars().count(),
     summary: summarize_snapshot(snapshot_content),
   };
@@ -1128,8 +1228,24 @@ pub fn write_text(
 }
 
 #[tauri::command]
-pub fn create_novel_work(name: String) -> Result<ProjectItem, String> {
-  create_novel_project(name)
+pub fn create_novel_work(name: String, description: Option<String>) -> Result<ProjectItem, String> {
+  create_novel_project(name, description)
+}
+
+#[tauri::command]
+pub fn update_work_description(path: String, description: Option<String>) -> Result<(), String> {
+  let trimmed_path = path.trim();
+  if trimmed_path.is_empty() {
+    return Err("work path is empty".to_string());
+  }
+  let root = canonicalize_path(Path::new(trimmed_path))?;
+  if !root.is_dir() {
+    return Err("work path must be a directory".to_string());
+  }
+  let clean = description
+    .map(|d| d.trim().to_string())
+    .filter(|d| !d.is_empty());
+  write_work_description(&root, clean)
 }
 
 #[tauri::command]

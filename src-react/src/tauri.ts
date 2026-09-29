@@ -30,6 +30,10 @@ export type ProjectItem = {
   source: ProjectSource
   is_valid_workspace: boolean
   last_opened_at: number | null
+  description: string | null
+  chapters_count: number
+  total_words: number
+  updated_at: number | null
 }
 export type WorkItem = ProjectItem
 
@@ -119,12 +123,16 @@ export async function getBookshelfState(): Promise<BookshelfState> {
   return invoke<BookshelfState>('get_bookshelf_state')
 }
 
-export async function createNovelProject(name: string): Promise<ProjectItem> {
-  return invoke<ProjectItem>('create_novel_project', { name })
+export async function createNovelProject(name: string, description?: string): Promise<ProjectItem> {
+  return invoke<ProjectItem>('create_novel_project', { name, description: description ?? null })
 }
 
-export async function createNovelWork(name: string): Promise<WorkItem> {
-  return invoke<WorkItem>('create_novel_work', { name })
+export async function createNovelWork(name: string, description?: string): Promise<WorkItem> {
+  return invoke<WorkItem>('create_novel_work', { name, description: description ?? null })
+}
+
+export async function updateWorkDescription(path: string, description: string): Promise<void> {
+  return invoke<void>('update_work_description', { path, description })
 }
 
 export async function rememberExternalProject(path: string): Promise<void> {

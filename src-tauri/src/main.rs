@@ -28,6 +28,7 @@ fn main() {
       commands::get_bookshelf_state,
       commands::create_novel_project,
       commands::create_novel_work,
+      commands::update_work_description,
       commands::remember_external_project,
       commands::remember_imported_work,
       commands::forget_external_project,
